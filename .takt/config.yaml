@@ -1,0 +1,18 @@
+# tayk リポジトリの takt 設定
+# provider / model / language はグローバル設定 (~/.takt/config.yaml) を継承する。
+# workflow は組み込み default (9 step) を素のまま使う (docs/adr/0001 Consequences)。
+# custom workflow / facets は置かない — レビュー終了条件の追加は再発観測後に別 ADR で判断する。
+draft_pr: false
+base_branch: main
+
+provider: codex
+persona_providers:
+  coder:
+    provider: codex
+  planner:
+    provider: codex
+
+# トークン消費の計測。記録先: .takt/runs/<run>/logs/<session>-usage-events.phase.jsonl
+observability:
+  enabled: true
+  usage_events_phase: true
