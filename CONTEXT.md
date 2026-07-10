@@ -29,8 +29,8 @@ _Avoid_: 第三者 consumer なし
 ## アーキテクチャ
 
 **MCP tool**:
-tayk が expose する型付き操作。agent (Claude Code / Codex 等) が直接呼ぶ第一級インターフェース。2 層で構成される — workflow tool (粗粒度) と primitive tool (細粒度)。設計ベンチマーク: [html2pptx.app](https://html2pptx.app/) の Skill + MCP tool + REST 3 層。
-_Avoid_: API endpoint, command (MCP tool は MCP protocol で expose される typed operation)
+tayk が expose する型付き操作。agent (Claude Code / Codex 等) が直接呼ぶ第一級インターフェース。2 層で構成される — workflow tool (粗粒度) と primitive tool (細粒度)。設計ベンチマーク: [html2pptx.app](https://html2pptx.app/) の Skill + MCP tool + REST 3 層。ドット表記 (`benchmark.collect`) が正書。MCP protocol 上の wire 名はドットをアンダースコアへ機械変換した `benchmark_collect` 形式（Claude API の tool 名制約 `^[a-zA-Z0-9_-]{1,64}$` にドットが含まれないため）。
+_Avoid_: API endpoint, command (MCP tool は MCP protocol で expose される typed operation)、wire 名にドットを使うこと
 
 **workflow tool**:
 人間の GO/NO-GO 判断ゲートで区切られた粗粒度の MCP tool。`collection.plan` (TTP 収集・分析→企画) / `collection.produce` (音源→動画→サムネ) / `collection.publish` (upload→公開後運用) の 3 本。tool 内部で状態管理し、resume 可能。
@@ -76,6 +76,14 @@ local store が兼ねる読み取り専用のクエリ面。書き込みの正�
 _Avoid_: キャッシュ (③ と混同する)、SSOT (read model は読み口であって正本ではない)
 
 ## コンテンツ制作
+
+**TTP**:
+「徹底的にパクる」の略。実績のある競合チャンネル（benchmark 対象）の当たりパターン（テーマ選定・サムネ・タグ・構成）を分析し、自チャンネルの企画に転写する戦略。collection lifecycle の最初の区間（TTP 収集・分析 → 企画）の基礎となる。
+_Avoid_: Time To Publish 等の他義に展開すること、単なる「競合分析」(TTP は分析に留まらず転写までを含む)
+
+**当たり動画**:
+benchmark 対象チャンネルの直近動画のうち、config の再生数閾値 (min_views) を満たし TTP の転写元候補となる動画。企画候補の単位は当たり動画 1 本（抽象テーマへの束ねは tool ではなく agent が行う）。
+_Avoid_: バズ動画 (バイラル性を含意する)、ヒット動画
 
 **collection**:
 1 本の YouTube 動画としてまとめられる楽曲群とその成果物一式。
