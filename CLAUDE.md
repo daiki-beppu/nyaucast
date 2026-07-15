@@ -34,3 +34,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## v0.1.0 のゲート
 
 collection フルライフサイクル 1 周（TTP ベンチマーク収集 → 企画 → 音源 → 動画 → upload → description）を first-party チャンネルで dogfood 完走できること。これ以外（自チャンネル実績分析 / dashboard / Remotion / codec 全 5 本）は v0.2 以降に 1 リリース 1 テーマで直列に積む。スコープを膨らませる提案は issue 化して先送りする。
+
+## Agent skills
+
+### Issue tracker
+
+Issue は GitHub Issues（daiki-beppu/tayk、`gh` CLI 経由）で管理し、実装は takt 前提（用途ごとに workflow が異なる）。See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+5 つの triage ロールは既存ラベルを活用（`needs-info` → `question`、`ready-for-human` → `help wanted` 等）。See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: ルートの `CONTEXT.md`（グロッサリ）+ `docs/adr/`。See `docs/agents/domain.md`.
