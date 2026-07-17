@@ -1,0 +1,23 @@
+{
+  "name": "tayk",
+  "version": "0.0.0",
+  "type": "module",
+  "bin": {
+    "tayk": "bin/tayk.js"
+  },
+  "files": [
+    "bin/tayk.js",
+    "src"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.14",
+    "typescript": "7.0.2"
+  }
+}
