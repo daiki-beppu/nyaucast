@@ -212,7 +212,8 @@ describe("tayk launcher", () => {
 
       const result = runLauncher({ args: [], cwd: directory, path: emptyPath });
 
-      expect(result.status).not.toBe(0);
+      expect(result.status).toBe(1);
+      expect(result.signal).toBeNull();
       expect(result.stderr).toMatch(installationGuidePattern);
       expect(result.stderr).toMatch(installationUrlPattern);
       expect(result.stdout).not.toMatch(installationGuidePattern);
@@ -230,7 +231,8 @@ describe("tayk launcher", () => {
 
       const result = runLauncher({ args: [], cwd: directory, path: binDirectory });
 
-      expect(result.status).not.toBe(0);
+      expect(result.status).toBe(1);
+      expect(result.signal).toBeNull();
       expect(result.stderr).toMatch(/EACCES|permission denied/i);
       expect(result.stderr).not.toMatch(installationGuidePattern);
       expect(result.stderr).not.toMatch(installationUrlPattern);

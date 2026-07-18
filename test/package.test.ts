@@ -229,8 +229,7 @@ describe("package foundation", () => {
     expect(new Set(packageFiles as string[])).toEqual(new Set(["bin/tayk.js", "src"]));
     expect(launcher.split("\n")[0]).toBe("#!/usr/bin/env node");
     expect(statSync(launcherPath).mode & 0o111).not.toBe(0);
-    expect(scripts["typecheck"]).toBe("tsc --noEmit");
-    expect(Object.keys(scripts).filter((name) => /build|bundle|declaration/i.test(name))).toEqual([]);
+    expect(scripts).toEqual({ typecheck: "tsc --noEmit" });
     expect(existsSync(join(packageRoot, "dist"))).toBeFalse();
 
     expect(dependencies["@modelcontextprotocol/sdk"]).toBe("1.29.0");
@@ -318,7 +317,8 @@ describe("package foundation", () => {
         killSignal: "SIGKILL",
       });
       requireCompletedSubprocess("installed tayk shim without Bun", withoutBun);
-      expect(withoutBun.status).not.toBe(0);
+      expect(withoutBun.status).toBe(1);
+      expect(withoutBun.signal).toBeNull();
       expect(withoutBun.stderr).toMatch(installationGuidePattern);
     });
   });
