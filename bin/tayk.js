@@ -16,16 +16,12 @@ if (result.error) {
   } else {
     console.error(`Failed to start Bun: ${result.error.message}`);
   }
-  process.exit(1);
-}
-
-if (result.signal) {
+  process.exitCode = 1;
+} else if (result.signal) {
   process.kill(process.pid, result.signal);
-}
-
-if (result.status === null) {
+} else if (result.status === null) {
   console.error("Bun exited without an exit status.");
-  process.exit(1);
+  process.exitCode = 1;
+} else {
+  process.exitCode = result.status;
 }
-
-process.exit(result.status);

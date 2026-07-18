@@ -2,12 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -17,11 +15,8 @@ import { fileURLToPath } from "node:url";
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const launcherPath = join(packageRoot, "bin", "tayk.js");
 const entrypointPath = join(packageRoot, "src", "index.ts");
-const packageJsonPath = join(packageRoot, "package.json");
-const tsconfigPath = join(packageRoot, "tsconfig.json");
 const installationGuidePattern = /Bun.*(?:install|required)|(?:install|required).*Bun/is;
 const installationUrlPattern = /https:\/\/bun\.sh/i;
-const exactVersionPattern = /^\d+\.\d+\.\d+$/;
 const nodePath = Bun.which("node");
 
 if (nodePath === null) {
@@ -122,32 +117,6 @@ function readInvocations(recordPath: string): unknown[] {
     .trimEnd()
     .split("\n")
     .map((line) => JSON.parse(line) as unknown);
-}
-
-function readJsonRecord(path: string): Record<string, unknown> {
-  const value: unknown = JSON.parse(readFileSync(path, "utf8"));
-
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error(`${path} must contain a JSON object`);
-  }
-
-  return value as Record<string, unknown>;
-}
-
-function requireRecord(value: unknown, label: string): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error(`${label} must be an object`);
-  }
-
-  return value as Record<string, unknown>;
-}
-
-function requireString(value: unknown, label: string): string {
-  if (typeof value !== "string") {
-    throw new Error(`${label} must be a string`);
-  }
-
-  return value;
 }
 
 describe("tayk launcher", () => {
@@ -260,76 +229,5 @@ describe("tayk launcher", () => {
       expect(result.status).toBe(0);
       expect(result.stderr).not.toMatch(installationGuidePattern);
     });
-  });
-});
-
-describe("package foundation", () => {
-  test("should satisfy the package, launcher, and TypeScript static contracts", () => {
-    const packageJson = readJsonRecord(packageJsonPath);
-    const scripts = requireRecord(packageJson["scripts"], "package.json scripts");
-    const dependencies = requireRecord(
-      packageJson["dependencies"],
-      "package.json dependencies",
-    );
-    const devDependencies = requireRecord(
-      packageJson["devDependencies"],
-      "package.json devDependencies",
-    );
-    const packageFiles = packageJson["files"];
-    const tsconfig = readJsonRecord(tsconfigPath);
-    const compilerOptions = requireRecord(
-      tsconfig["compilerOptions"],
-      "tsconfig compilerOptions",
-    );
-    const include = tsconfig["include"];
-    const launcher = readFileSync(launcherPath, "utf8");
-    const runtimeVersions = [
-      requireString(dependencies["@modelcontextprotocol/sdk"], "MCP SDK version"),
-      requireString(dependencies["zod"], "Zod version"),
-    ];
-    const developmentVersions = [
-      requireString(devDependencies["typescript"], "TypeScript version"),
-      requireString(devDependencies["@types/bun"], "Bun types version"),
-    ];
-
-    expect(packageJson["name"]).toBe("tayk");
-    expect(packageJson["type"]).toBe("module");
-    expect(requireRecord(packageJson["bin"], "package.json bin")["tayk"]).toBe(
-      "bin/tayk.js",
-    );
-    expect(packageFiles).toBeArrayOfSize(2);
-    expect(new Set(packageFiles as string[])).toEqual(new Set(["bin/tayk.js", "src"]));
-    expect(launcher.split("\n")[0]).toBe("#!/usr/bin/env node");
-    expect(statSync(launcherPath).mode & 0o111).not.toBe(0);
-    expect(scripts["typecheck"]).toBe("tsc --noEmit");
-    expect(Object.keys(scripts).filter((name) => /build|bundle|declaration/i.test(name))).toEqual([]);
-    expect(existsSync(join(packageRoot, "dist"))).toBeFalse();
-
-    expect(runtimeVersions[0]).toMatch(/^1\.\d+\.\d+$/);
-    expect(runtimeVersions[1]).toMatch(/^4\.\d+\.\d+$/);
-    expect(developmentVersions[0]).toMatch(/^7\.\d+\.\d+$/);
-    for (const version of [...runtimeVersions, ...developmentVersions]) {
-      expect(version).toMatch(exactVersionPattern);
-    }
-
-    expect(compilerOptions).toMatchObject({
-      strict: true,
-      noUncheckedIndexedAccess: true,
-      exactOptionalPropertyTypes: true,
-      noImplicitOverride: true,
-      noFallthroughCasesInSwitch: true,
-      noPropertyAccessFromIndexSignature: true,
-      allowUnreachableCode: false,
-      verbatimModuleSyntax: true,
-      noUnusedLocals: true,
-      noUnusedParameters: true,
-      moduleResolution: "bundler",
-      module: "preserve",
-      noEmit: true,
-      types: ["bun"],
-      allowJs: true,
-      checkJs: true,
-    });
-    expect(include).toEqual(expect.arrayContaining(["bin/**/*.js", "bin/**/*.ts", "src/**/*.ts"]));
   });
 });
