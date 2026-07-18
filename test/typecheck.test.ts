@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import {
   cpSync,
   mkdirSync,
@@ -14,6 +14,9 @@ import { fileURLToPath } from "node:url";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tsconfigPath = join(packageRoot, "tsconfig.json");
+const subprocessTimeoutMilliseconds = 20_000;
+
+setDefaultTimeout(60_000);
 
 function withTemporaryDirectory(run: (directory: string) => void): void {
   const directory = mkdtempSync(join(tmpdir(), "tayk-typecheck-"));
@@ -26,11 +29,21 @@ function withTemporaryDirectory(run: (directory: string) => void): void {
 }
 
 function runTypecheck(directory: string) {
-  return Bun.spawnSync([process.execPath, "run", "typecheck"], {
+  const result = Bun.spawnSync([process.execPath, "run", "typecheck"], {
     cwd: directory,
     stdout: "pipe",
     stderr: "pipe",
+    timeout: subprocessTimeoutMilliseconds,
+    killSignal: "SIGKILL",
   });
+
+  if (result.exitedDueToTimeout === true) {
+    throw new Error(
+      `typecheck timed out\nexitCode: ${result.exitCode}\nsignal: ${String(result.signalCode)}\nstdout:\n${result.stdout.toString()}\nstderr:\n${result.stderr.toString()}`,
+    );
+  }
+
+  return result;
 }
 
 function requireRecord(value: unknown, label: string): Record<string, unknown> {

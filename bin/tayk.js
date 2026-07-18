@@ -20,5 +20,5 @@ if (result.error) {
 } else if (result.signal) {
   process.kill(process.pid, result.signal);
 } else {
-  process.exitCode = result.status ?? 1;
+  process.exitCode = /** @type {number} */ (result.status);
 }

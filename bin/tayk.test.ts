@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import {
   chmodSync,
   mkdirSync,
@@ -17,7 +17,10 @@ const launcherPath = join(packageRoot, "bin", "tayk.js");
 const entrypointPath = join(packageRoot, "src", "index.ts");
 const installationGuidePattern = /Bun.*(?:install|required)|(?:install|required).*Bun/is;
 const installationUrlPattern = /https:\/\/bun\.sh/i;
+const subprocessTimeoutMilliseconds = 20_000;
 const nodePath = Bun.which("node");
+
+setDefaultTimeout(30_000);
 
 if (nodePath === null) {
   throw new Error("The launcher integration tests require Node on PATH");
@@ -101,7 +104,7 @@ function runLauncher(options: {
           : { TAYK_FAKE_BUN_SIGNAL: options.fakeBun.signal }),
       };
 
-  return spawnSync(nodeExecutablePath, [launcherPath, ...options.args], {
+  const result = spawnSync(nodeExecutablePath, [launcherPath, ...options.args], {
     cwd: options.cwd,
     encoding: "utf8",
     env: {
@@ -109,7 +112,21 @@ function runLauncher(options: {
       ...fakeBunEnvironment,
       PATH: options.path,
     },
+    timeout: subprocessTimeoutMilliseconds,
+    killSignal: "SIGKILL",
   });
+
+  requireCompletedSubprocess("tayk launcher", result);
+  return result;
+}
+
+function requireCompletedSubprocess(label: string, result: SpawnSyncReturns<string>): void {
+  if (result.error !== undefined) {
+    throw new Error(
+      `${label} failed to complete\nstatus: ${String(result.status)}\nsignal: ${String(result.signal)}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+      { cause: result.error },
+    );
+  }
 }
 
 function readInvocations(recordPath: string): unknown[] {

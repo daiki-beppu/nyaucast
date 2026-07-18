@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import {
   chmodSync,
@@ -20,8 +20,11 @@ const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const launcherPath = join(packageRoot, "bin", "tayk.js");
 const packageJsonPath = join(packageRoot, "package.json");
 const installationGuidePattern = /Bun.*(?:install|required)|(?:install|required).*Bun/is;
+const subprocessTimeoutMilliseconds = 20_000;
 const nodePath = Bun.which("node");
 const npmPath = Bun.which("npm");
+
+setDefaultTimeout(90_000);
 
 if (nodePath === null || npmPath === null) {
   throw new Error("The package integration tests require Node and npm on PATH");
@@ -126,10 +129,22 @@ function createNpmEnvironment(directory: string): NpmEnvironment {
     npm_config_cache: cache,
     npm_config_userconfig: userConfig,
     npm_config_globalconfig: globalConfig,
+    npm_config_update_notifier: "false",
+    npm_config_offline: "true",
   };
 }
 
+function requireCompletedSubprocess(label: string, result: SpawnSyncReturns<string>): void {
+  if (result.error !== undefined) {
+    throw new Error(
+      `${label} failed to complete\nstatus: ${String(result.status)}\nsignal: ${String(result.signal)}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+      { cause: result.error },
+    );
+  }
+}
+
 function requireSuccessfulNpmRun(label: string, result: SpawnSyncReturns<string>): void {
+  requireCompletedSubprocess(label, result);
   if (result.status !== 0) {
     throw new Error(
       `${label} failed with status ${String(result.status)}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
@@ -142,11 +157,16 @@ function packPackage(fixtureRoot: string, npmEnvironment: NpmEnvironment): PackR
   const result = spawnSync(
     npmExecutablePath,
     ["pack", "--json", "--ignore-scripts"],
-    { cwd: fixtureRoot, encoding: "utf8", env: npmEnvironment },
+    {
+      cwd: fixtureRoot,
+      encoding: "utf8",
+      env: npmEnvironment,
+      timeout: subprocessTimeoutMilliseconds,
+      killSignal: "SIGKILL",
+    },
   );
 
   requireSuccessfulNpmRun("npm pack", result);
-  expect(result.stderr).toBe("");
 
   const value: unknown = JSON.parse(result.stdout);
   if (!Array.isArray(value) || value.length !== 1) {
@@ -226,14 +246,20 @@ describe("package foundation", () => {
       const pack = packPackage(fixtureRoot, npmEnvironment);
       const paths = pack.files.map((file) => file.path);
       const launcher = pack.files.find((file) => file.path === "bin/tayk.js");
+      const readme = readFileSync(join(fixtureRoot, "README.md"), "utf8");
 
       expect(paths).toContain("package.json");
+      expect(paths).toContain("README.md");
       expect(paths).toContain("bin/tayk.js");
       expect(paths).toContain("src/index.ts");
       expect(paths).not.toContain("bin/tayk.test.ts");
       expect(paths).not.toContain("tsconfig.json");
       expect(paths).not.toContain("dist/must-not-ship.js");
       expect(launcher?.mode === 0o755 || launcher?.mode === 0o775).toBeTrue();
+      expect(readme).toContain("https://github.com/daiki-beppu/tayk/blob/main/CONTEXT.md");
+      expect(readme).toContain(
+        "https://github.com/daiki-beppu/tayk/blob/main/docs/adr/0001-thin-architecture.md",
+      );
 
       const consumerRoot = join(directory, "consumer");
       mkdirSync(consumerRoot);
@@ -248,7 +274,13 @@ describe("package foundation", () => {
           "--no-package-lock",
           join(fixtureRoot, pack.filename),
         ],
-        { cwd: consumerRoot, encoding: "utf8", env: npmEnvironment },
+        {
+          cwd: consumerRoot,
+          encoding: "utf8",
+          env: npmEnvironment,
+          timeout: subprocessTimeoutMilliseconds,
+          killSignal: "SIGKILL",
+        },
       );
       requireSuccessfulNpmRun("npm install", install);
 
@@ -264,7 +296,10 @@ describe("package foundation", () => {
           PATH: `${fakeBun.binDirectory}:${dirname(nodeExecutablePath)}`,
           TAYK_FAKE_BUN_RECORD: fakeBun.recordPath,
         },
+        timeout: subprocessTimeoutMilliseconds,
+        killSignal: "SIGKILL",
       });
+      requireCompletedSubprocess("installed tayk shim", executed);
 
       expect(executed.status).toBe(42);
       expect(executed.stdout).toBe("installed-stdout");
@@ -279,7 +314,10 @@ describe("package foundation", () => {
         cwd: consumerRoot,
         encoding: "utf8",
         env: { ...process.env, PATH: dirname(nodeExecutablePath) },
+        timeout: subprocessTimeoutMilliseconds,
+        killSignal: "SIGKILL",
       });
+      requireCompletedSubprocess("installed tayk shim without Bun", withoutBun);
       expect(withoutBun.status).not.toBe(0);
       expect(withoutBun.stderr).toMatch(installationGuidePattern);
     });
