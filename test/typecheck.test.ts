@@ -25,7 +25,7 @@ function withTemporaryDirectory(run: (directory: string) => void): void {
   }
 }
 
-function runTypecheck(directory: string): Bun.SpawnSyncReturns<Uint8Array, Uint8Array> {
+function runTypecheck(directory: string) {
   return Bun.spawnSync([process.execPath, "run", "typecheck"], {
     cwd: directory,
     stdout: "pipe",
@@ -50,6 +50,7 @@ describe("TypeScript configuration", () => {
     const compilerOptions = requireRecord(tsconfig["compilerOptions"], "compilerOptions");
 
     expect(compilerOptions).toMatchObject({
+      target: "ESNext",
       strict: true,
       noUncheckedIndexedAccess: true,
       exactOptionalPropertyTypes: true,
@@ -68,7 +69,7 @@ describe("TypeScript configuration", () => {
       checkJs: true,
     });
     expect(tsconfig["include"]).toEqual(
-      expect.arrayContaining(["bin/**/*.js", "bin/**/*.ts", "src/**/*.ts"]),
+      expect.arrayContaining(["bin/**/*.js", "bin/**/*.ts", "src/**/*.ts", "test/**/*.ts"]),
     );
   });
 

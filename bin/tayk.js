@@ -19,9 +19,6 @@ if (result.error) {
   process.exitCode = 1;
 } else if (result.signal) {
   process.kill(process.pid, result.signal);
-} else if (result.status === null) {
-  console.error("Bun exited without an exit status.");
-  process.exitCode = 1;
 } else {
-  process.exitCode = result.status;
+  process.exitCode = result.status ?? 1;
 }

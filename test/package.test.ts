@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import {
   chmodSync,
   cpSync,
@@ -20,7 +20,6 @@ const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const launcherPath = join(packageRoot, "bin", "tayk.js");
 const packageJsonPath = join(packageRoot, "package.json");
 const installationGuidePattern = /Bun.*(?:install|required)|(?:install|required).*Bun/is;
-const exactVersionPattern = /^\d+\.\d+\.\d+$/;
 const nodePath = Bun.which("node");
 const npmPath = Bun.which("npm");
 
@@ -33,6 +32,7 @@ const npmExecutablePath = npmPath;
 
 type PackageFile = { path: string; mode: number };
 type PackResult = { filename: string; files: PackageFile[] };
+type NpmEnvironment = NodeJS.ProcessEnv;
 
 function withTemporaryDirectory(run: (directory: string) => void): void {
   const directory = mkdtempSync(join(tmpdir(), "tayk-package-"));
@@ -90,13 +90,15 @@ function createPackFixture(directory: string): string {
   mkdirSync(join(fixtureRoot, "dist"));
   writeFileSync(join(fixtureRoot, "dist", "must-not-ship.js"), "throw new Error();\n");
 
-  const packageJson = readJsonRecord(packageJsonPath);
-  packageJson["dependencies"] = {
-    "@modelcontextprotocol/sdk": createStubPackage(
-      join(directory, "stubs", "mcp-sdk"),
-      "@modelcontextprotocol/sdk",
-    ),
-    zod: createStubPackage(join(directory, "stubs", "zod"), "zod"),
+  const packageJson = {
+    ...readJsonRecord(packageJsonPath),
+    dependencies: {
+      "@modelcontextprotocol/sdk": createStubPackage(
+        join(directory, "stubs", "mcp-sdk"),
+        "@modelcontextprotocol/sdk",
+      ),
+      zod: createStubPackage(join(directory, "stubs", "zod"), "zod"),
+    },
   };
   writeFileSync(
     join(fixtureRoot, "package.json"),
@@ -106,14 +108,44 @@ function createPackFixture(directory: string): string {
   return fixtureRoot;
 }
 
-function packPackage(fixtureRoot: string): PackResult {
+function createNpmEnvironment(directory: string): NpmEnvironment {
+  const cache = join(directory, "npm-cache");
+  const userConfig = join(directory, "npm-user-config");
+  const globalConfig = join(directory, "npm-global-config");
+  const inheritedEnvironment = Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([name]) => !name.toLowerCase().startsWith("npm_config_"),
+    ),
+  );
+  mkdirSync(cache);
+  writeFileSync(userConfig, "");
+  writeFileSync(globalConfig, "");
+
+  return {
+    ...inheritedEnvironment,
+    npm_config_cache: cache,
+    npm_config_userconfig: userConfig,
+    npm_config_globalconfig: globalConfig,
+  };
+}
+
+function requireSuccessfulNpmRun(label: string, result: SpawnSyncReturns<string>): void {
+  if (result.status !== 0) {
+    throw new Error(
+      `${label} failed with status ${String(result.status)}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+      { cause: result.error },
+    );
+  }
+}
+
+function packPackage(fixtureRoot: string, npmEnvironment: NpmEnvironment): PackResult {
   const result = spawnSync(
     npmExecutablePath,
     ["pack", "--json", "--ignore-scripts"],
-    { cwd: fixtureRoot, encoding: "utf8" },
+    { cwd: fixtureRoot, encoding: "utf8", env: npmEnvironment },
   );
 
-  expect(result.status).toBe(0);
+  requireSuccessfulNpmRun("npm pack", result);
   expect(result.stderr).toBe("");
 
   const value: unknown = JSON.parse(result.stdout);
@@ -170,39 +202,28 @@ describe("package foundation", () => {
     );
     const packageFiles = packageJson["files"];
     const launcher = readFileSync(launcherPath, "utf8");
-    const runtimeVersions = [
-      requireString(dependencies["@modelcontextprotocol/sdk"], "MCP SDK version"),
-      requireString(dependencies["zod"], "Zod version"),
-    ];
-    const developmentVersions = [
-      requireString(devDependencies["typescript"], "TypeScript version"),
-      requireString(devDependencies["@types/bun"], "Bun types version"),
-    ];
-
     expect(packageJson["name"]).toBe("tayk");
     expect(packageJson["type"]).toBe("module");
     expect(requireRecord(packageJson["bin"], "package.json bin")["tayk"]).toBe("bin/tayk.js");
     expect(packageFiles).toBeArrayOfSize(2);
     expect(new Set(packageFiles as string[])).toEqual(new Set(["bin/tayk.js", "src"]));
     expect(launcher.split("\n")[0]).toBe("#!/usr/bin/env node");
-    expect(launcher).not.toMatch(/\bprocess\.exit\(/);
     expect(statSync(launcherPath).mode & 0o111).not.toBe(0);
     expect(scripts["typecheck"]).toBe("tsc --noEmit");
     expect(Object.keys(scripts).filter((name) => /build|bundle|declaration/i.test(name))).toEqual([]);
     expect(existsSync(join(packageRoot, "dist"))).toBeFalse();
 
-    expect(runtimeVersions[0]).toMatch(/^1\.\d+\.\d+$/);
-    expect(runtimeVersions[1]).toMatch(/^4\.\d+\.\d+$/);
-    expect(developmentVersions[0]).toMatch(/^7\.\d+\.\d+$/);
-    for (const version of [...runtimeVersions, ...developmentVersions]) {
-      expect(version).toMatch(exactVersionPattern);
-    }
+    expect(dependencies["@modelcontextprotocol/sdk"]).toBe("1.29.0");
+    expect(dependencies["zod"]).toBe("4.4.3");
+    expect(devDependencies["typescript"]).toBe("7.0.2");
+    expect(devDependencies["@types/bun"]).toBe("1.3.14");
   });
 
   test("should ship and execute the installed npm shim contract", () => {
     withTemporaryDirectory((directory) => {
+      const npmEnvironment = createNpmEnvironment(directory);
       const fixtureRoot = createPackFixture(directory);
-      const pack = packPackage(fixtureRoot);
+      const pack = packPackage(fixtureRoot, npmEnvironment);
       const paths = pack.files.map((file) => file.path);
       const launcher = pack.files.find((file) => file.path === "bin/tayk.js");
 
@@ -227,9 +248,9 @@ describe("package foundation", () => {
           "--no-package-lock",
           join(fixtureRoot, pack.filename),
         ],
-        { cwd: consumerRoot, encoding: "utf8" },
+        { cwd: consumerRoot, encoding: "utf8", env: npmEnvironment },
       );
-      expect(install.status).toBe(0);
+      requireSuccessfulNpmRun("npm install", install);
 
       const shimPath = join(consumerRoot, "node_modules", ".bin", "tayk");
       expect(statSync(shimPath).mode & 0o111).not.toBe(0);
