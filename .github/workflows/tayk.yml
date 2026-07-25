@@ -1,0 +1,32 @@
+name: tayk
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Set up tayk
+        uses: ./.github/actions/setup-tayk
+
+      - name: Run tests
+        run: bun test
+
+      - name: Typecheck
+        run: nr typecheck
+
+      - name: Lint
+        run: nr lint
+
+      - name: Check formatting
+        run: nr format:check

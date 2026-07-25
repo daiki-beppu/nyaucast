@@ -10,6 +10,7 @@ import {
   realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -19,7 +20,9 @@ import { fileURLToPath } from "node:url";
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const launcherPath = join(packageRoot, "bin", "tayk.js");
 const packageJsonPath = join(packageRoot, "package.json");
-const installationGuidePattern = /Bun.*(?:install|required)|(?:install|required).*Bun/is;
+const bunLockPath = join(packageRoot, "bun.lock");
+const installationGuidePattern =
+  /Bun.*(?:install|required)|(?:install|required).*Bun/is;
 const subprocessTimeoutMilliseconds = 20_000;
 const nodePath = Bun.which("node");
 const npmPath = Bun.which("npm");
@@ -48,7 +51,7 @@ function withTemporaryDirectory(run: (directory: string) => void): void {
 }
 
 function readJsonRecord(path: string): Record<string, unknown> {
-  const value: unknown = JSON.parse(readFileSync(path, "utf8"));
+  const value: unknown = Bun.JSON5.parse(readFileSync(path, "utf8"));
 
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error(`${path} must contain a JSON object`);
@@ -77,7 +80,7 @@ function createStubPackage(directory: string, name: string): string {
   mkdirSync(directory, { recursive: true });
   writeFileSync(
     join(directory, "package.json"),
-    `${JSON.stringify({ name, version: "0.0.0", type: "module", main: "index.js" }, null, 2)}\n`,
+    `${JSON.stringify({ name, version: "0.0.0", type: "module", main: "index.js" }, null, 2)}\n`
   );
   writeFileSync(join(directory, "index.js"), "export {};\n");
   return `file:${directory}`;
@@ -87,25 +90,35 @@ function createPackFixture(directory: string): string {
   const fixtureRoot = join(directory, "package");
   mkdirSync(fixtureRoot);
   cpSync(join(packageRoot, "README.md"), join(fixtureRoot, "README.md"));
-  cpSync(join(packageRoot, "bin"), join(fixtureRoot, "bin"), { recursive: true });
-  cpSync(join(packageRoot, "src"), join(fixtureRoot, "src"), { recursive: true });
-  cpSync(join(packageRoot, "tsconfig.json"), join(fixtureRoot, "tsconfig.json"));
+  cpSync(join(packageRoot, "bin"), join(fixtureRoot, "bin"), {
+    recursive: true,
+  });
+  cpSync(join(packageRoot, "src"), join(fixtureRoot, "src"), {
+    recursive: true,
+  });
+  cpSync(
+    join(packageRoot, "tsconfig.json"),
+    join(fixtureRoot, "tsconfig.json")
+  );
   mkdirSync(join(fixtureRoot, "dist"));
-  writeFileSync(join(fixtureRoot, "dist", "must-not-ship.js"), "throw new Error();\n");
+  writeFileSync(
+    join(fixtureRoot, "dist", "must-not-ship.js"),
+    "throw new Error();\n"
+  );
 
   const packageJson = {
     ...readJsonRecord(packageJsonPath),
     dependencies: {
       "@modelcontextprotocol/sdk": createStubPackage(
         join(directory, "stubs", "mcp-sdk"),
-        "@modelcontextprotocol/sdk",
+        "@modelcontextprotocol/sdk"
       ),
       zod: createStubPackage(join(directory, "stubs", "zod"), "zod"),
     },
   };
   writeFileSync(
     join(fixtureRoot, "package.json"),
-    `${JSON.stringify(packageJson, null, 2)}\n`,
+    `${JSON.stringify(packageJson, null, 2)}\n`
   );
 
   return fixtureRoot;
@@ -117,8 +130,8 @@ function createNpmEnvironment(directory: string): NpmEnvironment {
   const globalConfig = join(directory, "npm-global-config");
   const inheritedEnvironment = Object.fromEntries(
     Object.entries(process.env).filter(
-      ([name]) => !name.toLowerCase().startsWith("npm_config_"),
-    ),
+      ([name]) => !name.toLowerCase().startsWith("npm_config_")
+    )
   );
   mkdirSync(cache);
   writeFileSync(userConfig, "");
@@ -134,26 +147,35 @@ function createNpmEnvironment(directory: string): NpmEnvironment {
   };
 }
 
-function requireCompletedSubprocess(label: string, result: SpawnSyncReturns<string>): void {
+function requireCompletedSubprocess(
+  label: string,
+  result: SpawnSyncReturns<string>
+): void {
   if (result.error !== undefined) {
     throw new Error(
       `${label} failed to complete\nstatus: ${String(result.status)}\nsignal: ${String(result.signal)}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
-      { cause: result.error },
+      { cause: result.error }
     );
   }
 }
 
-function requireSuccessfulNpmRun(label: string, result: SpawnSyncReturns<string>): void {
+function requireSuccessfulNpmRun(
+  label: string,
+  result: SpawnSyncReturns<string>
+): void {
   requireCompletedSubprocess(label, result);
   if (result.status !== 0) {
     throw new Error(
       `${label} failed with status ${String(result.status)}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
-      { cause: result.error },
+      { cause: result.error }
     );
   }
 }
 
-function packPackage(fixtureRoot: string, npmEnvironment: NpmEnvironment): PackResult {
+function packPackage(
+  fixtureRoot: string,
+  npmEnvironment: NpmEnvironment
+): PackResult {
   const result = spawnSync(
     npmExecutablePath,
     ["pack", "--json", "--ignore-scripts"],
@@ -163,7 +185,7 @@ function packPackage(fixtureRoot: string, npmEnvironment: NpmEnvironment): PackR
       env: npmEnvironment,
       timeout: subprocessTimeoutMilliseconds,
       killSignal: "SIGKILL",
-    },
+    }
   );
 
   requireSuccessfulNpmRun("npm pack", result);
@@ -187,12 +209,18 @@ function packPackage(fixtureRoot: string, npmEnvironment: NpmEnvironment): PackR
       if (typeof mode !== "number") {
         throw new Error(`npm pack file ${index} mode must be a number`);
       }
-      return { path: requireString(item["path"], `npm pack file ${index} path`), mode };
+      return {
+        path: requireString(item["path"], `npm pack file ${index} path`),
+        mode,
+      };
     }),
   };
 }
 
-function createFakeBun(directory: string): { binDirectory: string; recordPath: string } {
+function createFakeBun(directory: string): {
+  binDirectory: string;
+  recordPath: string;
+} {
   const binDirectory = join(directory, "fake-bun-bin");
   const recordPath = join(directory, "bun-invocations.jsonl");
   const fakeBunPath = join(binDirectory, "bun");
@@ -205,7 +233,7 @@ appendFileSync(process.env.TAYK_FAKE_BUN_RECORD, JSON.stringify(process.argv.sli
 process.stdout.write("installed-stdout");
 process.stderr.write("installed-stderr");
 process.exit(42);
-`,
+`
   );
   chmodSync(fakeBunPath, 0o755);
   return { binDirectory, recordPath };
@@ -214,28 +242,182 @@ process.exit(42);
 describe("package foundation", () => {
   test("should satisfy the package and launcher static contracts", () => {
     const packageJson = readJsonRecord(packageJsonPath);
-    const scripts = requireRecord(packageJson["scripts"], "package.json scripts");
-    const dependencies = requireRecord(packageJson["dependencies"], "package.json dependencies");
+    const scripts = requireRecord(
+      packageJson["scripts"],
+      "package.json scripts"
+    );
+    const dependencies = requireRecord(
+      packageJson["dependencies"],
+      "package.json dependencies"
+    );
     const devDependencies = requireRecord(
       packageJson["devDependencies"],
-      "package.json devDependencies",
+      "package.json devDependencies"
     );
     const packageFiles = packageJson["files"];
     const launcher = readFileSync(launcherPath, "utf8");
     expect(packageJson["name"]).toBe("tayk");
     expect(packageJson["type"]).toBe("module");
-    expect(requireRecord(packageJson["bin"], "package.json bin")["tayk"]).toBe("bin/tayk.js");
+    expect(requireRecord(packageJson["bin"], "package.json bin")["tayk"]).toBe(
+      "bin/tayk.js"
+    );
     expect(packageFiles).toBeArrayOfSize(2);
-    expect(new Set(packageFiles as string[])).toEqual(new Set(["bin/tayk.js", "src"]));
+    expect(new Set(packageFiles as string[])).toEqual(
+      new Set(["bin/tayk.js", "src"])
+    );
     expect(launcher.split("\n")[0]).toBe("#!/usr/bin/env node");
     expect(statSync(launcherPath).mode & 0o111).not.toBe(0);
-    expect(scripts).toEqual({ typecheck: "tsc --noEmit" });
+    expect(scripts).toMatchObject({
+      "format:check": "oxfmt --check .",
+      "format:fix": "oxfmt --write",
+      lint: "oxlint --disable-nested-config",
+      "lint:fix": "oxlint --disable-nested-config --fix",
+      prepare: "if [ -e .git ]; then lefthook install; fi",
+      test: "bun test",
+      typecheck: "tsc --noEmit",
+    });
     expect(existsSync(join(packageRoot, "dist"))).toBeFalse();
 
     expect(dependencies["@modelcontextprotocol/sdk"]).toBe("1.29.0");
     expect(dependencies["zod"]).toBe("4.4.3");
     expect(devDependencies["typescript"]).toBe("7.0.2");
     expect(devDependencies["@types/bun"]).toBe("1.3.14");
+    expect(devDependencies["lefthook"]).toBe("2.1.10");
+    expect(devDependencies["oxfmt"]).toBe("0.60.0");
+    expect(devDependencies["oxlint"]).toBe("1.75.0");
+    expect(devDependencies["oxlint-tsgolint"]).toBe("7.0.2001");
+    expect(devDependencies["ultracite"]).toBe("7.9.4");
+  });
+
+  test("should keep the Bun lockfile root dependencies aligned", () => {
+    const packageJson = readJsonRecord(packageJsonPath);
+    const lockfile = readJsonRecord(bunLockPath);
+    const workspace = requireRecord(
+      requireRecord(lockfile["workspaces"], "bun.lock workspaces")[""],
+      "bun.lock root workspace"
+    );
+
+    expect(workspace["dependencies"]).toEqual(packageJson["dependencies"]);
+    expect(workspace["devDependencies"]).toEqual(
+      packageJson["devDependencies"]
+    );
+  });
+
+  test("should succeed in prepare without a Git directory", () => {
+    withTemporaryDirectory((directory) => {
+      cpSync(
+        join(packageRoot, "package.json"),
+        join(directory, "package.json")
+      );
+      symlinkSync(
+        join(packageRoot, "node_modules"),
+        join(directory, "node_modules")
+      );
+
+      const result = spawnSync(process.execPath, ["run", "prepare"], {
+        cwd: directory,
+        encoding: "utf8",
+        timeout: subprocessTimeoutMilliseconds,
+        killSignal: "SIGKILL",
+      });
+
+      requireCompletedSubprocess("prepare without Git", result);
+      expect(result.status).toBe(0);
+    });
+  });
+
+  test("should install hooks in a Git directory", () => {
+    withTemporaryDirectory((directory) => {
+      cpSync(
+        join(packageRoot, "package.json"),
+        join(directory, "package.json")
+      );
+      cpSync(
+        join(packageRoot, "lefthook.yml"),
+        join(directory, "lefthook.yml")
+      );
+      symlinkSync(
+        join(packageRoot, "node_modules"),
+        join(directory, "node_modules")
+      );
+      const gitInit = spawnSync("git", ["init", "--quiet"], {
+        cwd: directory,
+        encoding: "utf8",
+      });
+      requireSuccessfulNpmRun("git init", gitInit);
+
+      const result = spawnSync(process.execPath, ["run", "prepare"], {
+        cwd: directory,
+        encoding: "utf8",
+        timeout: subprocessTimeoutMilliseconds,
+        killSignal: "SIGKILL",
+      });
+
+      requireSuccessfulNpmRun("prepare in Git", result);
+      expect(
+        existsSync(join(directory, ".git", "hooks", "pre-commit"))
+      ).toBeTrue();
+    });
+  });
+
+  test("should install hooks in a linked Git worktree", () => {
+    withTemporaryDirectory((directory) => {
+      const repositoryRoot = join(directory, "repository");
+      const cloneRepository = spawnSync(
+        "git",
+        ["clone", "--quiet", "--no-local", packageRoot, repositoryRoot],
+        { encoding: "utf8" }
+      );
+      requireSuccessfulNpmRun("clone Git repository", cloneRepository);
+
+      const worktreeRoot = join(directory, "worktree");
+      const addWorktree = spawnSync(
+        "git",
+        ["worktree", "add", "--detach", "--quiet", worktreeRoot, "HEAD"],
+        {
+          cwd: repositoryRoot,
+          encoding: "utf8",
+        }
+      );
+
+      try {
+        requireSuccessfulNpmRun("git worktree add", addWorktree);
+        cpSync(
+          join(packageRoot, "package.json"),
+          join(worktreeRoot, "package.json")
+        );
+        cpSync(
+          join(packageRoot, "lefthook.yml"),
+          join(worktreeRoot, "lefthook.yml")
+        );
+        symlinkSync(
+          join(packageRoot, "node_modules"),
+          join(worktreeRoot, "node_modules")
+        );
+
+        const result = spawnSync(process.execPath, ["run", "prepare"], {
+          cwd: worktreeRoot,
+          encoding: "utf8",
+          timeout: subprocessTimeoutMilliseconds,
+          killSignal: "SIGKILL",
+        });
+        requireSuccessfulNpmRun("prepare in linked Git worktree", result);
+
+        const hooksPath = spawnSync(
+          "git",
+          ["rev-parse", "--git-path", "hooks"],
+          { cwd: worktreeRoot, encoding: "utf8" }
+        );
+        requireSuccessfulNpmRun("resolve worktree hooks", hooksPath);
+        const hooksDirectory = resolve(worktreeRoot, hooksPath.stdout.trim());
+        expect(existsSync(join(hooksDirectory, "pre-commit"))).toBeTrue();
+      } finally {
+        spawnSync("git", ["worktree", "remove", "--force", worktreeRoot], {
+          cwd: repositoryRoot,
+          encoding: "utf8",
+        });
+      }
+    });
   });
 
   test("should ship and execute the installed npm shim contract", () => {
@@ -255,9 +437,11 @@ describe("package foundation", () => {
       expect(paths).not.toContain("tsconfig.json");
       expect(paths).not.toContain("dist/must-not-ship.js");
       expect(launcher?.mode === 0o755 || launcher?.mode === 0o775).toBeTrue();
-      expect(readme).toContain("https://github.com/daiki-beppu/tayk/blob/main/CONTEXT.md");
       expect(readme).toContain(
-        "https://github.com/daiki-beppu/tayk/blob/main/docs/adr/0001-thin-architecture.md",
+        "https://github.com/daiki-beppu/tayk/blob/main/CONTEXT.md"
+      );
+      expect(readme).toContain(
+        "https://github.com/daiki-beppu/tayk/blob/main/docs/adr/0001-thin-architecture.md"
       );
 
       const consumerRoot = join(directory, "consumer");
@@ -279,7 +463,7 @@ describe("package foundation", () => {
           env: npmEnvironment,
           timeout: subprocessTimeoutMilliseconds,
           killSignal: "SIGKILL",
-        },
+        }
       );
       requireSuccessfulNpmRun("npm install", install);
 
@@ -303,10 +487,14 @@ describe("package foundation", () => {
       expect(executed.status).toBe(42);
       expect(executed.stdout).toBe("installed-stdout");
       expect(executed.stderr).toBe("installed-stderr");
-      const invocation = JSON.parse(readFileSync(fakeBun.recordPath, "utf8")) as unknown[];
+      const invocation = JSON.parse(
+        readFileSync(fakeBun.recordPath, "utf8")
+      ) as unknown[];
       expect(invocation.slice(1)).toEqual(args);
       expect(invocation[0]).toBe(
-        realpathSync(join(consumerRoot, "node_modules", "tayk", "src", "index.ts")),
+        realpathSync(
+          join(consumerRoot, "node_modules", "tayk", "src", "index.ts")
+        )
       );
 
       const withoutBun = spawnSync(shimPath, [], {

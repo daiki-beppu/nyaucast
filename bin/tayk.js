@@ -11,7 +11,7 @@ const result = spawnSync("bun", [entrypoint, ...process.argv.slice(2)], {
 if (result.error) {
   if ("code" in result.error && result.error.code === "ENOENT") {
     console.error(
-      "Bun is required to run tayk. Install Bun from https://bun.sh/docs/installation",
+      "Bun is required to run tayk. Install Bun from https://bun.sh/docs/installation"
     );
   } else {
     console.error(`Failed to start Bun: ${result.error.message}`);

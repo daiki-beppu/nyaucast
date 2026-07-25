@@ -39,7 +39,7 @@ function runTypecheck(directory: string) {
 
   if (result.exitedDueToTimeout === true) {
     throw new Error(
-      `typecheck timed out\nexitCode: ${result.exitCode}\nsignal: ${String(result.signalCode)}\nstdout:\n${result.stdout.toString()}\nstderr:\n${result.stderr.toString()}`,
+      `typecheck timed out\nexitCode: ${result.exitCode}\nsignal: ${String(result.signalCode)}\nstdout:\n${result.stdout.toString()}\nstderr:\n${result.stderr.toString()}`
     );
   }
 
@@ -58,9 +58,12 @@ describe("TypeScript configuration", () => {
   test("should retain the required strict compiler configuration", () => {
     const tsconfig = requireRecord(
       JSON.parse(readFileSync(tsconfigPath, "utf8")) as unknown,
-      "tsconfig.json",
+      "tsconfig.json"
     );
-    const compilerOptions = requireRecord(tsconfig["compilerOptions"], "compilerOptions");
+    const compilerOptions = requireRecord(
+      tsconfig["compilerOptions"],
+      "compilerOptions"
+    );
 
     expect(compilerOptions).toMatchObject({
       target: "ESNext",
@@ -82,15 +85,29 @@ describe("TypeScript configuration", () => {
       checkJs: true,
     });
     expect(tsconfig["include"]).toEqual(
-      expect.arrayContaining(["bin/**/*.js", "bin/**/*.ts", "src/**/*.ts", "test/**/*.ts"]),
+      expect.arrayContaining([
+        "bin/**/*.js",
+        "bin/**/*.ts",
+        "src/**/*.ts",
+        "test/**/*.ts",
+      ])
     );
   });
 
   test("should accept valid source and reject a type mismatch", () => {
     withTemporaryDirectory((directory) => {
-      cpSync(join(packageRoot, "package.json"), join(directory, "package.json"));
-      cpSync(join(packageRoot, "tsconfig.json"), join(directory, "tsconfig.json"));
-      symlinkSync(join(packageRoot, "node_modules"), join(directory, "node_modules"));
+      cpSync(
+        join(packageRoot, "package.json"),
+        join(directory, "package.json")
+      );
+      cpSync(
+        join(packageRoot, "tsconfig.json"),
+        join(directory, "tsconfig.json")
+      );
+      symlinkSync(
+        join(packageRoot, "node_modules"),
+        join(directory, "node_modules")
+      );
       const sourceDirectory = join(directory, "src");
       mkdirSync(sourceDirectory);
       const sourcePath = join(sourceDirectory, "index.ts");
@@ -101,9 +118,9 @@ describe("TypeScript configuration", () => {
       writeFileSync(sourcePath, "export const value: string = 1;\n");
       const invalid = runTypecheck(directory);
       expect(invalid.exitCode).not.toBe(0);
-      expect(`${invalid.stdout.toString()}${invalid.stderr.toString()}`).toMatch(
-        /Type 'number' is not assignable to type 'string'/,
-      );
+      expect(
+        `${invalid.stdout.toString()}${invalid.stderr.toString()}`
+      ).toMatch(/Type 'number' is not assignable to type 'string'/);
     });
   });
 });

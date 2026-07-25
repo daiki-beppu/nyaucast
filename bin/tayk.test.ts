@@ -15,7 +15,8 @@ import { fileURLToPath } from "node:url";
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const launcherPath = join(packageRoot, "bin", "tayk.js");
 const entrypointPath = join(packageRoot, "src", "index.ts");
-const installationGuidePattern = /Bun.*(?:install|required)|(?:install|required).*Bun/is;
+const installationGuidePattern =
+  /Bun.*(?:install|required)|(?:install|required).*Bun/is;
 const installationUrlPattern = /https:\/\/bun\.sh/i;
 const subprocessTimeoutMilliseconds = 20_000;
 const nodePath = Bun.which("node");
@@ -38,7 +39,10 @@ function withTemporaryDirectory(run: (directory: string) => void): void {
   }
 }
 
-function createFakeBun(directory: string): { binDirectory: string; recordPath: string } {
+function createFakeBun(directory: string): {
+  binDirectory: string;
+  recordPath: string;
+} {
   const binDirectory = join(directory, "bin");
   const recordPath = join(directory, "bun-invocations.jsonl");
   const fakeBunPath = join(binDirectory, "bun");
@@ -69,7 +73,7 @@ if (process.env.TAYK_FAKE_BUN_SIGNAL !== undefined) {
 }
 
 process.exit(Number(exitCode));
-`,
+`
   );
   chmodSync(fakeBunPath, 0o755);
 
@@ -88,43 +92,51 @@ function runLauncher(options: {
     signal?: NodeJS.Signals;
   };
 }) {
-  const fakeBunEnvironment = options.fakeBun === undefined
-    ? {}
-    : {
-        TAYK_FAKE_BUN_RECORD: options.fakeBun.recordPath,
-        TAYK_FAKE_BUN_EXIT: String(options.fakeBun.exitCode),
-        ...(options.fakeBun.stdout === undefined
-          ? {}
-          : { TAYK_FAKE_BUN_STDOUT: options.fakeBun.stdout }),
-        ...(options.fakeBun.stderr === undefined
-          ? {}
-          : { TAYK_FAKE_BUN_STDERR: options.fakeBun.stderr }),
-        ...(options.fakeBun.signal === undefined
-          ? {}
-          : { TAYK_FAKE_BUN_SIGNAL: options.fakeBun.signal }),
-      };
+  const fakeBunEnvironment =
+    options.fakeBun === undefined
+      ? {}
+      : {
+          TAYK_FAKE_BUN_RECORD: options.fakeBun.recordPath,
+          TAYK_FAKE_BUN_EXIT: String(options.fakeBun.exitCode),
+          ...(options.fakeBun.stdout === undefined
+            ? {}
+            : { TAYK_FAKE_BUN_STDOUT: options.fakeBun.stdout }),
+          ...(options.fakeBun.stderr === undefined
+            ? {}
+            : { TAYK_FAKE_BUN_STDERR: options.fakeBun.stderr }),
+          ...(options.fakeBun.signal === undefined
+            ? {}
+            : { TAYK_FAKE_BUN_SIGNAL: options.fakeBun.signal }),
+        };
 
-  const result = spawnSync(nodeExecutablePath, [launcherPath, ...options.args], {
-    cwd: options.cwd,
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      ...fakeBunEnvironment,
-      PATH: options.path,
-    },
-    timeout: subprocessTimeoutMilliseconds,
-    killSignal: "SIGKILL",
-  });
+  const result = spawnSync(
+    nodeExecutablePath,
+    [launcherPath, ...options.args],
+    {
+      cwd: options.cwd,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        ...fakeBunEnvironment,
+        PATH: options.path,
+      },
+      timeout: subprocessTimeoutMilliseconds,
+      killSignal: "SIGKILL",
+    }
+  );
 
   requireCompletedSubprocess("tayk launcher", result);
   return result;
 }
 
-function requireCompletedSubprocess(label: string, result: SpawnSyncReturns<string>): void {
+function requireCompletedSubprocess(
+  label: string,
+  result: SpawnSyncReturns<string>
+): void {
   if (result.error !== undefined) {
     throw new Error(
       `${label} failed to complete\nstatus: ${String(result.status)}\nsignal: ${String(result.signal)}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
-      { cause: result.error },
+      { cause: result.error }
     );
   }
 }
@@ -175,7 +187,9 @@ describe("tayk launcher", () => {
         },
       });
 
-      expect(readInvocations(fakeBun.recordPath)).toEqual([[entrypointPath, ...args]]);
+      expect(readInvocations(fakeBun.recordPath)).toEqual([
+        [entrypointPath, ...args],
+      ]);
       expect(result.stdout).toBe("stdout-sentinel");
       expect(result.stderr).toBe("stderr-sentinel");
       expect(result.status).toBe(42);
@@ -229,7 +243,11 @@ describe("tayk launcher", () => {
       writeFileSync(fakeBunPath, "not executable");
       chmodSync(fakeBunPath, 0o644);
 
-      const result = runLauncher({ args: [], cwd: directory, path: binDirectory });
+      const result = runLauncher({
+        args: [],
+        cwd: directory,
+        path: binDirectory,
+      });
 
       expect(result.status).toBe(1);
       expect(result.signal).toBeNull();
@@ -243,7 +261,11 @@ describe("tayk launcher", () => {
     withTemporaryDirectory((directory) => {
       const realBunDirectory = dirname(process.execPath);
 
-      const result = runLauncher({ args: [], cwd: directory, path: realBunDirectory });
+      const result = runLauncher({
+        args: [],
+        cwd: directory,
+        path: realBunDirectory,
+      });
 
       expect(result.status).toBe(0);
       expect(result.stderr).not.toMatch(installationGuidePattern);
