@@ -12,7 +12,6 @@
         "zod": "4.4.3",
       },
       "devDependencies": {
-        "@antfu/ni": "30.3.0",
         "@types/bun": "1.3.14",
         "lefthook": "2.1.10",
         "oxfmt": "0.60.0",
@@ -27,8 +26,6 @@
     "node-av",
   ],
   "packages": {
-    "@antfu/ni": ["@antfu/ni@30.3.0", "", { "dependencies": { "fzf": "^0.5.2", "package-manager-detector": "^1.7.0", "tinyexec": "^1.2.4", "tinyglobby": "^0.2.17" }, "bin": { "ni": "bin/ni.mjs", "nci": "bin/nci.mjs", "nr": "bin/nr.mjs", "nup": "bin/nup.mjs", "nd": "bin/nd.mjs", "nlx": "bin/nlx.mjs", "na": "bin/na.mjs", "nun": "bin/nun.mjs" } }, "sha512-KkYFVPA1IvC3m+WBKUuY5oxYc4OdXr83jvnlOn8a+bJM10yQMu+slFN/1pDzAw2JZVi+FYP9IYjo4KaPIccMmA=="],
-
     "@audio/biquad": ["@audio/biquad@1.2.1", "", {}, "sha512-VgTZPE/dcp379GhwFSvko/+OBDmZyTw+aPB7hPjblDWRWWEWda38eATObEzRJvHYGlICe/kohgTRxRCxNUB2CQ=="],
 
     "@audio/loudness-lufs": ["@audio/loudness-lufs@1.0.2", "", { "dependencies": { "@audio/weighting-k": "^1.0.0" } }, "sha512-TY3AGqggCyDbrn8Kl+o2pivkgraQ6X+939RyL8hG3e+UvbRy0tPeT8DprgAufEjdRQV11trK3T5CAyy188OOOA=="],
@@ -431,8 +428,6 @@
 
     "function-bind": ["function-bind@1.1.2", "", {}, "sha512-7XHNxH7qX9xG5mIwxkhumTox/MIRNcOgDrxWsMt2pAr23WHp6MrRlN7FBSFpCpr+oVO0F744iUgR82nJMfG2SA=="],
 
-    "fzf": ["fzf@0.5.2", "", {}, "sha512-Tt4kuxLXFKHy8KT40zwsUPUkg1CrsgY25FxA2U/j/0WgEDCk3ddc/zLTCCcbSHX9FcKtLuVaDGtGE/STWC+j3Q=="],
-
     "generate-function": ["generate-function@2.3.1", "", { "dependencies": { "is-property": "^1.0.2" } }, "sha512-eeB5GfMNeevm/GRYq20ShmsaGcmI81kIX2K9XQx5miC8KdHaC6Jm0qQ8ZNeGOi7wYB8OsdxKs+Y2oVuTFuVwKQ=="],
 
     "get-intrinsic": ["get-intrinsic@1.3.0", "", { "dependencies": { "call-bind-apply-helpers": "^1.0.2", "es-define-property": "^1.0.1", "es-errors": "^1.3.0", "es-object-atoms": "^1.1.1", "function-bind": "^1.1.2", "get-proto": "^1.0.1", "gopd": "^1.2.0", "has-symbols": "^1.1.0", "hasown": "^2.0.2", "math-intrinsics": "^1.1.0" } }, "sha512-9fSjSaos/fRIVIp+xSJlE6lfwhES7LNtKaCBIamHsjr2na1BiABJPo0mOjjz8GJDURarmCPGqaiVg5mfjb98CQ=="],
@@ -588,8 +583,6 @@
     "p-limit": ["p-limit@3.1.0", "", { "dependencies": { "yocto-queue": "^0.1.0" } }, "sha512-TYOanM3wGwNGsZN2cVTYPArw454xnXj5qmWF1bEoAc4+cU/ol7GVh7odevjp1FNHduHc3KZMcFduxU5Xc6uJRQ=="],
 
     "p-locate": ["p-locate@5.0.0", "", { "dependencies": { "p-limit": "^3.0.2" } }, "sha512-LaNjtRWUBY++zB5nE/NwcaoMylSPk+S+ZHNB1TzdbMJMny6dynpAGt7X/tl/QYq3TIeE6nxHppbo2LGymrG5Pw=="],
-
-    "package-manager-detector": ["package-manager-detector@1.8.0", "", {}, "sha512-yQA4H19AmPEoMUeavPMDIe1higySl/gH/yaQrkT/s07Qp+7pp2hYz30N3z2l5BkjVkF9Ow6o0wjJamm2y7Sn0A=="],
 
     "parseurl": ["parseurl@1.3.3", "", {}, "sha512-CiyeOxFT/JZyN5m0z9PfXw4SCBJ6Sygz1Dpl0wqjlhDEGGBP1GnsUVEL0p63hoG1fcj3fHynXi9NYO4nWOL+qQ=="],
 
