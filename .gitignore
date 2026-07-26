@@ -1,6 +1,8 @@
 node_modules/
 .worktrees/
 .claude/worktrees/
+.tmp/
+.direnv/
 .env
 *.log
 data/
