@@ -1,5 +1,6 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { spawnSync, type SpawnSyncReturns } from "node:child_process";
+import { spawnSync } from "node:child_process";
+import type { SpawnSyncReturns } from "node:child_process";
 import {
   chmodSync,
   cpSync,
@@ -13,11 +14,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 
-const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const packageRoot = resolve(import.meta.dirname, "..");
 const packageJsonPath = join(packageRoot, "package.json");
-const installationGuidePattern = /Bun.*(?:install|required)|(?:install|required).*Bun/is;
+const installationGuidePattern =
+  /Bun.*(?:install|required)|(?:install|required).*Bun/is;
 const subprocessTimeoutMilliseconds = 20_000;
 const nodePath = Bun.which("node");
 const npmPath = Bun.which("npm");
@@ -31,8 +32,14 @@ if (nodePath === null || npmPath === null) {
 const nodeExecutablePath = nodePath;
 const npmExecutablePath = npmPath;
 
-type PackageFile = { path: string; mode: number };
-type PackResult = { filename: string; files: PackageFile[] };
+interface PackageFile {
+  path: string;
+  mode: number;
+}
+interface PackResult {
+  filename: string;
+  files: PackageFile[];
+}
 type NpmEnvironment = NodeJS.ProcessEnv;
 
 function withTemporaryDirectory(run: (directory: string) => void): void {
@@ -41,12 +48,12 @@ function withTemporaryDirectory(run: (directory: string) => void): void {
   try {
     run(directory);
   } finally {
-    rmSync(directory, { recursive: true, force: true });
+    rmSync(directory, { force: true, recursive: true });
   }
 }
 
 function readJsonRecord(path: string): Record<string, unknown> {
-  const value: unknown = JSON.parse(readFileSync(path, "utf8"));
+  const value: unknown = JSON.parse(readFileSync(path, "utf-8"));
 
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error(`${path} must contain a JSON object`);
@@ -65,7 +72,7 @@ function requireRecord(value: unknown, label: string): Record<string, unknown> {
 
 function requireString(value: unknown, label: string): string {
   if (typeof value !== "string") {
-    throw new Error(`${label} must be a string`);
+    throw new TypeError(`${label} must be a string`);
   }
 
   return value;
@@ -75,7 +82,7 @@ function createStubPackage(directory: string, name: string): string {
   mkdirSync(directory, { recursive: true });
   writeFileSync(
     join(directory, "package.json"),
-    `${JSON.stringify({ name, version: "0.0.0", type: "module", main: "index.js" }, null, 2)}\n`,
+    `${JSON.stringify({ main: "index.js", name, type: "module", version: "0.0.0" }, null, 2)}\n`
   );
   writeFileSync(join(directory, "index.js"), "export {};\n");
   return `file:${directory}`;
@@ -85,25 +92,35 @@ function createPackFixture(directory: string): string {
   const fixtureRoot = join(directory, "package");
   mkdirSync(fixtureRoot);
   cpSync(join(packageRoot, "README.md"), join(fixtureRoot, "README.md"));
-  cpSync(join(packageRoot, "bin"), join(fixtureRoot, "bin"), { recursive: true });
-  cpSync(join(packageRoot, "src"), join(fixtureRoot, "src"), { recursive: true });
-  cpSync(join(packageRoot, "tsconfig.json"), join(fixtureRoot, "tsconfig.json"));
+  cpSync(join(packageRoot, "bin"), join(fixtureRoot, "bin"), {
+    recursive: true,
+  });
+  cpSync(join(packageRoot, "src"), join(fixtureRoot, "src"), {
+    recursive: true,
+  });
+  cpSync(
+    join(packageRoot, "tsconfig.json"),
+    join(fixtureRoot, "tsconfig.json")
+  );
   mkdirSync(join(fixtureRoot, "dist"));
-  writeFileSync(join(fixtureRoot, "dist", "must-not-ship.js"), "throw new Error();\n");
+  writeFileSync(
+    join(fixtureRoot, "dist", "must-not-ship.js"),
+    "throw new Error();\n"
+  );
 
   const packageJson = {
     ...readJsonRecord(packageJsonPath),
     dependencies: {
       "@modelcontextprotocol/sdk": createStubPackage(
         join(directory, "stubs", "mcp-sdk"),
-        "@modelcontextprotocol/sdk",
+        "@modelcontextprotocol/sdk"
       ),
       zod: createStubPackage(join(directory, "stubs", "zod"), "zod"),
     },
   };
   writeFileSync(
     join(fixtureRoot, "package.json"),
-    `${JSON.stringify(packageJson, null, 2)}\n`,
+    `${JSON.stringify(packageJson, null, 2)}\n`
   );
 
   return fixtureRoot;
@@ -115,8 +132,8 @@ function createNpmEnvironment(directory: string): NpmEnvironment {
   const globalConfig = join(directory, "npm-global-config");
   const inheritedEnvironment = Object.fromEntries(
     Object.entries(process.env).filter(
-      ([name]) => !name.toLowerCase().startsWith("npm_config_"),
-    ),
+      ([name]) => !name.toLowerCase().startsWith("npm_config_")
+    )
   );
   mkdirSync(cache);
   writeFileSync(userConfig, "");
@@ -125,43 +142,52 @@ function createNpmEnvironment(directory: string): NpmEnvironment {
   return {
     ...inheritedEnvironment,
     npm_config_cache: cache,
-    npm_config_userconfig: userConfig,
     npm_config_globalconfig: globalConfig,
-    npm_config_update_notifier: "false",
     npm_config_offline: "true",
+    npm_config_update_notifier: "false",
+    npm_config_userconfig: userConfig,
   };
 }
 
-function requireCompletedSubprocess(label: string, result: SpawnSyncReturns<string>): void {
+function requireCompletedSubprocess(
+  label: string,
+  result: SpawnSyncReturns<string>
+): void {
   if (result.error !== undefined) {
     throw new Error(
       `${label} failed to complete\nstatus: ${String(result.status)}\nsignal: ${String(result.signal)}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
-      { cause: result.error },
+      { cause: result.error }
     );
   }
 }
 
-function requireSuccessfulNpmRun(label: string, result: SpawnSyncReturns<string>): void {
+function requireSuccessfulNpmRun(
+  label: string,
+  result: SpawnSyncReturns<string>
+): void {
   requireCompletedSubprocess(label, result);
   if (result.status !== 0) {
     throw new Error(
       `${label} failed with status ${String(result.status)}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
-      { cause: result.error },
+      { cause: result.error }
     );
   }
 }
 
-function packPackage(fixtureRoot: string, npmEnvironment: NpmEnvironment): PackResult {
+function packPackage(
+  fixtureRoot: string,
+  npmEnvironment: NpmEnvironment
+): PackResult {
   const result = spawnSync(
     npmExecutablePath,
     ["pack", "--json", "--ignore-scripts"],
     {
       cwd: fixtureRoot,
-      encoding: "utf8",
+      encoding: "utf-8",
       env: npmEnvironment,
-      timeout: subprocessTimeoutMilliseconds,
       killSignal: "SIGKILL",
-    },
+      timeout: subprocessTimeoutMilliseconds,
+    }
   );
 
   requireSuccessfulNpmRun("npm pack", result);
@@ -174,7 +200,7 @@ function packPackage(fixtureRoot: string, npmEnvironment: NpmEnvironment): PackR
   const record = requireRecord(value[0], "npm pack result");
   const files = record["files"];
   if (!Array.isArray(files)) {
-    throw new Error("npm pack result files must be an array");
+    throw new TypeError("npm pack result files must be an array");
   }
 
   return {
@@ -183,14 +209,20 @@ function packPackage(fixtureRoot: string, npmEnvironment: NpmEnvironment): PackR
       const item = requireRecord(file, `npm pack file ${index}`);
       const mode = item["mode"];
       if (typeof mode !== "number") {
-        throw new Error(`npm pack file ${index} mode must be a number`);
+        throw new TypeError(`npm pack file ${index} mode must be a number`);
       }
-      return { path: requireString(item["path"], `npm pack file ${index} path`), mode };
+      return {
+        mode,
+        path: requireString(item["path"], `npm pack file ${index} path`),
+      };
     }),
   };
 }
 
-function createFakeBun(directory: string): { binDirectory: string; recordPath: string } {
+function createFakeBun(directory: string): {
+  binDirectory: string;
+  recordPath: string;
+} {
   const binDirectory = join(directory, "fake-bun-bin");
   const recordPath = join(directory, "bun-invocations.jsonl");
   const fakeBunPath = join(binDirectory, "bun");
@@ -203,7 +235,7 @@ appendFileSync(process.env.TAYK_FAKE_BUN_RECORD, JSON.stringify(process.argv.sli
 process.stdout.write("installed-stdout");
 process.stderr.write("installed-stderr");
 process.exit(42);
-`,
+`
   );
   chmodSync(fakeBunPath, 0o755);
   return { binDirectory, recordPath };
@@ -217,7 +249,7 @@ describe("package foundation", () => {
       const pack = packPackage(fixtureRoot, npmEnvironment);
       const paths = pack.files.map((file) => file.path);
       const launcher = pack.files.find((file) => file.path === "bin/tayk.js");
-      const readme = readFileSync(join(fixtureRoot, "README.md"), "utf8");
+      const readme = readFileSync(join(fixtureRoot, "README.md"), "utf-8");
 
       expect(paths).toContain("package.json");
       expect(paths).toContain("README.md");
@@ -227,9 +259,11 @@ describe("package foundation", () => {
       expect(paths).not.toContain("tsconfig.json");
       expect(paths).not.toContain("dist/must-not-ship.js");
       expect(launcher?.mode === 0o755 || launcher?.mode === 0o775).toBeTrue();
-      expect(readme).toContain("https://github.com/daiki-beppu/tayk/blob/main/CONTEXT.md");
       expect(readme).toContain(
-        "https://github.com/daiki-beppu/tayk/blob/main/docs/adr/0001-thin-architecture.md",
+        "https://github.com/daiki-beppu/tayk/blob/main/CONTEXT.md"
+      );
+      expect(readme).toContain(
+        "https://github.com/daiki-beppu/tayk/blob/main/docs/adr/0001-thin-architecture.md"
       );
 
       const consumerRoot = join(directory, "consumer");
@@ -247,11 +281,11 @@ describe("package foundation", () => {
         ],
         {
           cwd: consumerRoot,
-          encoding: "utf8",
+          encoding: "utf-8",
           env: npmEnvironment,
-          timeout: subprocessTimeoutMilliseconds,
           killSignal: "SIGKILL",
-        },
+          timeout: subprocessTimeoutMilliseconds,
+        }
       );
       requireSuccessfulNpmRun("npm install", install);
 
@@ -261,32 +295,36 @@ describe("package foundation", () => {
       const args = ["collection.plan", "--name", "空 白", "--", "末尾"];
       const executed = spawnSync(shimPath, args, {
         cwd: consumerRoot,
-        encoding: "utf8",
+        encoding: "utf-8",
         env: {
           ...process.env,
           PATH: `${fakeBun.binDirectory}:${dirname(nodeExecutablePath)}`,
           TAYK_FAKE_BUN_RECORD: fakeBun.recordPath,
         },
-        timeout: subprocessTimeoutMilliseconds,
         killSignal: "SIGKILL",
+        timeout: subprocessTimeoutMilliseconds,
       });
       requireCompletedSubprocess("installed tayk shim", executed);
 
       expect(executed.status).toBe(42);
       expect(executed.stdout).toBe("installed-stdout");
       expect(executed.stderr).toBe("installed-stderr");
-      const invocation = JSON.parse(readFileSync(fakeBun.recordPath, "utf8")) as unknown[];
+      const invocation = JSON.parse(
+        readFileSync(fakeBun.recordPath, "utf-8")
+      ) as unknown[];
       expect(invocation.slice(1)).toEqual(args);
       expect(invocation[0]).toBe(
-        realpathSync(join(consumerRoot, "node_modules", "tayk", "src", "index.ts")),
+        realpathSync(
+          join(consumerRoot, "node_modules", "tayk", "src", "index.ts")
+        )
       );
 
       const withoutBun = spawnSync(shimPath, [], {
         cwd: consumerRoot,
-        encoding: "utf8",
+        encoding: "utf-8",
         env: { ...process.env, PATH: dirname(nodeExecutablePath) },
-        timeout: subprocessTimeoutMilliseconds,
         killSignal: "SIGKILL",
+        timeout: subprocessTimeoutMilliseconds,
       });
       requireCompletedSubprocess("installed tayk shim without Bun", withoutBun);
       expect(withoutBun.status).toBe(1);
