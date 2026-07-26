@@ -14,17 +14,23 @@ base_branch: main
 
 provider: codex
 
-# tayk 固有 persona のルーティング。coder / planner / 既存 reviewer 系は
+# tayk 専用 workflow が使う persona のルーティング。coder / 既存 reviewer 系は
 # グローバル (~/.takt/config.yaml) の provider_routing.personas が解決する。
-# ここに置くのは tayk 専用 workflow が導入した 3 persona のみ。
+# ここに置くのは、グローバルに登録がなく既定モデルへフォールバックしてしまう persona。
 provider_routing:
   personas:
     # intake の判定が全工程の入口。誤って着手を通すと後段すべてが無駄になるため最上位モデル
     tayk-intake-analyst:
       provider: codex
       model: gpt-5.6-sol
+    # 設計ゲートの一角（ADR-0006 決定 3）。テスト設計の誤りは write_tests で red を
+    # 確認しても表面化せず、「通るだけで要件を検証しないテスト」として実装後まで残る。
+    # グローバルに登録がないため既定モデルへ落ちていた。planner と同格に置く
+    test-planner:
+      provider: codex
+      model: gpt-5.6-sol
     # ADR 本文と差分の照合。他 reviewer と同格
-    adr-conformance-reviewer:
+    tayk-adr-conformance-reviewer:
       provider: codex
       model: gpt-5.6-terra
     # commit / push / gh 操作が主。手続き的な作業なので軽量モデル

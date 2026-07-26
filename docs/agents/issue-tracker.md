@@ -9,7 +9,7 @@ Issues and PRDs for this repo live as GitHub issues. Use the `gh` CLI for all op
 - **新機能・機能拡張の実装** — tayk 専用の **`tayk-feature`** workflow（ADR-0006）。`takt -w tayk-feature "#<N>"`。
   フロー: intake（着手可能性の判定 / wayfinder map・ticket 対応）→ 計画（要件 ID 採番）→ テスト設計 → 設計レビュー（設計 / ADR 整合性 / テスト設計の 3 並列）→ テスト先行実装 → 実装 → 実装レビュー（4 並列）→ 最終ゲート → delivery（PR 作成 → CI 監視 → 自動レビュー指摘の解消）。**マージ手前まで**（マージは人間の判断）。
 - **バグ修正の実装** — `tayk-fix` は**未実装**（issue #55 の残タスク）。当面は `tayk-feature` か組み込み workflow を使う。
-- **PR のレビュー** — `takt-review` skill。builtin workflow **`review-takt-default`**（7 観点個別レビュー + supervisor、report ファイル出力）。REJECT なら worktree で fix → 再レビューを 1 回だけ実施。単体起動専用で、takt-issue から自動では呼ばれない。
+- **PR のレビュー** — `takt-review` skill。builtin workflow **`review-takt-default`**（7 観点個別レビュー + supervisor、report ファイル出力）。REJECT なら worktree で fix → 再レビューを 1 回だけ実施。単体起動専用で、`tayk-feature` / `tayk-delivery` から自動では呼ばれない（PR 上の自動レビュー指摘は `tayk-delivery` が別途トリアージする）。
 - **takt を使わない実装** — `issue-direct` skill。ユーザーが明示的に「takt なしで」と指定した場合のみ。Claude Code 単体で worktree 作成 → 実装 → PR 作成 → CI green まで監視。
 
 共通の規約:

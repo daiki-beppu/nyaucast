@@ -1,4 +1,4 @@
-レビュー指摘の解消ループ（review_wait → review_triage → review_fix → ci_wait → ci_check）が {cycle_count} 回繰り返されました。
+レビュー指摘の解消ループ（ci_wait → ci_check → review_wait → review_triage → review_fix）が {cycle_count} 回繰り返されました。**修正（review_fix）を挟んで一周しても指摘が尽きていない状態です。**
 
 PR のレビュー状況を確認し、指摘の解消が収束しているかを判断してください。
 

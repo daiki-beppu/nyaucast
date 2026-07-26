@@ -24,8 +24,8 @@ ADR-0001 の Consequences は takt 運用について 2 点を定めていた（
 2. **feature と fix を別 workflow とし、共通フェーズを callable sub-workflow に切り出す。** 現時点で `tayk-feature`（新機能・機能拡張）と、共通の `tayk-intake` / `tayk-delivery` を持つ。`tayk-fix`（バグ修正・回帰修正）は同じ 2 つの sub-workflow を再利用して後続で追加する
 3. **実装前に設計ゲートを置く。** `plan`（要件 ID 採番）→ `test_design`（テスト設計。コードは書かない）→ `design_review`（設計 / ADR 整合性 / テスト設計の 3 並列レビュー）を通らなければ実装に入れない
 4. **ADR 整合性レビューを設計段階と実装段階の 2 回走らせる。** 判定は 3 値 — 整合 / 要 ADR 改訂 / 違反。逸脱に技術的正当性がある場合、承認ではなく **ADR 改訂の要求**を返す。これにより ADR-0001 の決定 7 が工程として実効化される
-5. **要件 ID (`REQ-<issue番号>-<連番>`) で intake から delivery までを貫通させる。** 計画で採番し、以降の工程は引き継ぐだけで振り直さない。1 要件に最低 1 テストケースを対応させる
-6. **レビューループの上限を loop monitor で 3 回に固定する。** 上限に達したら supervisor が「健全 / 非生産的」を判定し、再計画・次フェーズへの前進・ABORT のいずれかへ振る。**旧 ADR-0021 の「予防的に導入しない」決定を、本 ADR で覆す**（理由は Why を参照）
+5. **要件 ID (`REQ-<issue番号>-<2桁連番>`) で intake から delivery までを貫通させる。** 計画で採番し、以降の工程は引き継ぐだけで振り直さない。1 要件に最低 1 テストケースを対応させる
+6. **レビュー ⇄ 修正のループは上限 3 回とし、loop monitor で supervisor 判定を起動する。** 上限に達したら「健全 / 非生産的」を判定し、再計画・ABORT・（残るのが nit のみなら）次フェーズへの前進のいずれかへ振る。**未解消の指摘を抱えたまま次フェーズへ前進させない。** CI 完了待ち・レビュー結論待ちのような**待機ループは別枠**で、正常系でも数周するため大きめの閾値を置く（`tayk-delivery` では CI 待機 12 / レビュー待機 8）。**旧 ADR-0021 の「予防的に導入しない」決定を、本 ADR で覆す**（理由は Why を参照）
 7. **PR 作成・CI 監視・自動レビュー指摘の解消を workflow に取り込む。** `tayk-delivery` が commit → push → PR → CI 待機 → 失敗修正 → レビュー指摘のトリアージと修正 → 記録までを担う。**マージは行わない**（人間の判断）
 8. **intake は wayfinder の map / ticket を一級の入力として扱う。** map 起点なら子 ticket の resolution を実装ブリーフへ畳み込み、**open な子 ticket が 1 件でも残っていれば着手を拒否する**。決定を出すための ticket（`research` / `prototype` / `grilling`）を実装 ticket と取り違えないよう、種別で判別する
 
@@ -48,11 +48,12 @@ ADR-0001 の Consequences は takt 運用について 2 点を定めていた（
 ## Consequences
 
 - **ADR-0001 Consequences の takt 運用に関する 2 項は、本 ADR が上書きする。** ADR-0001 側には本 ADR へのポインタを残す
-- `CLAUDE.md` / `AGENTS.md` / `docs/agents/issue-tracker.md` の「custom workflow / facets は置かない」を更新する
+- `CLAUDE.md` / `AGENTS.md` / `docs/agents/issue-tracker.md` / `docs/agents/triage-labels.md` の「custom workflow / facets は置かない」および旧 skill 経路への参照を更新する
 - `.takt/.gitignore` は全無視だったが、`workflows/` `facets/` `schemas/` を追跡対象に加える。runs / tasks 等の実行時生成物は引き続き無視する
 - **workflow 自体が保守対象になる。** facet の文言・step の遷移・loop monitor の閾値は、実運用のログを見て調整していく。調整は本 ADR の改訂を要さない（決定の構造を変えるときのみ改訂する）
 - **`tayk-fix` は未実装。** issue #55 の残タスクとして、`tayk-intake` / `tayk-delivery` を再利用しつつ、診断レビューと回帰テスト先行を持つ workflow を追加する
 - takt のバージョンに依存する（`loop_monitors` / `system_inputs` / `structured_output` / `promotion` は takt 0.52 時点の機能）。takt の破壊的変更時は `takt workflow doctor` で検出する
+- **loop monitor だけでは上限 3 回を保証できない経路がある。** takt の cycle 検出は「履歴末尾で cycle パターンが*連続して* threshold 回反復する」厳密一致であり、待機の再試行（`ci_check` の `pending` / `review_triage` の `awaiting`）がループの途中に挟まるとカウントが 1 に戻る。そのため待機を含むループの中にいる修正 step（`ci_fix` / `review_fix`）は、`{step_iteration}` による自前のラウンド上限を instruction / rules 側にも持ち、loop monitor と二重化する。監視が外れても上限が消えないようにするための冗長化であり、片方だけを削らない。待機を挟まないループ（`impl_review ⇄ fix` / `design_review ⇄ design_fix`）は cycle が連続するため loop monitor だけで足りる
 - workflow が長くなるぶん 1 issue あたりのトークン消費は default より増える。`.takt/config.yaml` の observability で計測しており、費用が見合わないと判明した場合は step を削る方向で調整する
 
 ## Related

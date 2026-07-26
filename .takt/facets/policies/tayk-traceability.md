@@ -8,7 +8,7 @@ issue の要求が、計画 → テスト設計 → 実装 → レビューの�
 REQ-<issue番号>-<2桁連番>    例: REQ-55-01
 ```
 
-- issue 番号は intake が確定した linked issue の番号。issue に紐づかない task 起点の実行では `REQ-TASK-01` を使う
+- issue 番号は intake が確定した linked issue の番号。issue に紐づかない task 起点の実行では `REQ-TASK-<2桁連番>`（例: `REQ-TASK-01`）を使う
 - 連番は計画 step が採番した順に固定する。**後段で振り直してはならない**（振り直しは追跡の断絶になる）
 - 要件が分割されたときは `REQ-55-03a` / `REQ-55-03b` のように枝番を足す。既存 ID を潰さない
 

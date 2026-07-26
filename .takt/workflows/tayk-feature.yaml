@@ -10,8 +10,10 @@ workflow_config:
       network_access: true
     opencode:
       network_access: true
-# 設計ループ・実装ループ・delivery の CI 待ちを含むため default (30) では足りない
-max_steps: 60
+# 設計ループ・実装ループ・delivery の CI 待ちを含むため default (30) では足りない。
+# ループの歯止めは loop monitor と各修正 step の上限が持つ。max_steps はそれらを
+# すり抜けた場合の最後の保険であり、正常系が枯渇しない広さを取る
+max_steps: 120
 initial_step: intake
 loop_monitors:
   # ── 設計レビュー ⇄ 設計修正。実装前なので、打ち切りより再計画を優先する ──
@@ -41,7 +43,11 @@ loop_monitors:
           next: plan
         - condition: 非生産的（issue の未決事項 / ADR との衝突に帰着する）
           next: ABORT
-  # ── 実装レビュー ⇄ 修正。builtin の判断基準をそのまま使う ──
+  # ── 実装レビュー ⇄ 修正。builtin の判断基準（findings ledger ベース）をそのまま使う ──
+  # 非生産的と判定されたときに final_gate へ前進させない。前進させると、未解消の指摘を
+  # 抱えたまま最終ゲート → delivery → PR まで到達してしまう。builtin の instruction 自身も
+  # 「修正・再計画・異議申告のいずれでも打開できない場合だけ ABORT」と 3 つの出口を前提に
+  # 書かれているため、rules 側でも再計画と打ち切りを用意する（ADR-0006 決定 6）
   - cycle:
       - impl_review
       - fix
@@ -52,8 +58,10 @@ loop_monitors:
       rules:
         - condition: 健全（指摘数が減少、修正が反映されている）
           next: impl_review
-        - condition: 非生産的（同じ指摘が繰り返される）
-          next: final_gate
+        - condition: 再計画または異議申告で打開できる（指摘が計画・要件の側に帰着する）
+          next: plan
+        - condition: 修正・再計画・異議申告のいずれでも打開できない
+          next: ABORT
 steps:
   # ── Phase 0: intake ───────────────────────────────────────────────
   # feature / fix 共通。wayfinder map の未完（open ticket 残存）を検出して止める。
@@ -85,7 +93,7 @@ steps:
       extends: review-readonly
     instruction: tayk-plan
     quality_gates:
-      - 全要件に REQ-<issue番号>-<連番> 形式の ID が振られていること
+      - 全要件に REQ-<issue番号>-<2桁連番>（task 起点なら REQ-TASK-<2桁連番>）形式の ID が振られていること
       - 要件 ID ごとに対象ファイルと方針が対応づいていること
       - ADR 整合性の事前申告が全 ADR に対して行われていること
       - v0.1.0 のゲート外の拡張を方針に含めていないこと
@@ -149,14 +157,16 @@ steps:
           - design-gate
         edit: false
         persona: architecture-reviewer
-        policy: review
+        policy:
+          - review
+          - tayk-review-rescan
         knowledge:
           - architecture
           - tayk-domain
         provider_options:
           extends: review-readonly
         pass_previous_response: false
-        instruction: review-design-arch
+        instruction: tayk-review-design-arch
         rules:
           - condition: APPROVE
           - condition: REJECT
@@ -171,15 +181,17 @@ steps:
           - design-gate
           - adr
         edit: false
-        persona: adr-conformance-reviewer
-        policy: review
+        persona: tayk-adr-conformance-reviewer
+        policy:
+          - review
+          - tayk-review-rescan
         knowledge:
           - tayk-adr
           - tayk-domain
         provider_options:
           extends: review-readonly
         pass_previous_response: false
-        instruction: review-adr-conformance-design
+        instruction: tayk-review-adr-conformance-design
         rules:
           - condition: APPROVE
           - condition: REJECT
@@ -187,7 +199,7 @@ steps:
         output_contracts:
           report:
             - name: adr-conformance-design.md
-              format: adr-conformance-review
+              format: tayk-adr-conformance-review
       - name: test-design-review
         tags:
           - review
@@ -198,13 +210,14 @@ steps:
           - review
           - testing
           - tayk-traceability
+          - tayk-review-rescan
         knowledge:
           - unit-testing
           - e2e-testing
         provider_options:
           extends: review-readonly
         pass_previous_response: false
-        instruction: review-test-design
+        instruction: tayk-review-test-design
         rules:
           - condition: APPROVE
           - condition: REJECT
@@ -281,12 +294,14 @@ steps:
       - 各テストに要件 ID とケース ID が埋め込まれていること
       - 実装前の時点でテストが失敗する（red である）ことを確認していること
       - 外部サービスへ実アクセスしていないこと
+      - テストを持たない要件 ID を残したまま実装へ進んでいないこと（検証不能と設計された要件を除く）
     rules:
-      - condition: テスト作成が完了した
+      - condition: 設計の全ケースを実装し red を確認した
         next: draft
-      - condition: テスト対象が未実装のためテスト作成をスキップする
-        next: draft
-      - condition: テスト設計自体に誤りがありテストを書けない
+      # テスト未作成のまま draft へ進む出口は置かない。テストのない要件は
+      # 「検証不能」としてテスト設計に明記し、設計レビューを通してから実装へ入る
+      # （1 要件に最低 1 テストケース: ADR-0006 決定 5）
+      - condition: テストを書けない要件が残る（テスト設計の誤り、または依存する基盤が未実装）
         next: design_fix
       - condition: ユーザーへの確認事項があるためユーザー入力が必要
         next: write_tests
@@ -380,15 +395,17 @@ steps:
           - review
           - adr
         edit: false
-        persona: adr-conformance-reviewer
-        policy: review
+        persona: tayk-adr-conformance-reviewer
+        policy:
+          - review
+          - tayk-review-rescan
         knowledge:
           - tayk-adr
           - tayk-domain
         pass_previous_response: false
         provider_options:
           extends: review-readonly
-        instruction: review-adr-conformance-impl
+        instruction: tayk-review-adr-conformance-impl
         rules:
           - condition: APPROVE
           - condition: REJECT
@@ -396,7 +413,7 @@ steps:
         output_contracts:
           report:
             - name: adr-conformance-impl.md
-              format: adr-conformance-review
+              format: tayk-adr-conformance-review
     rules:
       - condition: all("approved", "AI特有の問題なし", "APPROVE")
         next: final_gate

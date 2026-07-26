@@ -14,13 +14,20 @@ workflow_config:
       network_access: true
     opencode:
       network_access: true
-# CI 待ちで ci_check を最大 12 周するため、default (30) では足りない
-max_steps: 60
+# CI 待ちで ci_check を最大 12 周し、そのあとレビュー待ちが続くため default (30) では足りない。
+# ループの歯止めは loop monitor と ci_fix / review_fix のラウンド上限が持つ。
+# max_steps はそれらをすり抜けた場合の最後の保険であり、正常系が枯渇しない広さを取る
+max_steps: 120
 initial_step: pr_open
 loop_monitors:
   # cycle は 2 要素以上必要で、末尾 step が一致したときだけ照合される。
   # 各 monitor の末尾を ci_check / ci_wait / review_triage / review_fix に分けてあるため、
   # 4 つの monitor は互いに干渉しない。
+  #
+  # 重要: 照合は「履歴末尾でパターンが *連続して* threshold 回反復する」厳密一致である。
+  # 待機の再試行（ci_check の pending / review_triage の awaiting）がループの途中に挟まると
+  # カウントは 1 に戻る。したがって ② ④ のような多要素 cycle だけでは上限 3 を保証できない。
+  # 実効的な上限は ci_fix / review_fix 自身が {step_iteration} で持つ（ADR-0006 Consequences）。
   #
   # ① CI の完了待ちが終わらない。正常系でも数周するため threshold は大きめ。
   - cycle:
@@ -51,22 +58,25 @@ loop_monitors:
           next: ABORT
         - condition: 環境要因で解決しない
           next: ABORT
-  # ③ レビューの結論待ちが終わらない。
+  # ③ レビューの結論待ちが終わらない（review_triage が awaiting を返し続ける）。
+  #    この時点では review_fix が一度も走っていないことがあるため、④ と同じ
+  #    「修正が指摘に届いているか」ではなく「レビューが返ってくるか」を判定させる。
   - cycle:
       - review_wait
       - review_triage
     threshold: 8
     judge:
       persona: supervisor
-      instruction: tayk-loop-monitor-review
+      instruction: tayk-loop-monitor-review-wait
       rules:
-        - condition: 健全（未解決の指摘が減っている）
+        - condition: レビューは進行中（待機を継続してよい）
           next: review_wait
-        - condition: 実質的に収束している（nit のみ残存）
+        - condition: レビューが返らない、または残るのが nit のみで実質収束している
           next: finalize
-        - condition: 方針の食い違い / ADR との衝突で決着しない
+        - condition: レビュー基盤の問題（bot 未起動・権限・トリガ不一致）で結論が得られない
           next: ABORT
   # ④ レビュー指摘の解消が一周しても収束しない。
+  #    awaiting の挟み込みでカウントが崩れうるため、これ単独を上限とみなさないこと。
   - cycle:
       - ci_wait
       - ci_check
@@ -177,6 +187,10 @@ steps:
       - 修正前にローカルで CI と同じコマンドを実行し、再現と解消を確認していること
       - 原因を特定したうえで修正していること（症状への場当たり修正でないこと）
     rules:
+      # loop monitor ② は ci_check の pending 挟み込みでカウントが崩れるため、
+      # ラウンド上限をこの step 自身にも持たせる（ADR-0006 決定 6）
+      - condition: これが 4 回目以降の CI 修正である（3 ラウンドで CI が緑にならなかった）
+        return: needs_fix
       - condition: 原因を特定して修正し push した
         next: ci_wait
       - condition: flaky と判断した（同一コミットで結果が揺れた根拠あり）
@@ -248,6 +262,10 @@ steps:
       - ADR に反する修正を、レビュー指摘を理由に行っていないこと
       - 修正後に影響範囲のテストをローカルで実行していること
     rules:
+      # loop monitor ④ は review_triage の awaiting 挟み込みでカウントが崩れるため、
+      # ラウンド上限をこの step 自身にも持たせる（ADR-0006 決定 6）
+      - condition: これが 4 回目以降のレビュー指摘修正である（3 ラウンドで収束しなかった）
+        return: needs_fix
       - condition: 全 actionable を修正して push した
         next: ci_wait
       - condition: 指摘が実装方針そのものの誤りを突いており、この step では直せない
