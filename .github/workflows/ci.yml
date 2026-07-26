@@ -8,6 +8,10 @@ on:
 jobs:
   quality:
     runs-on: ubuntu-24.04
+    # Nix cache が FlakeHub の OIDC 認証に使う。無いと cache が無効化される。
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
