@@ -4,7 +4,7 @@
 
 ## 手順
 
-1. 実装計画（`{report:plan.md}`）と実装ブリーフ（`{report:intake-brief.md}`）を読む
+1. Report Directory の実装計画（`plan.md`）と実装ブリーフ（`intake-brief.md`）を Read で開く
 2. Knowledge の Source Path を Read で開き、全文を取得する。`##` セクションをすべて列挙し、取捨選択しない
 3. 列挙した各セクションの判定基準を実装方針と照合する
 4. 以下の観点で設計を判定する:

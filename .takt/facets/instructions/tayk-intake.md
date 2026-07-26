@@ -3,18 +3,17 @@
 ## 与えられている実行コンテキスト
 
 - issue が紐づいているか: {context:read_issue.issue.exists}
-- issue 番号: {context:read_issue.issue.number}
-- issue タイトル: {context:read_issue.issue.title}
-- 作業ブランチ: {context:read_issue.branch.exists}
 
 ## 手順
 
 ### 1. 起点の特定
 
-上記 context の issue 番号を起点とする。番号が取れている場合は
+issue が紐づいている場合、直前の system step の出力に issue 番号がある。番号を確認したうえで
 `gh issue view <N> --json number,title,body,labels,assignees,comments,state` で本文・ラベル・コメントを取得する。
+番号が出力から読み取れないときは `gh issue list --state open --search "<task の要約>"` で該当 issue を探し、
+特定できなければ issue なしとして扱う。
 
-context に issue がない（`exists` が false）場合は、task 本文だけを起点として扱い、`source_kind` は `task_only` とする。
+issue が紐づいていない（`exists` が false）場合は、task 本文だけを起点として扱い、`source_kind` は `task_only` とする。
 
 ### 2. 起点の分類
 
