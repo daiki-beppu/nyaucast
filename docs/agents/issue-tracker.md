@@ -6,15 +6,16 @@ Issues and PRDs for this repo live as GitHub issues. Use the `gh` CLI for all op
 
 開発は takt メイン。ただし用途ごとに使う workflow / skill が異なるので、文脈に合わせて選ぶ:
 
-- **issue の実装** — `takt-issue` skill。takt の組み込み **default** workflow を素のまま使う。
-  フロー: worktree 自動生成 → background 実行（exit で完了検知）→ PR 化 → CI green まで監視 → クリーンアップ。**CI green で完了**（自動レビューは含まない）。
+- **新機能・機能拡張の実装** — tayk 専用の **`tayk-feature`** workflow（ADR-0006）。`takt -w tayk-feature "#<N>"`。
+  フロー: intake（着手可能性の判定 / wayfinder map・ticket 対応）→ 計画（要件 ID 採番）→ テスト設計 → 設計レビュー（設計 / ADR 整合性 / テスト設計の 3 並列）→ テスト先行実装 → 実装 → 実装レビュー（4 並列）→ 最終ゲート → delivery（PR 作成 → CI 監視 → 自動レビュー指摘の解消）。**マージ手前まで**（マージは人間の判断）。
+- **バグ修正の実装** — `tayk-fix` は**未実装**（issue #55 の残タスク）。当面は `tayk-feature` か組み込み workflow を使う。
 - **PR のレビュー** — `takt-review` skill。builtin workflow **`review-takt-default`**（7 観点個別レビュー + supervisor、report ファイル出力）。REJECT なら worktree で fix → 再レビューを 1 回だけ実施。単体起動専用で、takt-issue から自動では呼ばれない。
 - **takt を使わない実装** — `issue-direct` skill。ユーザーが明示的に「takt なしで」と指定した場合のみ。Claude Code 単体で worktree 作成 → 実装 → PR 作成 → CI green まで監視。
 
 共通の規約:
 
 - worktree 必須。メイン作業ツリーで直接ブランチを切らない
-- custom workflow / facets は置かない — 組み込み workflow を素のまま使う（プロジェクト CLAUDE.md 参照）
+- workflow / facets / schemas は `.takt/` 配下に置き git 管理する（ADR-0006）。定義を変えたら `takt workflow doctor <name>` で検証する
 - 着手前に main を `git pull --ff-only` で最新化する
 
 ## Conventions
@@ -58,3 +59,19 @@ Used by `/wayfinder`. The **map** is a single issue with **child** issues as tic
 - **Frontier query**: list the map's open children (`gh issue list --state open`, scoped to the map's sub-issues / task list), drop any with an open blocker (`issue_dependencies_summary.blocked_by > 0`, or an open issue in the `Blocked by` line) or an assignee; first in map order wins.
 - **Claim**: `gh issue edit <n> --add-assignee @me` — the session's first write.
 - **Resolve**: `gh issue comment <n> --body "<answer>"`, then `gh issue close <n>`, then append a context pointer (gist + link) to the map's Decisions-so-far.
+
+### 地図から実装への引き渡し
+
+wayfinder が地図を描き終えたら、その map issue をそのまま takt に渡して実装へ移る:
+
+```
+takt -w tayk-feature "#<map番号>"
+```
+
+`tayk-feature` の intake（`tayk-intake` sub-workflow）が地図を読み、実装ブリーフへ畳み込む。振る舞いは以下:
+
+- **map 起点** — 子 ticket を列挙し、**open な ticket が 1 件でも残っていれば着手を拒否**する（wayfinder の「決定が出揃うまで実装しない」前提を実装側でも守る）。全 ticket が closed なら、各 ticket の resolution コメントを決定の本体として集める。map の Decisions-so-far は索引として扱い、それだけでブリーフを作らない。`Out of scope` は実装対象から明示的に除外する
+- **ticket 起点** — 親 map を辿って文脈を得る。blocking が open なら拒否。種別が `wayfinder:task` 以外（`research` / `prototype` / `grilling`）なら「決定を出すための ticket であって実装 ticket ではない」として拒否する
+- **`Not yet specified` に未解消の記述が残る map** も拒否する（地図がまだ霧を抱えている）
+
+intake は地図を**書き換えない**（claim / resolve / close は wayfinder セッションの責務）。拒否されたときは、残 ticket の一覧と次に取るべきコマンドがレポートに出る。
