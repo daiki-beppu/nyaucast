@@ -1,0 +1,33 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+  publish:
+    needs: ci
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      - name: Install dependencies with frozen-lockfile
+        run: nix develop --command bun install --frozen-lockfile
+      - name: Publish package with provenance
+        run: |
+          nix develop --command bash -euc '
+            package_version=$(node -p "require(\"./package.json\").version")
+            tag_version="${GITHUB_REF_NAME#v}"
+            if [ "$tag_version" != "$package_version" ]; then
+              echo "tag version $tag_version does not match package version $package_version" >&2
+              exit 1
+            fi
+            npm publish --provenance
+          '
