@@ -227,6 +227,12 @@ function createFakeBun(directory: string): {
   const recordPath = join(directory, "bun-invocations.jsonl");
   const fakeBunPath = join(binDirectory, "bun");
   mkdirSync(binDirectory);
+  // 拡張子なしの CJS スクリプトなので、TMPDIR がリポジトリ内を指すときに
+  // ルートの "type": "module" を継承しないよう CJS を明示する。
+  writeFileSync(
+    join(binDirectory, "package.json"),
+    `${JSON.stringify({ type: "commonjs" })}\n`
+  );
   writeFileSync(
     fakeBunPath,
     `#!${nodeExecutablePath}

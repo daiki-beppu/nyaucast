@@ -48,6 +48,14 @@ function createFakeBun(directory: string): {
   const fakeBunPath = join(binDirectory, "bun");
 
   mkdirSync(binDirectory);
+  // fake Bun は拡張子なしの CJS スクリプト。nix の shellHook が TMPDIR を
+  // $PWD/.tmp に向けるので一時ディレクトリがリポジトリ内に入り、ルートの
+  // package.json ("type": "module") を継承して ESM 扱いになると require が
+  // 落ちる。最も近い package.json として CJS を明示しておく。
+  writeFileSync(
+    join(binDirectory, "package.json"),
+    `${JSON.stringify({ type: "commonjs" })}\n`
+  );
   writeFileSync(
     fakeBunPath,
     `#!${nodeExecutablePath}
