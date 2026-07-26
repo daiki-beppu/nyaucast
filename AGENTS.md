@@ -27,13 +27,15 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 ## 開発ワークフロー
 
 - 開発は **takt メイン**。workflow は tayk 専用の `.takt/workflows/` を使う（ADR-0006）
-  - `tayk-feature` — 新機能・機能拡張。intake（wayfinder map / ticket 対応）→ 計画 → テスト設計 → 設計レビュー（設計 / ADR 整合性 / テスト設計の 3 並列）→ テスト先行実装 → 実装 → 実装レビュー（4 並列）→ 最終ゲート → delivery（PR / CI 監視 / レビュー指摘解消）
+  - `tayk-feature` — 新機能・機能拡張。intake（wayfinder map / ticket 対応）→ 計画 → テスト設計 → 設計レビュー（設計 / ADR 整合性 / テスト設計の 3 並列）→ テスト先行実装 → 実装 → 実装レビュー（4 並列）→ 最終ゲート → spillover → delivery（PR / CI 監視 / レビュー指摘解消）
+  - `tayk-fix` — バグ修正・回帰修正。intake → 診断（原因特定 / 検証可能な予測 / 修正方針 / 回帰テスト設計）→ 診断レビュー（診断妥当性 / ADR 整合性 / 回帰テスト設計の 3 並列）→ 再現テスト → 修正 → 実装レビュー（4 並列）→ 最終ゲート → spillover → delivery
   - `tayk-intake` / `tayk-delivery` — feature / fix 共通の callable sub-workflow
-  - `tayk-fix` — バグ修正用。**未実装**（issue #55 の残タスク）。当面 fix は `tayk-feature` か組み込み workflow を使う
-  - 起動例: `takt -w tayk-feature "#<issue番号>"`。定義を変えたら `takt workflow doctor <name>` で検証する
+  - 起動例: `takt -w tayk-feature "#<issue番号>"` / `takt -w tayk-fix "#<issue番号>"`。定義を変えたら `takt workflow doctor <name>` で検証する
 - **実装前に設計ゲートを通る。** 未決事項を抱えた issue、open な子 ticket が残る wayfinder map は intake が着手を拒否する
+- **fix は原因を特定してから直す。** 診断ゲート（原因の因果を `file:line` で示し、対立仮説を棄却する）を通らなければコードに触れない。再現テストが red にならなければ診断が誤っているとみなして差し戻す（ADR-0006 決定 9・10）
 - **ADR から黙って逸脱しない。** 逸脱するなら該当 ADR の改訂を同じ差分に含める（ADR-0001 決定 7 / ADR-0006 決定 4）
-- 要件は `REQ-<issue番号>-<2桁連番>`（issue に紐づかない task 起点は `REQ-TASK-<2桁連番>`）で採番し、計画 → テスト設計 → 実装 → レビュー → PR まで引き継ぐ
+- **スコープ外で見つけた問題は、直さず捨てず issue にする。** レポートの「スコープ外の発見」に記録し、`spillover` が ① 因果なし ② 実害あり ③ 根拠あり の 3 条件で仕分けて起票する（ADR-0006 決定 11）
+- 要件は `REQ-<issue番号>-<2桁連番>`（issue に紐づかない task 起点は `REQ-TASK-<2桁連番>`）で採番し、計画（fix では診断）→ テスト設計 → 実装 → レビュー → PR まで引き継ぐ
 - worktree 必須・main 直コミット禁止（グローバル AGENTS.md の規約に従う）
 - commit 規約: 日本語 Conventional Commits + タイトル末尾に `(#<N>)`
 - パッケージ操作は ni / nr / nlx 経由（グローバル規約）

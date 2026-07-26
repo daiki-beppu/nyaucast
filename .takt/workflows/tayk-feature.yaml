@@ -2,8 +2,9 @@ name: tayk-feature
 description: >
   tayk の新機能開発ワークフロー。intake（wayfinder map / ticket 対応）→ 計画 → テスト設計 →
   設計レビュー（設計 / ADR 整合性 / テスト設計の 3 並列）→ テスト先行実装 → 実装 →
-  実装レビュー（4 並列）→ 最終ゲート → delivery（PR 作成 / CI 監視 / レビュー指摘解消）。
-  実装に入る前に設計を止められること、ADR からの逸脱を黙って通さないことが default との差分。
+  実装レビュー（4 並列）→ 最終ゲート → スコープ外発見の起票 → delivery（PR 作成 / CI 監視 /
+  レビュー指摘解消）。実装に入る前に設計を止められること、ADR からの逸脱を黙って通さないことが
+  default との差分。
 workflow_config:
   provider_options:
     codex:
@@ -468,7 +469,7 @@ steps:
         - tayk-adr
     rules:
       - condition: COMPLETE
-        next: delivery
+        next: spillover
       - condition: needs_fix
         next: fix
       - condition: need_replan
@@ -476,7 +477,47 @@ steps:
       - condition: ABORT
         next: ABORT
 
-  # ── Phase 5: delivery ─────────────────────────────────────────────
+  # ── Phase 5: スコープ外発見の起票 ─────────────────────────────────
+  # feature / fix 共通の構造。「ついで直しをしない」という禁止の受け皿。
+  # delivery の *前* に置くのは、起票した issue 番号を PR 本文へ載せるため（ADR-0006 決定 11）
+  - name: spillover
+    description: 各レポートのスコープ外の発見を集め、起票する / 捨てるに仕分ける
+    tags:
+      - delivery
+    edit: false
+    persona: tayk-delivery-operator
+    policy:
+      - tayk-scope-spillover
+    knowledge:
+      - tayk-domain
+    # gh issue create / comment を使うため Bash が要る。ソースは触らないので edit: false
+    provider_options:
+      extends: review-readonly
+    session: refresh
+    instruction: tayk-spillover
+    quality_gates:
+      - Report Directory の全レポートを読み、発見がなかったものも収集元に記録していること
+      - 起票したものが 3 条件（因果なし / 実害あり / 根拠あり）をすべて満たしていること
+      - 起票前に gh issue list で重複を照合していること
+      - 破棄した発見について、満たさなかった条件と理由を記録していること
+      - コードを変更していないこと
+    rules:
+      # 「今回の変更と因果あり」と判定された発見は、スコープ外へ逃がしてはならない。
+      # 仕分け自体は完了しているため、この rule を先に置かないと下の「仕分けが終わった」に
+      # 吸われて素通りする。戻り先が plan なのは、因果のある問題が最終ゲート後に出てきた
+      # ということが計画の見落としであり、要件 ID の採番からやり直す必要があるため
+      - condition: 因果ありと判定した発見があり、今回の変更に含めるべきものが残っている
+        next: plan
+      - condition: 仕分けが終わり、起票・追記・破棄をすべて記録した（発見ゼロの場合を含む）
+        next: delivery
+      - condition: gh の実行に失敗した（権限・ネットワーク）
+        next: delivery
+    output_contracts:
+      report:
+        - name: spillover.md
+          format: tayk-spillover
+
+  # ── Phase 6: delivery ─────────────────────────────────────────────
   # feature / fix 共通。PR 作成 → CI 監視 → レビュー指摘解消まで。
   - name: delivery
     kind: workflow_call

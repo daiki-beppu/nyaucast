@@ -112,6 +112,7 @@ steps:
     quality_gates:
       - commit メッセージが日本語 Conventional Commits で、タイトル末尾に linked issue の (#N) を持つこと
       - PR 本文に Closes #N と要件 ID ごとの充足状況が含まれること
+      - spillover レポートに起票した issue があるなら、その番号と切り出した理由が PR 本文に含まれること
       - main へ直接 push していないこと
       - .takt/runs/ 配下の実行時生成物を commit に含めていないこと
     rules:
