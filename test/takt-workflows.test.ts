@@ -13,6 +13,11 @@ import { join, resolve } from "node:path";
 const packageRoot = resolve(import.meta.dir, "..");
 const workflowsDirectory = join(packageRoot, ".takt", "workflows");
 
+// takt-pr-monitor.yml と同じ pin 済み CLI を起動する。PATH 上の takt に依存すると
+// CI（未導入）で失敗し、ローカルでもグローバル版のバージョン差が結果に混入する。
+const TAKT_COMMAND = "bunx";
+const TAKT_PREFIX = ["--bun", "takt@0.52.0"];
+
 type Workflow = Record<string, unknown>;
 
 function readWorkflow(name: string): Workflow {
@@ -126,8 +131,9 @@ function runMockEngineScenario(
 
   try {
     const result = spawnSync(
-      "takt",
+      TAKT_COMMAND,
       [
+        ...TAKT_PREFIX,
         "--pipeline",
         "--skip-git",
         "--task",
@@ -170,8 +176,9 @@ function runMockWorkflowDefinition(
 
   try {
     return spawnSync(
-      "takt",
+      TAKT_COMMAND,
       [
+        ...TAKT_PREFIX,
         "--pipeline",
         "--skip-git",
         "--task",
@@ -447,7 +454,7 @@ describe("TAKT workflow contracts", () => {
     expect(monitorWorkflow).toMatch(/workflow_run:/);
     expect(monitorWorkflow).toContain("takt@0.52.0");
     expect(monitorWorkflow).toContain("--pr");
-    expect(monitorWorkflow).toContain("github.event_path");
+    expect(monitorWorkflow).toContain("GITHUB_EVENT_PATH");
     expect(monitorWorkflow).toContain("PR_NUMBER");
     expect(monitorWorkflow).toContain("--skip-git");
     expect(monitorWorkflow).toContain("--workflow shared-pr-monitor");
@@ -477,8 +484,9 @@ describe("TAKT workflow contracts", () => {
     expect(runLine).not.toMatch(/--workflow\s+--/);
 
     const doctor = spawnSync(
-      "takt",
+      TAKT_COMMAND,
       [
+        ...TAKT_PREFIX,
         "workflow",
         "doctor",
         "feature",
@@ -530,14 +538,15 @@ describe("TAKT workflow contracts", () => {
 
   test("WF-01/WF-02: exposes the global workflow option before task registration", () => {
     const feature = spawnSync(
-      "takt",
-      ["--workflow", "feature", "add", "--help"],
+      TAKT_COMMAND,
+      [...TAKT_PREFIX, "--workflow", "feature", "add", "--help"],
       { cwd: packageRoot, encoding: "utf8" }
     );
-    const fix = spawnSync("takt", ["--workflow", "fix", "add", "--help"], {
-      cwd: packageRoot,
-      encoding: "utf8",
-    });
+    const fix = spawnSync(
+      TAKT_COMMAND,
+      [...TAKT_PREFIX, "--workflow", "fix", "add", "--help"],
+      { cwd: packageRoot, encoding: "utf8" }
+    );
 
     expect(feature.status).toBe(0);
     expect(fix.status).toBe(0);

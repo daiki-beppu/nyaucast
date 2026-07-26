@@ -16,3 +16,9 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       run: bun install --frozen-lockfile
+    # 契約テストが起動する pin 済み CLI を先に取得しておく。テスト内で初回
+    # ダウンロードが走ると、個々のテストのタイムアウトに乗ってしまう。
+    - name: Warm the pinned takt CLI cache
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: bunx --bun takt@0.52.0 --version

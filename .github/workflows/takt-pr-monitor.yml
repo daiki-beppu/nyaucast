@@ -48,7 +48,6 @@ jobs:
         id: pr-trust
         env:
           GH_TOKEN: ${{ github.token }}
-          EVENT_PATH: ${{ github.event_path }}
           REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
@@ -57,7 +56,7 @@ jobs:
             elif .workflow_run then .workflow_run.pull_requests[0].url
             else ""
             end // ""
-          ' "$EVENT_PATH")"
+          ' "$GITHUB_EVENT_PATH")"
           if [ -z "$pr_url" ] || [ "$pr_url" = "null" ]; then
             echo "trusted=false" >> "$GITHUB_OUTPUT"
             echo "number=" >> "$GITHUB_OUTPUT"
