@@ -1,0 +1,71 @@
+name: tayk-intake
+description: >
+  tayk 共通の intake フェーズ。issue（wayfinder map / ticket を含む）を読み、
+  着手可能性を判定して実装ブリーフを作る。feature / fix の両 workflow から呼ばれる。
+subworkflow:
+  callable: true
+  visibility: internal
+  returns:
+    - blocked
+  params:
+    # feature / fix で判定基準が変わるため、instruction を差し替え可能にしている。
+    # fix 側は再現手順・回帰範囲を intake の必須情報とする別 instruction を渡す想定。
+    intake_instruction:
+      type: facet_ref
+      facet_kind: instruction
+      default: tayk-intake
+workflow_config:
+  provider_options:
+    codex:
+      network_access: true
+    opencode:
+      network_access: true
+max_steps: 5
+initial_step: read_issue
+steps:
+  # system step。issue / task / branch のコンテキストを TAKT 側から受け取り、
+  # 次の agent step が {context:read_issue.*} で参照できるようにする。
+  - name: read_issue
+    mode: system
+    system_inputs:
+      - type: task_context
+        source: current_task
+        as: task
+      - type: issue_context
+        source: current_task
+        as: issue
+      - type: branch_context
+        source: current_task
+        as: branch
+    rules:
+      - when: "true"
+        next: assess
+
+  - name: assess
+    description: 着手可能性の判定と実装ブリーフの作成
+    tags:
+      - plan
+      - intake
+    edit: false
+    persona: tayk-intake-analyst
+    knowledge:
+      - tayk-domain
+    # review-readonly = Read / Glob / Grep / Bash / WebSearch / WebFetch。
+    # gh CLI を使うため Bash が要る。編集は edit: false で禁じる。
+    provider_options:
+      extends: review-readonly
+    instruction:
+      $param: intake_instruction
+    quality_gates:
+      - 判定の根拠として issue / ticket の該当箇所を引用していること
+      - wayfinder 起点のとき、子 ticket の open/closed 状態を実際に照会していること
+      - BLOCKED のとき、人間が次に取るべきアクションを具体のコマンドまで書いていること
+    rules:
+      - condition: 着手可能（READY）
+        next: COMPLETE
+      - condition: 着手できない（BLOCKED）
+        return: blocked
+    output_contracts:
+      report:
+        - name: intake-brief.md
+          format: tayk-intake-brief

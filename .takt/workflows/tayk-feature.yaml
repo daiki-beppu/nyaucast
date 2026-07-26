@@ -1,0 +1,473 @@
+name: tayk-feature
+description: >
+  tayk の新機能開発ワークフロー。intake（wayfinder map / ticket 対応）→ 計画 → テスト設計 →
+  設計レビュー（設計 / ADR 整合性 / テスト設計の 3 並列）→ テスト先行実装 → 実装 →
+  実装レビュー（4 並列）→ 最終ゲート → delivery（PR 作成 / CI 監視 / レビュー指摘解消）。
+  実装に入る前に設計を止められること、ADR からの逸脱を黙って通さないことが default との差分。
+workflow_config:
+  provider_options:
+    codex:
+      network_access: true
+    opencode:
+      network_access: true
+# 設計ループ・実装ループ・delivery の CI 待ちを含むため default (30) では足りない
+max_steps: 60
+initial_step: intake
+loop_monitors:
+  # ── 設計レビュー ⇄ 設計修正。実装前なので、打ち切りより再計画を優先する ──
+  - cycle:
+      - design_review
+      - design_fix
+    threshold: 3
+    judge:
+      persona: supervisor
+      instruction: tayk-loop-monitor-design
+      rules:
+        - condition: 健全（指摘が減っている・修正が実質的）
+          next: design_review
+        - condition: 非生産的（同じ指摘が繰り返される・要件が固まっていない）
+          next: plan
+  # ── 再計画ループ。ここまで来たら計画の作り直しでは解けない可能性が高い ──
+  - cycle:
+      - plan
+      - test_design
+      - design_review
+    threshold: 3
+    judge:
+      persona: supervisor
+      instruction: tayk-loop-monitor-replan
+      rules:
+        - condition: 健全（曖昧さが減り計画が具体化している）
+          next: plan
+        - condition: 非生産的（issue の未決事項 / ADR との衝突に帰着する）
+          next: ABORT
+  # ── 実装レビュー ⇄ 修正。builtin の判断基準をそのまま使う ──
+  - cycle:
+      - impl_review
+      - fix
+    threshold: 3
+    judge:
+      persona: supervisor
+      instruction: loop-monitor-reviewers-fix
+      rules:
+        - condition: 健全（指摘数が減少、修正が反映されている）
+          next: impl_review
+        - condition: 非生産的（同じ指摘が繰り返される）
+          next: final_gate
+steps:
+  # ── Phase 0: intake ───────────────────────────────────────────────
+  # feature / fix 共通。wayfinder map の未完（open ticket 残存）を検出して止める。
+  - name: intake
+    kind: workflow_call
+    call: tayk-intake
+    rules:
+      - condition: COMPLETE
+        next: plan
+      - condition: blocked
+        next: ABORT
+      - condition: ABORT
+        next: ABORT
+
+  # ── Phase 1: 設計 ─────────────────────────────────────────────────
+  - name: plan
+    description: 要件 ID の採番と実装方針の決定
+    tags:
+      - plan
+    edit: false
+    persona: planner
+    policy:
+      - tayk-traceability
+    knowledge:
+      - architecture
+      - tayk-adr
+      - tayk-domain
+    provider_options:
+      extends: review-readonly
+    instruction: tayk-plan
+    quality_gates:
+      - 全要件に REQ-<issue番号>-<連番> 形式の ID が振られていること
+      - 要件 ID ごとに対象ファイルと方針が対応づいていること
+      - ADR 整合性の事前申告が全 ADR に対して行われていること
+      - v0.1.0 のゲート外の拡張を方針に含めていないこと
+    rules:
+      - condition: 要件 ID を採番し実装方針を決めた
+        next: test_design
+      - condition: ユーザーが質問をしている（実装タスクではない）
+        next: COMPLETE
+      - condition: ブリーフの決定だけでは方針が一意に決まらない
+        next: ABORT
+        appendix: |
+          方針を決めるために必要な情報:
+          - {何が決まれば進めるか}
+    output_contracts:
+      report:
+        - name: plan.md
+          format: tayk-plan
+
+  - name: test_design
+    description: 要件 ID ごとの検証設計（テストコードは書かない）
+    tags:
+      - plan
+      - test-planning
+    edit: false
+    persona: test-planner
+    policy:
+      - testing
+      - tayk-traceability
+    knowledge:
+      - unit-testing
+      - e2e-testing
+      - tayk-domain
+    provider_options:
+      extends: review-readonly
+    instruction: tayk-test-design
+    quality_gates:
+      - 全要件 ID にテストケースが対応しているか、検証不能の理由が書かれていること
+      - 境界と失敗経路のケースが設計されていること
+      - critical regression に触れる変更なら 3 種それぞれの回帰ケースがあること
+      - 1 tool = テスト 1 ファイルの配置になっていること
+    rules:
+      - condition: 全要件にテスト設計が対応づいた
+        next: design_review
+      - condition: 実装計画の要件が曖昧でテスト設計できない
+        next: plan
+    output_contracts:
+      report:
+        - name: test-design.md
+          format: tayk-test-design
+
+  # 実装前の関門。ここで止めた誤りは、実装後に見つける場合より桁違いに安い。
+  - name: design_review
+    description: 設計 / ADR 整合性 / テスト設計の 3 並列レビュー
+    tags:
+      - review
+      - design-gate
+    parallel:
+      - name: design-arch-review
+        tags:
+          - review
+          - design-gate
+        edit: false
+        persona: architecture-reviewer
+        policy: review
+        knowledge:
+          - architecture
+          - tayk-domain
+        provider_options:
+          extends: review-readonly
+        pass_previous_response: false
+        instruction: review-design-arch
+        rules:
+          - condition: APPROVE
+          - condition: REJECT
+          - condition: NEED_REPLAN
+        output_contracts:
+          report:
+            - name: design-review.md
+              format: tayk-design-arch-review
+      - name: adr-conformance-design
+        tags:
+          - review
+          - design-gate
+          - adr
+        edit: false
+        persona: adr-conformance-reviewer
+        policy: review
+        knowledge:
+          - tayk-adr
+          - tayk-domain
+        provider_options:
+          extends: review-readonly
+        pass_previous_response: false
+        instruction: review-adr-conformance-design
+        rules:
+          - condition: APPROVE
+          - condition: REJECT
+          - condition: NEEDS_ADR_REVISION
+        output_contracts:
+          report:
+            - name: adr-conformance-design.md
+              format: adr-conformance-review
+      - name: test-design-review
+        tags:
+          - review
+          - design-gate
+        edit: false
+        persona: testing-reviewer
+        policy:
+          - review
+          - testing
+          - tayk-traceability
+        knowledge:
+          - unit-testing
+          - e2e-testing
+        provider_options:
+          extends: review-readonly
+        pass_previous_response: false
+        instruction: review-test-design
+        rules:
+          - condition: APPROVE
+          - condition: REJECT
+        output_contracts:
+          report:
+            - name: test-design-review.md
+              format: tayk-test-design-review
+    rules:
+      - condition: all("APPROVE")
+        next: write_tests
+      - condition: any("NEED_REPLAN")
+        next: plan
+      - condition: any("REJECT", "NEEDS_ADR_REVISION")
+        next: design_fix
+
+  - name: design_fix
+    description: 設計レビュー指摘の解消（レポートのみを直す。コードは書かない）
+    tags:
+      - plan
+      - design-gate
+    edit: true
+    persona: planner
+    policy:
+      - tayk-traceability
+    knowledge:
+      - architecture
+      - tayk-adr
+    required_permission_mode: edit
+    session: refresh
+    provider_options:
+      extends: edit
+    # 同じ設計指摘で 2 周目に入ったら、推論を厚くして食い違いの根に届かせる
+    promotion:
+      - at: 2
+        provider_options:
+          codex:
+            reasoning_effort: high
+          claude:
+            effort: high
+    instruction: tayk-design-fix
+    pass_previous_response: false
+    quality_gates:
+      - 全 finding に対応（修正 or 根拠を示した反論）していること
+      - 要件 ID を振り直していないこと（分割時は枝番を使うこと）
+      - プロダクションコード・テストコードを書いていないこと
+    rules:
+      - condition: 全 finding に対応した
+        next: design_review
+      - condition: 指摘が計画の前提そのものを否定している
+        next: plan
+
+  # ── Phase 2: 実装 ─────────────────────────────────────────────────
+  - name: write_tests
+    description: 承認されたテスト設計に基づくテスト先行実装（red を確認する）
+    tags:
+      - coding
+      - test-planning
+    edit: true
+    persona: coder
+    policy:
+      - coding
+      - testing
+      - tayk-traceability
+    knowledge:
+      - unit-testing
+      - e2e-testing
+      - tayk-adr
+    required_permission_mode: edit
+    provider_options:
+      extends: edit
+    instruction: tayk-write-tests
+    quality_gates:
+      - テスト設計の全ケースを実装していること
+      - 各テストに要件 ID とケース ID が埋め込まれていること
+      - 実装前の時点でテストが失敗する（red である）ことを確認していること
+      - 外部サービスへ実アクセスしていないこと
+    rules:
+      - condition: テスト作成が完了した
+        next: draft
+      - condition: テスト対象が未実装のためテスト作成をスキップする
+        next: draft
+      - condition: テスト設計自体に誤りがありテストを書けない
+        next: design_fix
+      - condition: ユーザーへの確認事項があるためユーザー入力が必要
+        next: write_tests
+        requires_user_input: true
+        interactive_only: true
+    output_contracts:
+      report:
+        - name: test-report.md
+          format: test-report
+
+  # builtin の実装 + AI アンチパターン自己レビューループ。
+  # implement の instruction だけ tayk の ADR 制約を効かせたものへ差し替える。
+  - name: draft
+    kind: workflow_call
+    call: default-draft
+    args:
+      impl_instruction: tayk-implement
+    rules:
+      - condition: COMPLETE
+        next: impl_review
+      - condition: need_replan
+        next: plan
+      - condition: ABORT
+        next: ABORT
+
+  # ── Phase 3: 実装レビュー ─────────────────────────────────────────
+  - name: impl_review
+    description: アーキテクチャ / AI アンチパターン / コーディング / ADR 整合性の 4 並列レビュー
+    tags:
+      - review
+    parallel:
+      - name: arch-review
+        tags:
+          - review
+        edit: false
+        persona: architecture-reviewer
+        policy: review
+        knowledge:
+          - architecture
+          - tayk-domain
+        provider_options:
+          extends: review-readonly
+        instruction: review-arch
+        rules:
+          - condition: approved
+          - condition: needs_fix
+        output_contracts:
+          report:
+            - name: architect-review.md
+              format: architecture-review
+      - name: ai-antipattern-review-2nd
+        tags:
+          - review
+        edit: false
+        persona: ai-antipattern-reviewer
+        policy:
+          - review
+          - ai-antipattern
+        provider_options:
+          extends: review-readonly
+        instruction: ai-antipattern-review
+        rules:
+          - condition: AI特有の問題なし
+          - condition: AI特有の問題あり
+        output_contracts:
+          report:
+            - name: ai-antipattern-review.md
+              format: ai-antipattern-review
+      - name: coding-review
+        tags:
+          - review
+        edit: false
+        persona: coding-reviewer
+        policy:
+          - review
+          - coding
+          - tayk-traceability
+        pass_previous_response: false
+        provider_options:
+          extends: review-readonly
+        instruction: review-coding
+        rules:
+          - condition: approved
+          - condition: needs_fix
+        output_contracts:
+          report:
+            - name: coding-review.md
+              format: coding-review
+      - name: adr-conformance-impl
+        tags:
+          - review
+          - adr
+        edit: false
+        persona: adr-conformance-reviewer
+        policy: review
+        knowledge:
+          - tayk-adr
+          - tayk-domain
+        pass_previous_response: false
+        provider_options:
+          extends: review-readonly
+        instruction: review-adr-conformance-impl
+        rules:
+          - condition: APPROVE
+          - condition: REJECT
+          - condition: NEEDS_ADR_REVISION
+        output_contracts:
+          report:
+            - name: adr-conformance-impl.md
+              format: adr-conformance-review
+    rules:
+      - condition: all("approved", "AI特有の問題なし", "APPROVE")
+        next: final_gate
+      - condition: any("needs_fix", "AI特有の問題あり", "REJECT", "NEEDS_ADR_REVISION")
+        next: fix
+
+  - name: fix
+    description: 実装レビュー指摘の修正
+    tags:
+      - coding
+    edit: true
+    persona: coder
+    policy:
+      - coding
+      - testing
+      - tayk-traceability
+    knowledge:
+      - architecture
+      - tayk-adr
+    required_permission_mode: edit
+    session: refresh
+    provider_options:
+      extends: edit
+    promotion:
+      - at: 2
+        provider_options:
+          codex:
+            reasoning_effort: high
+          claude:
+            effort: high
+    instruction: fix
+    pass_previous_response: false
+    quality_gates:
+      - テストの削除・skip・アサーション緩和で指摘を消していないこと
+      - ADR 逸脱の指摘に対し、該当 ADR の改訂を差分に含めたか、逸脱を解消したかのいずれかであること
+      - 実装計画の要件 ID にない機能を追加していないこと
+    rules:
+      - condition: 修正完了
+        next: impl_review
+      - condition: 判断できない、情報不足
+        next: plan
+
+  # ── Phase 4: 最終ゲート ───────────────────────────────────────────
+  # builtin の merge-readiness + supervise 並列ゲート。
+  # supervise 側の knowledge に tayk の ADR を足して、規約観点の最終確認を効かせる。
+  - name: final_gate
+    kind: workflow_call
+    call: merge-readiness-final-gate
+    args:
+      supervise_knowledge:
+        - architecture
+        - tayk-adr
+    rules:
+      - condition: COMPLETE
+        next: delivery
+      - condition: needs_fix
+        next: fix
+      - condition: need_replan
+        next: plan
+      - condition: ABORT
+        next: ABORT
+
+  # ── Phase 5: delivery ─────────────────────────────────────────────
+  # feature / fix 共通。PR 作成 → CI 監視 → レビュー指摘解消まで。
+  - name: delivery
+    kind: workflow_call
+    call: tayk-delivery
+    rules:
+      - condition: COMPLETE
+        next: COMPLETE
+      - condition: needs_fix
+        next: fix
+      - condition: ABORT
+        next: ABORT

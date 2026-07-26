@@ -1,0 +1,46 @@
+{
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["pending", "success", "failure", "unavailable"],
+      "description": "CI の総合状態。pending=実行中のチェックがある / success=全 pass / failure=fail または cancel がある / unavailable=CI 未設定"
+    },
+    "pr_number": {
+      "type": "integer",
+      "description": "確認対象の PR 番号"
+    },
+    "failed_checks": {
+      "type": "array",
+      "description": "失敗したチェックのみ。pass したチェックは含めない",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "description": "チェック名" },
+          "workflow": { "type": "string", "description": "ワークフロー名" },
+          "cause": {
+            "type": "string",
+            "description": "ログから読み取った失敗原因。特定できない場合は「ログから特定できず」"
+          },
+          "location": {
+            "type": "string",
+            "description": "原因箇所の file:line。特定できない場合は空文字"
+          }
+        },
+        "required": ["name", "workflow", "cause", "location"],
+        "additionalProperties": false
+      }
+    },
+    "pending_checks": {
+      "type": "array",
+      "description": "まだ完了していないチェック名",
+      "items": { "type": "string" }
+    },
+    "summary": {
+      "type": "string",
+      "description": "1-2 文の状況要約"
+    }
+  },
+  "required": ["status", "pr_number", "failed_checks", "pending_checks", "summary"],
+  "additionalProperties": false
+}
