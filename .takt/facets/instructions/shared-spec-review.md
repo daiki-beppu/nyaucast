@@ -1,0 +1,1 @@
+Review the current change against the intake, acceptance evidence, and report contract. Report `approved` only when the requested behavior is complete. Record each unmet requirement with evidence and a concrete repair. Do not silently expand scope or infer missing acceptance criteria.

@@ -1,0 +1,1 @@
+Run and record every configured quality gate. If no PR exists, emit COMPLETE only at the pre-PR quality boundary after all local gates pass. If a PR exists, record its number, review state, and CI state; emit COMPLETE only when both are green. Pending or failed state must include exact evidence and the next resume condition.

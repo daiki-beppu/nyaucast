@@ -1,9 +1,15 @@
 # tayk リポジトリの takt 設定
 # provider / model / language はグローバル設定 (~/.takt/config.yaml) を継承する。
-# workflow は組み込み default (9 step) を素のまま使う (docs/adr/0001 Consequences)。
-# custom workflow / facets は置かない — レビュー終了条件の追加は再発観測後に別 ADR で判断する。
+# workflow は本リポジトリ専用の feature / fix を標準入口として使う。
+# 共通の intake・レビュー・delivery 契約は shared callable workflow を介して再利用する。
 draft_pr: false
+auto_pr: false
+# `takt run`/`takt watch` retries failed queued tasks; PR review monitoring is
+# resumed with `takt --pr <N>` so the workflow receives current-pr explicitly.
+auto_requeue_max_attempts: 3
 base_branch: main
+workflow_command_gates:
+  custom_scripts: true
 
 provider: codex
 persona_providers:

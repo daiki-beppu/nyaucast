@@ -33,7 +33,7 @@ accepted (2026-07-08)
 ## Consequences
 
 - tracer issue (`collection.plan`) が本規約の最初の適用対象。ディレクトリ規約（`src/tools/<domain>.<name>.ts` 等）は tracer 実装で確定させ、本 ADR に追記する
-- takt 運用は組み込み default workflow を素のまま使う。レビュー終了条件（仕様引用必須 / ラウンド上限）は予防的に導入せず、レビューが 3 ラウンドを超える再発を観測したら実データを根拠に別 ADR で導入する（旧 ADR-0021 の決定）
+- takt 運用は本リポジトリの専用 `feature` / `fix` workflow を標準入口として使う。issue 登録は `takt -w feature add <issue>` または `takt -w fix add <issue>` とし、対話式設定でTAKT管理の worktree と auto PR を有効にして実行する（`--workflow` と `--auto-pr` は `add` の非対話設定ではない）。両 workflow は組み込み default の代替として、共通の intake・レビュー・delivery 契約を callable な `shared` workflow から利用する。レビュー差し戻しは最大 3 回とし、同じ指摘が進展なく反復した場合は ABORT する。PR は TAKT の管理経路で作成する。main への直接コミットは禁止し、日本語 Conventional Commits と issue 番号付きタイトル（`(#<N>)`）を必須とする。v0.1.0 の collection フルライフサイクル外の拡張は issue 化して後続リリースへ送る。
 
 ## Related
 

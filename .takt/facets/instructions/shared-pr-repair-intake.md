@@ -1,0 +1,1 @@
+Read the current PR findings and CI failure evidence. Report the exact files, tests, and verification needed for a repair in a TAKT-managed worktree. This monitoring workflow does not edit the PR checkout. External outages and ambiguous findings are unrepairable; an explicit failed check is repairable.

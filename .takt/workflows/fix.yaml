@@ -1,0 +1,155 @@
+name: fix
+description: 症状を再現し、原因を検証してから回帰テスト先行で最小修正を行い、レビューと PR/CI 完了まで進める
+workflow_config:
+  provider_options:
+    codex:
+      network_access: true
+max_steps: 50
+initial_step: pr-context
+loop_monitors:
+  - cycle:
+      - diagnosis
+      - diagnosis-review
+    threshold: 3
+    judge:
+      persona: fix-diagnosis-reviewer
+      instruction: |
+        diagnosis と diagnosis-review の差し戻しが前進しているか確認する。
+        同じ原因仮説の不足や証拠欠落が繰り返され、根本原因を確定できない場合は
+        ABORT とする。
+      rules:
+        - condition: 診断または診断レビューが具体的に前進している
+          next: diagnosis-review
+        - condition: 同じ差し戻しが繰り返され、前進していない
+          next: ABORT
+steps:
+  - name: pr-context
+    kind: system
+    system_inputs:
+      - as: current-pr
+        type: pr_context
+        source: current_branch
+    rules:
+      - condition: Pull request context loaded
+        next: pr-monitor
+      - condition: Pull request context unavailable
+        next: shared-intake
+  - name: pr-monitor
+    kind: workflow_call
+    call: shared-pr-monitor
+    rules:
+      - condition: COMPLETE
+        next: COMPLETE
+      - condition: ABORT
+        next: ABORT
+  - name: shared-intake
+    kind: workflow_call
+    call: shared-intake
+    rules:
+      - condition: COMPLETE
+        next: intake
+      - condition: ABORT
+        next: ABORT
+  - name: intake
+    edit: false
+    persona: planner
+    instruction: |
+      バグ修正対象の issue と intake を確認する。症状、再現条件、期待動作、bug と
+      ready-for-agent の両ラベル、受け入れ条件、wayfinder:map の Destination / Notes / Decisions so far、
+      blocked_by を記録する。wayfinder:research、wayfinder:prototype、
+      wayfinder:grilling、wayfinder:task、未解消依存、未決事項、文書間の矛盾、
+      v0.1.0 の範囲外、main 直実行、worktree でない実行は安全に拒否する。
+      判定結果は READY または ABORT のいずれかを intake report に明記する。
+    rules:
+      - condition: READY、bug と ready-for-agent の両ラベル、依存解消済み、worktree 内、main ではない
+        next: diagnosis
+      - condition: 未決、矛盾、未解消依存、調査用 issue、範囲外、または実行前提違反
+        next: ABORT
+        appendix: intake report に拒否理由、確認した証拠、必要な判断を記録する
+    output_contracts:
+      report:
+        - name: intake.md
+          format: summary
+
+  - name: diagnosis
+    edit: false
+    persona: fix-coder
+    policy:
+      - coding
+      - testing
+    instruction: fix-diagnosis
+    rules:
+      - condition: 再現条件、期待動作、実測結果、根本原因、FIX-ID が evidence 付きで確定した
+        next: diagnosis-review
+      - condition: 再現不能、原因不明、または調査結果が矛盾している
+        next: ABORT
+        appendix: diagnosis report に試行、証拠、未解消の不確実性を記録する
+    output_contracts:
+      report:
+        - name: diagnosis.md
+          format: fix-diagnosis
+
+  - name: diagnosis-review
+    edit: false
+    persona: fix-diagnosis-reviewer
+    policy: review
+    instruction: fix-diagnosis-review
+    rules:
+      - condition: 原因仮説が evidence 付きで承認された
+        next: regression-tests
+      - condition: 原因仮説が不十分、誤り、または調査不足
+        next: diagnosis
+      - condition: 検証不能、依存未解消、または判断不能
+        next: ABORT
+        appendix: diagnosis-review report に差し戻し理由と必要な証拠を記録する
+    output_contracts:
+      report:
+        - name: diagnosis-review.md
+          format: fix-diagnosis-review
+
+  - name: regression-tests
+    edit: true
+    persona: fix-coder
+    policy:
+      - coding
+      - testing
+    required_permission_mode: edit
+    instruction: fix-regression-tests
+    rules:
+      - condition: FIX-ID 対応の回帰テストがあり、修正前の失敗を確認した
+        next: implement
+      - condition: 回帰テストを作成できない、または修正前に失敗しない
+        next: ABORT
+        appendix: regression-test report に未達 FIX-ID と失敗確認の証拠を記録する
+    output_contracts:
+      report:
+        - name: regression-tests.md
+          format: fix-regression-tests
+
+  - name: implement
+    edit: true
+    persona: fix-coder
+    policy: coding
+    required_permission_mode: edit
+    instruction: fix-implementation
+    rules:
+      - condition: 回帰テストが成功し、根本原因を修正し、同一原因パターンの横断確認が完了した
+        next: review
+      - condition: 修正不能、原因との不一致、横断確認不足、または判断不能
+        next: ABORT
+        appendix: implementation report に停止理由、証拠、必要な判断を記録する
+    output_contracts:
+      report:
+        - name: implementation.md
+          format: fix-implementation
+
+  - name: review
+    kind: workflow_call
+    call: shared
+    rules:
+      - condition: COMPLETE
+        next: COMPLETE
+      - condition: need_replan
+        next: diagnosis
+      - condition: ABORT
+        next: ABORT

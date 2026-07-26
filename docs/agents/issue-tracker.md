@@ -4,17 +4,19 @@ Issues and PRDs for this repo live as GitHub issues. Use the `gh` CLI for all op
 
 ## 実装ワークフロー: takt 前提
 
-開発は takt メイン。ただし用途ごとに使う workflow / skill が異なるので、文脈に合わせて選ぶ:
+開発は takt メイン。用途ごとに専用 workflow を明示選択し、workflow の適用範囲に合わない issue は着手しない:
 
-- **issue の実装** — `takt-issue` skill。takt の組み込み **default** workflow を素のまま使う。
-  フロー: worktree 自動生成 → background 実行（exit で完了検知）→ PR 化 → CI green まで監視 → クリーンアップ。**CI green で完了**（自動レビューは含まない）。
-- **PR のレビュー** — `takt-review` skill。builtin workflow **`review-takt-default`**（7 観点個別レビュー + supervisor、report ファイル出力）。REJECT なら worktree で fix → 再レビューを 1 回だけ実施。単体起動専用で、takt-issue から自動では呼ばれない。
-- **takt を使わない実装** — `issue-direct` skill。ユーザーが明示的に「takt なしで」と指定した場合のみ。Claude Code 単体で worktree 作成 → 実装 → PR 作成 → CI green まで監視。
+- **feature issue の実装** — `takt -w feature add <issue>` で登録し、対話式設定でTAKT管理の isolated worktree と auto PR を有効にする（`--workflow` と `--auto-pr` は `add` の非対話設定ではない）。登録後は `takt run` / `takt watch` で実行する。新規機能・機能拡張に限る。requirements → test-first implementation → shared standards/spec review → shared delivery の専用フローに従い、PR 作成後の CI と自動レビュー指摘の解消まで完了条件とする。
+- **fix issue の実装** — `takt -w fix add <issue>` で登録し、対話式設定でTAKT管理の isolated worktree と auto PR を有効にする（`--workflow` と `--auto-pr` は `add` の非対話設定ではない）。登録後は `takt run` / `takt watch` で実行する。バグ修正・回帰修正に限る。diagnosis → regression-test-first implementation → shared standards/spec review → shared delivery の専用フローに従い、PR 作成後の CI と自動レビュー指摘の解消まで完了条件とする。
+- いずれも GitHub issue、未解消依存のない ready-for-agent 条件、TAKT 管理の isolated worktree、main 以外のブランチを必須とする。`feature` と `fix` の選択に迷う場合や、要件が未確定の場合は実装せず判断を求める。
+- feature / fix の review・repair・delivery は、それぞれの workflow が callable な `shared` workflow を介して実行する。組み込み default workflow を直接の入口にはしない。
 
 共通の規約:
 
 - worktree 必須。メイン作業ツリーで直接ブランチを切らない
-- custom workflow / facets は置かない — 組み込み workflow を素のまま使う（プロジェクト CLAUDE.md 参照）
+- コミットは日本語 Conventional Commits とし、タイトル末尾に linked issue の `(#<N>)` を付ける。main へ直接コミットしない
+- v0.1.0 の collection フルライフサイクルに不要な scope expansion は実装せず、後続リリース用 issue として扱う
+- 専用 `feature` / `fix` workflow とその facet はリポジトリの契約として扱い、issue の実装時にその場で作成・変更しない。workflow 自体を変更する場合は別途方針を合意する
 - 着手前に main を `git pull --ff-only` で最新化する
 
 ## Conventions

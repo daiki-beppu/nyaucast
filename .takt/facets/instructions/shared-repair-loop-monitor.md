@@ -1,0 +1,1 @@
+Inspect the repair and quality-gate reports. Continue only when the failure is progressing toward resolution. If the same failure repeats without evidence of progress, emit ABORT and record the bounded-loop stop reason.

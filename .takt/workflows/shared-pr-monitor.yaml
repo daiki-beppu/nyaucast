@@ -1,0 +1,64 @@
+name: shared-pr-monitor
+description: Shared resumed PR and CI monitoring contract.
+subworkflow:
+  callable: true
+  visibility: internal
+policies:
+  review: ../facets/policies/shared-review.md
+  coding: ../facets/policies/shared-coding.md
+  testing: ../facets/policies/shared-testing.md
+personas:
+  supervisor: ../facets/personas/shared-supervisor.md
+  coder: ../facets/personas/shared-repairer.md
+workflow_config:
+  provider_options:
+    codex:
+      network_access: true
+max_steps: 12
+initial_step: delivery
+steps:
+  - name: delivery
+    tags:
+      - delivery
+      - pr-monitor
+    edit: false
+    persona: supervisor
+    policy: review
+    provider_options:
+      extends: review-readonly
+    instruction: shared-pr-monitor
+    rules:
+      - condition: PR is reviewed and CI is green
+        next: COMPLETE
+      - condition: PR or CI is pending
+        next: ABORT
+      - condition: PR review has actionable findings
+        next: repair
+      - condition: CI failed
+        next: repair
+        appendix: Record the failed check and exact evidence for repair.
+      - condition: PR or CI failed without an actionable repair
+        next: ABORT
+    output_contracts:
+      report:
+        - name: pr-monitor-summary.md
+          format: shared-pr-monitor
+
+  - name: repair
+    tags:
+      - repair
+      - pr-monitor
+      - managed-worktree
+      - exact-evidence
+    edit: false
+    persona: coder
+    policy:
+      - coding
+      - testing
+    required_permission_mode: readonly
+    provider_options:
+      extends: review-readonly
+    instruction: shared-pr-repair-intake
+    rules:
+      - condition: Repair is required
+        next: ABORT

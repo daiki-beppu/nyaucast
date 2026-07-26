@@ -1,0 +1,142 @@
+name: shared
+description: Shared feature/fix review, repair, and delivery contract.
+subworkflow:
+  callable: true
+  visibility: internal
+  returns:
+    - need_replan
+policies:
+  coding: ../facets/policies/shared-coding.md
+  testing: ../facets/policies/shared-testing.md
+  review: ../facets/policies/shared-review.md
+personas:
+  architecture-reviewer: ../facets/personas/shared-reviewer.md
+  supervisor: ../facets/personas/shared-supervisor.md
+  coder: ../facets/personas/shared-repairer.md
+workflow_config:
+  provider_options:
+    codex:
+      network_access: true
+max_steps: 20
+initial_step: review
+loop_monitors:
+  - cycle:
+      - review
+      - repair
+    threshold: 3
+    judge:
+      persona: supervisor
+      instruction: loop-monitor-reviewers-fix
+      rules:
+        - condition: Healthy (findings are decreasing and fixes are applied)
+          next: review
+        - condition: Unproductive (the same findings repeat without progress)
+          next: ABORT
+steps:
+  - name: review
+    tags:
+      - review
+    parallel:
+      - name: standards-review
+        tags:
+          - review
+          - standards
+        edit: false
+        persona: architecture-reviewer
+        policy: review
+        provider_options:
+          extends: review-readonly
+        instruction: shared-standards-review
+        rules:
+          - condition: approved
+          - condition: needs_fix
+        output_contracts:
+          report:
+            - name: standards-review.md
+              format: shared-review
+      - name: spec-review
+        tags:
+          - review
+          - spec
+        edit: false
+        persona: supervisor
+        policy: review
+        provider_options:
+          extends: review-readonly
+        instruction: shared-spec-review
+        rules:
+          - condition: approved
+          - condition: needs_fix
+        output_contracts:
+          report:
+            - name: spec-review.md
+              format: shared-review
+    rules:
+      - condition: all("approved")
+        next: delivery
+      - condition: any("needs_fix")
+        next: repair
+      - condition: any("blocked")
+        next: ABORT
+
+  - name: repair
+    tags:
+      - coding
+      - repair
+    edit: true
+    persona: coder
+    policy:
+      - coding
+      - testing
+    provider_options:
+      extends: edit
+    required_permission_mode: edit
+    pass_previous_response: false
+    instruction: shared-repair
+    rules:
+      - condition: All review findings are fixed and verified
+        next: review
+      - condition: Repair cannot proceed or a finding remains unresolved
+        next: ABORT
+    output_contracts:
+      report:
+        - name: repair.md
+          format: shared-repair
+
+  - name: delivery
+    tags:
+      - delivery
+    edit: false
+    persona: supervisor
+    policy: review
+    provider_options:
+      extends: review-readonly
+    quality_gates:
+      - type: command
+        name: test
+        command: bun test
+        timeout_ms: 300000
+      - type: command
+        name: typecheck
+        command: bun run typecheck
+        timeout_ms: 300000
+      - type: command
+        name: lint
+        command: bun run lint
+        timeout_ms: 300000
+      - type: command
+        name: format-check
+        command: bun run format:check
+        timeout_ms: 300000
+    instruction: shared-delivery
+    rules:
+      - condition: Quality gates passed and no PR exists yet (pre-PR boundary)
+        next: COMPLETE
+      - condition: Quality gates passed at the pre-PR boundary
+        next: COMPLETE
+      - condition: A quality gate failed
+        next: ABORT
+    output_contracts:
+      report:
+        - name: delivery-summary.md
+          format: shared-delivery

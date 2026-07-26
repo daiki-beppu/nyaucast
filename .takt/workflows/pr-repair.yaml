@@ -1,0 +1,66 @@
+name: pr-repair
+description: PR の CI または自動レビュー失敗を修正し、品質ゲートを通過させる
+workflow_config:
+  provider_options:
+    codex:
+      network_access: true
+max_steps: 12
+initial_step: repair
+loop_monitors:
+  - cycle:
+      - repair
+      - quality-gates
+    threshold: 3
+    judge:
+      persona: supervisor
+      instruction: shared-repair-loop-monitor
+      rules:
+        - condition: Repair is progressing and quality gates are improving
+          next: repair
+        - condition: The same repair failure repeats without progress
+          next: ABORT
+steps:
+  - name: repair
+    edit: true
+    persona: fix-coder
+    policy:
+      - coding
+      - testing
+    instruction: shared-pr-repair
+    rules:
+      - condition: REPAIRED
+        next: quality-gates
+      - condition: UNREPAIRABLE
+        next: ABORT
+  - name: quality-gates
+    edit: false
+    persona: supervisor
+    policy:
+      - testing
+    quality_gates:
+      - type: command
+        name: install-dependencies
+        command: bun install --frozen-lockfile
+        timeout_ms: 300000
+      - type: command
+        name: test
+        command: bun test
+        timeout_ms: 300000
+      - type: command
+        name: typecheck
+        command: bun run typecheck
+        timeout_ms: 300000
+      - type: command
+        name: lint
+        command: bun run lint
+        timeout_ms: 300000
+      - type: command
+        name: format-check
+        command: bun run format:check
+        timeout_ms: 300000
+    instruction: shared-quality-gates
+    rules:
+      - condition: VERIFIED
+        next: COMPLETE
+      - condition: REPAIR_REQUIRED
+        next: repair

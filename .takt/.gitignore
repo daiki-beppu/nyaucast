@@ -6,3 +6,49 @@
 
 # Project configuration
 !config.yaml
+
+# Project runtime helpers
+!runtime/
+!runtime/*.sh
+!scripts/
+!scripts/*.ts
+
+# Generated runs remain ignored
+# Project workflow definitions
+!workflows/
+!workflows/feature.yaml
+!workflows/fix.yaml
+!workflows/shared.yaml
+!workflows/shared-intake.yaml
+!workflows/shared-pr-monitor.yaml
+!workflows/pr-repair.yaml
+
+# Project-local fix workflow facets
+!facets/
+!facets/instructions/
+!facets/instructions/*.md
+!facets/output-contracts/
+!facets/output-contracts/*.md
+
+# Shared workflow policies and personas
+!facets/policies/
+!facets/policies/shared-*.md
+!facets/personas/
+!facets/personas/shared-*.md
+
+# Feature-only facet and agent definitions
+!facets/
+!facets/policies/
+!facets/policies/feature-coding.md
+!facets/policies/feature-testing.md
+!facets/policies/feature-review.md
+!facets/personas/
+!facets/personas/feature-planner.md
+!facets/personas/feature-architecture-reviewer.md
+!facets/personas/feature-coder.md
+!facets/personas/fix-coder.md
+!facets/personas/fix-diagnosis-reviewer.md
+
+# Integration validation report
+!validation/
+!validation/*.md

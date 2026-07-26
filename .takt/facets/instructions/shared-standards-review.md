@@ -1,0 +1,1 @@
+Review the current change against AGENTS.md, CONTEXT.md, applicable ADRs, and the approved intake. Report `approved` only when no standards finding remains. Every finding must include file evidence, impact, and the exact repair needed. An unresolvable or contradictory constraint is `blocked`, not an assumption.

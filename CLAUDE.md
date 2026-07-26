@@ -26,9 +26,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 開発ワークフロー
 
-- 開発は **takt メイン**。workflow は組み込み **default** を素のまま使う（custom workflow / facets は置かない）
-- worktree 必須・main 直コミット禁止（グローバル CLAUDE.md の規約に従う）
-- commit 規約: 日本語 Conventional Commits + タイトル末尾に `(#<N>)`
+- 開発は **takt メイン**。実装対象に応じて `takt -w feature add <issue>` または `takt -w fix add <issue>` で登録し、対話式設定で TAKT 管理の worktree と auto PR を有効にする（`--workflow` と `--auto-pr` は `add` の非対話設定ではない）。登録後は `takt run` / `takt watch` で実行する。新規機能・機能拡張は `feature`、バグ修正・回帰修正は `fix` とし、専用 workflow の外で実装を開始しない
+- 専用 `feature` / `fix` workflow は組み込み default の代替となる本リポジトリの標準入口であり、共通の intake・レビュー・delivery 契約を `shared` workflow から利用する。workflow の定義・facet を変更する場合は別途方針を合意し、選択した workflow の契約に従ってレビュー・修正・delivery まで完了させる
+- TAKT 管理の worktree を必須とし、main への直接変更・直接コミットは禁止する。コミットは日本語 Conventional Commits とし、タイトル末尾に linked issue の `(#<N>)` を付ける
+- v0.1.0 の collection フルライフサイクルに不要な機能拡張（自チャンネル実績分析、dashboard、Remotion、codec 全 5 本）は着手せず、必要なら issue 化して後続リリースへ送る
 - パッケージ操作は ni / nr / nlx 経由（グローバル規約）
 
 ## v0.1.0 のゲート

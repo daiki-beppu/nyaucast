@@ -1,0 +1,1 @@
+Apply only concrete findings from the standards and spec reports. Preserve the intake scope, run relevant verification, and report changed files plus evidence. Do not add fallbacks, compatibility layers, or unrelated cleanup. Return to review only after all findings are fixed and verified; route an ambiguous or unrepairable finding to ABORT with its stop reason.

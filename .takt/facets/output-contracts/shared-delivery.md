@@ -1,0 +1,1 @@
+The delivery report records every quality gate with its command, exit status, and evidence. It records the pre-PR decision as COMPLETE only when all gates pass, or ABORT with the failed gate and stop reason. PR review and CI state are handled by shared-pr-monitor.md.

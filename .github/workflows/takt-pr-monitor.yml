@@ -1,0 +1,153 @@
+name: takt-pr-monitor
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+  pull_request_review:
+    types:
+      - submitted
+      - edited
+      - dismissed
+  pull_request_review_comment:
+    types:
+      - created
+      - edited
+      - deleted
+  workflow_run:
+    workflows:
+      - tayk
+    types:
+      - completed
+
+concurrency:
+  group: takt-pr-${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+  checks: read
+  actions: read
+
+jobs:
+  resolve-pr:
+    permissions:
+      contents: read
+      pull-requests: read
+    runs-on: ubuntu-latest
+    outputs:
+      trusted: ${{ steps.pr-trust.outputs.trusted }}
+      number: ${{ steps.pr-trust.outputs.number }}
+    steps:
+      - name: Validate PR trust boundary
+        id: pr-trust
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_PATH: ${{ github.event_path }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          pr_url="$(jq -r '
+            if .pull_request then .pull_request.url
+            elif .workflow_run then .workflow_run.pull_requests[0].url
+            else ""
+            end // ""
+          ' "$EVENT_PATH")"
+          if [ -z "$pr_url" ] || [ "$pr_url" = "null" ]; then
+            echo "trusted=false" >> "$GITHUB_OUTPUT"
+            echo "number=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          pr_json="$(gh api "$pr_url")"
+          head_repository="$(jq -r '.head.repo.full_name // ""' <<< "$pr_json")"
+          number="$(jq -r '.number // ""' <<< "$pr_json")"
+          head_branch="$(jq -r '.head.ref // ""' <<< "$pr_json")"
+          if [ "$head_repository" != "$REPOSITORY" ] || [ -z "$number" ] || [ -z "$head_branch" ]; then
+            echo "trusted=false" >> "$GITHUB_OUTPUT"
+            echo "number=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "trusted=true" >> "$GITHUB_OUTPUT"
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+
+  monitor:
+    needs: resolve-pr
+    if: needs.resolve-pr.outputs.trusted == 'true'
+    outputs:
+      actionable: ${{ steps.monitor.outputs.actionable }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out the trusted default branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          repository: ${{ github.repository }}
+          fetch-depth: 0
+
+      - name: Set up tayk
+        uses: ./.github/actions/setup-tayk
+
+      - name: Run TAKT PR monitor
+        id: monitor
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAKT_OPENAI_API_KEY: ${{ secrets.TAKT_OPENAI_API_KEY }}
+          PR_NUMBER: ${{ needs.resolve-pr.outputs.number }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+            echo "invalid PR number" >&2
+            exit 1
+          fi
+          set +e
+          bunx --bun takt@0.52.0 --pipeline --skip-git --pr "$PR_NUMBER" \
+            --workflow shared-pr-monitor --provider codex --quiet \
+            | tee "$RUNNER_TEMP/takt-pr-monitor.log"
+          takt_status=${PIPESTATUS[0]}
+          set -e
+          if [ "$takt_status" -ne 0 ] && ! grep -Eq "DEFERRED|ACTIONABLE_REPAIR|UNREPAIRABLE" "$RUNNER_TEMP/takt-pr-monitor.log"; then
+            echo "TAKT PR monitor failed unexpectedly (status $takt_status)" >&2
+            exit "$takt_status"
+          fi
+          if grep -Fq "ACTIONABLE_REPAIR" "$RUNNER_TEMP/takt-pr-monitor.log"; then
+            echo "actionable=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "actionable=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  queue-repair:
+    needs: [resolve-pr, monitor]
+    if: needs.resolve-pr.outputs.trusted == 'true' && needs.monitor.outputs.actionable == 'true'
+    permissions:
+      contents: write
+      pull-requests: read
+      issues: read
+      checks: read
+      actions: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out the trusted default branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          repository: ${{ github.repository }}
+          fetch-depth: 0
+
+      - name: Set up tayk
+        uses: ./.github/actions/setup-tayk
+
+      - name: Queue and run TAKT repair in a managed worktree
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAKT_OPENAI_API_KEY: ${{ secrets.TAKT_OPENAI_API_KEY }}
+          PR_NUMBER: ${{ needs.resolve-pr.outputs.number }}
+        run: |
+          set -euo pipefail
+          .github/scripts/takt-pr-repair.sh "$PR_NUMBER"

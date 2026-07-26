@@ -1,0 +1,171 @@
+name: feature
+description: 実装可能な feature issue をテスト先行で実装し、レビューと PR/CI 完了まで進める
+workflow_config:
+  provider_options:
+    codex:
+      network_access: true
+policies:
+  coding: ../facets/policies/feature-coding.md
+  testing: ../facets/policies/feature-testing.md
+  review: ../facets/policies/feature-review.md
+personas:
+  planner: ../facets/personas/feature-planner.md
+  architecture-reviewer: ../facets/personas/feature-architecture-reviewer.md
+  coder: ../facets/personas/feature-coder.md
+max_steps: 40
+initial_step: pr-context
+loop_monitors:
+  - cycle:
+      - requirements
+      - design-review
+    threshold: 3
+    judge:
+      persona: architecture-reviewer
+      instruction: |
+        requirements と design-review の差し戻しが前進しているか確認する。
+        同じ不足・矛盾が繰り返され、要件を確定できない場合は ABORT とする。
+      rules:
+        - condition: 要件または設計レビューが具体的に前進している
+          next: design-review
+        - condition: 同じ差し戻しが繰り返され、前進していない
+          next: ABORT
+steps:
+  - name: pr-context
+    kind: system
+    system_inputs:
+      - as: current-pr
+        type: pr_context
+        source: current_branch
+    rules:
+      - condition: Pull request context loaded
+        next: pr-monitor
+      - condition: Pull request context unavailable
+        next: shared-intake
+  - name: pr-monitor
+    kind: workflow_call
+    call: shared-pr-monitor
+    rules:
+      - condition: COMPLETE
+        next: COMPLETE
+      - condition: ABORT
+        next: ABORT
+  - name: shared-intake
+    kind: workflow_call
+    call: shared-intake
+    rules:
+      - condition: COMPLETE
+        next: intake
+      - condition: ABORT
+        next: ABORT
+  - name: intake
+    edit: false
+    persona: planner
+    instruction: |
+      実装対象の GitHub issue を intake する。
+      issue 本文、受け入れ条件、enhancement と ready-for-agent ラベル、wayfinder:map 親の
+      Destination / Notes / Decisions so far、blocked_by を確認する。
+      wayfinder:research、wayfinder:prototype、wayfinder:grilling、wayfinder:task の issue、
+      未解消依存、未決事項、文書間の矛盾、v0.1.0 の範囲外、main 直実行、worktree でない実行は
+      実装へ進めず、理由・根拠・必要な判断を intake report に残す。
+      判定結果は READY または ABORT のいずれかを明記し、実装を開始できる条件を曖昧にしない。
+    rules:
+      - condition: READY issue、enhancement と ready-for-agent の両ラベル、依存解消済み、worktree 内、main ではない
+        next: requirements
+      - condition: 未決、矛盾、未解消依存、調査用 issue、範囲外、または実行前提違反
+        next: ABORT
+        appendix: intake report に拒否理由、証拠、必要な外部判断を記録する
+    output_contracts:
+      report:
+        - name: intake.md
+          format: summary
+
+  - name: requirements
+    edit: false
+    persona: planner
+    instruction: |
+      issue、wayfinder map、CONTEXT.md、AGENTS.md、関連 ADR と既存コードを調査する。
+      受け入れ条件を変更せず、REQ-001 から始まる一意な要件 ID と検証可能な成功条件へ正規化する。
+      影響範囲、変更対象、対象外、要件ごとのテスト観点を requirements report に記録する。
+    rules:
+      - condition: REQ-ID と受け入れ条件、影響範囲、テスト観点が確定した
+        next: design-review
+      - condition: 要件が不明確、矛盾、または調査不足
+        next: ABORT
+        appendix: requirements report に不足情報と必要な判断を記録する
+    output_contracts:
+      report:
+        - name: requirements.md
+          format: summary
+
+  - name: design-review
+    edit: false
+    persona: architecture-reviewer
+    policy: review
+    instruction: |
+      requirements.md の REQ-ID、受け入れ条件、影響範囲、テスト計画、ADR/リポジトリ規約との整合を
+      実装前にレビューする。過剰な変更、未解消の依存、根拠のない設計判断があれば拒否する。
+    rules:
+      - condition: 設計承認
+        next: tests
+      - condition: 設計差し戻し、要件不足、または整合性違反
+        next: requirements
+      - condition: 設計を検証できない
+        next: ABORT
+        appendix: design review report に差し戻し理由を記録する
+    output_contracts:
+      report:
+        - name: design-review.md
+          format: summary
+
+  - name: tests
+    edit: true
+    persona: coder
+    policy:
+      - coding
+      - testing
+    required_permission_mode: edit
+    instruction: |
+      requirements.md の全 REQ-ID に対応するテストを、実装コードより先に作成する。
+      テスト名またはケース表に REQ-ID を含め、受け入れ条件、境界条件、拒否経路を検証可能にする。
+      テスト対象が未実装で失敗することを確認し、実装コードは変更しない。
+    rules:
+      - condition: REQ-ID 対応のテストが作成され、実装前の失敗を確認した
+        next: implement
+      - condition: テスト設計または失敗確認を進行できない
+        next: ABORT
+        appendix: test report に未達要件と証拠を記録する
+    output_contracts:
+      report:
+        - name: test-design.md
+          format: summary
+
+  - name: implement
+    edit: true
+    persona: coder
+    policy: coding
+    required_permission_mode: edit
+    instruction: |
+      requirements.md と test-design.md の REQ-ID を維持し、失敗していたテストを通す最小実装を行う。
+      AGENTS.md、CONTEXT.md、ADR、既存コードを根拠にし、無関係な改善や互換層を追加しない。
+      実装、テスト、実行結果、未解消事項を report に記録する。
+    rules:
+      - condition: 実装完了
+        next: standards-spec-review
+      - condition: 要件が実装不能、根拠が矛盾、または判断不能
+        next: ABORT
+        appendix: implementation report に停止理由と必要な判断を記録する
+    output_contracts:
+      report:
+        - name: implementation.md
+          format: summary
+
+  - name: standards-spec-review
+    kind: workflow_call
+    call: shared
+    rules:
+      - condition: COMPLETE
+        next: COMPLETE
+      - condition: need_replan
+        next: requirements
+      - condition: ABORT
+        next: ABORT

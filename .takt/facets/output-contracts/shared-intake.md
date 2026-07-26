@@ -1,0 +1,1 @@
+The shared intake report records issue type, checked readiness and acceptance evidence, wayfinder map fields, child-issue and blocked_by evidence, decision (`READY` or `ABORT`), and concrete missing or contradictory inputs.

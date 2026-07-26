@@ -26,7 +26,9 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 ## 開発ワークフロー
 
-- 開発は **takt メイン**。workflow は組み込み **default** を素のまま使う（custom workflow / facets は置かない）
+- 開発は **takt メイン**。実装対象に応じて `takt -w feature add <issue>` または `takt -w fix add <issue>` でタスクを登録し、対話式設定で worktree と auto PR を有効にする（`--workflow` と `--auto-pr` は `add` の非対話設定ではない）。通常の `add` が作成する TAKT 管理の worktree を必須とし、登録後は `takt run` / `takt watch` で実行する。新規機能・機能拡張は `feature`、バグ修正・回帰修正は `fix` の対象とし、issue の種別と workflow の適用範囲を混同しない。専用 workflow の外で実装を開始しない
+- 専用 `feature` / `fix` workflow は組み込み default の代替となる本リポジトリの標準入口であり、workflow の定義・facet を追加変更する場合は別途方針を合意する。レビュー・修正・delivery までを選択した workflow の契約に従い、main への直接コミットは行わない。コミットは日本語 Conventional Commits とし、タイトル末尾に `(#<N>)` を付ける
+- v0.1.0 の collection フルライフサイクルに不要な機能拡張、dashboard、Remotion、codec 全 5 本、自チャンネル実績分析は着手せず、必要なら issue 化して後続リリースへ送る
 - worktree 必須・main 直コミット禁止（グローバル AGENTS.md の規約に従う）
 - commit 規約: 日本語 Conventional Commits + タイトル末尾に `(#<N>)`
 - パッケージ操作は ni / nr / nlx 経由（グローバル規約）

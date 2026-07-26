@@ -1,0 +1,44 @@
+name: shared-intake
+description: Shared feature/fix intake contract.
+subworkflow:
+  callable: true
+  visibility: internal
+  returns:
+    - need_replan
+policies:
+  intake: ../facets/policies/shared-intake.md
+personas:
+  planner: ../facets/personas/shared-intake-planner.md
+workflow_config:
+  provider_options:
+    codex:
+      network_access: true
+max_steps: 3
+initial_step: intake
+steps:
+  - name: intake
+    tags:
+      - intake
+      - ready-for-agent
+      - wayfinder:map
+      - child-issue
+      - blocked_by
+      - reject-research-prototype-grilling-task
+    edit: false
+    persona: planner
+    policy: intake
+    instruction: shared-intake
+    rules:
+      - condition: Intake is ready-for-agent and dependencies are unblocked
+        next: COMPLETE
+      - condition: Intake is incomplete, blocked, or missing prerequisite evidence
+        next: ABORT
+        appendix: |
+          Record the missing input, blocker, prerequisite, and evidence checked
+          in the shared-intake report. Check wayfinder:map Destination, Notes,
+          Decisions so far, child issue, and blocked_by evidence. Do not infer
+          readiness from missing or contradictory input.
+    output_contracts:
+      report:
+        - name: shared-intake.md
+          format: shared-intake
