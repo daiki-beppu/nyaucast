@@ -26,4 +26,5 @@ tracer (`collection.plan`) の設計で「企画候補のテーマ案を誰が�
 
 ## Related
 
-- ADR-0001（薄いアーキテクチャ規約）/ CONTEXT.md「MCP tool」「knowledge codec」「workflow tool」/ issue #1 (tracer)
+- ADR-0001（薄いアーキテクチャ規約）/ CONTEXT.md「MCP tool」「knowledge codec」「primitive tool」/ issue #1 (tracer)
+- ADR-0007（collection lifecycle の実行モデル）— 本 ADR の原則が「区間を歩くのは core ではなく codec を読んだ agent」という帰結を生んだ。CONTEXT.md「workflow tool」は ADR-0007 で廃止済み

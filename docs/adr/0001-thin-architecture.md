@@ -33,8 +33,10 @@ accepted (2026-07-08)
 ## Consequences
 
 - tracer issue (`collection.plan`) が本規約の最初の適用対象。ディレクトリ規約（`src/tools/<domain>.<name>.ts` 等）は tracer 実装で確定させ、本 ADR に追記する
-- takt 運用は組み込み default workflow を素のまま使う。レビュー終了条件（仕様引用必須 / ラウンド上限）は予防的に導入せず、レビューが 3 ラウンドを超える再発を観測したら実データを根拠に別 ADR で導入する（旧 ADR-0021 の決定）
+- takt 運用は組み込み default workflow を素のまま使う。レビュー終了条件（仕様引用必須 / ラウンド上限）は予防的に導入せず、レビューが 3 ラウンドを超える再発を観測したら実データを根拠に別 ADR で導入する（旧 ADR-0021 の決定）。**なお本行は開発側の運用規約である** — 製品（collection lifecycle）の orchestration に takt を採用しないことは ADR-0006 で確定した
+- CLI adapter は「人間が直接触る唯一の面」という役割を持ち、ゲート承認の書き込み口を独占する（ADR-0007）。それでも規約 4「adapter に業務ロジックを書かない」は保たれる — 承認を書くのは core の関数で、CLI はそれを呼ぶだけ
 
 ## Related
 
 - 旧リポ ADR-0021（本リポ誕生の出典）/ CONTEXT.md「MCP tool」「adapter」「tracer」「データ 4 分類」「read model」
+- ADR-0006（takt を製品の orchestration に採用しない）/ ADR-0007（collection lifecycle の実行モデル。tracer が通す区間は `collection.plan` tool ではなく plan 区間になった）

@@ -29,26 +29,27 @@ _Avoid_: 第三者 consumer なし
 ## アーキテクチャ
 
 **MCP tool**:
-tayk が expose する型付き操作。agent (Claude Code / Codex 等) が直接呼ぶ第一級インターフェース。2 層で構成される — workflow tool (粗粒度) と primitive tool (細粒度)。設計ベンチマーク: [html2pptx.app](https://html2pptx.app/) の Skill + MCP tool + REST 3 層。ドット表記 (`benchmark.collect`) が正書。MCP protocol 上の wire 名はドットをアンダースコアへ機械変換した `benchmark_collect` 形式（Claude API の tool 名制約 `^[a-zA-Z0-9_-]{1,64}$` にドットが含まれないため）。
+tayk が expose する型付き操作。agent (Claude Code / Codex 等) が直接呼ぶ第一級インターフェース。primitive tool (細粒度) 1 層と、local store への読み口で構成される (ADR-0007)。設計ベンチマーク: [html2pptx.app](https://html2pptx.app/) の Skill + MCP tool + REST 3 層。ドット表記 (`benchmark.collect`) が正書。MCP protocol 上の wire 名はドットをアンダースコアへ機械変換した `benchmark_collect` 形式（Claude API の tool 名制約 `^[a-zA-Z0-9_-]{1,64}$` にドットが含まれないため）。
 _Avoid_: API endpoint, command (MCP tool は MCP protocol で expose される typed operation)、wire 名にドットを使うこと
 
-**workflow tool**:
-人間の GO/NO-GO 判断ゲートで区切られた粗粒度の MCP tool。`collection.plan` (TTP 収集・分析→企画) / `collection.produce` (音源→動画→サムネ) / `collection.publish` (upload→公開後運用) の 3 本。tool 内部で状態管理し、resume 可能。
-_Avoid_: orchestrator, pipeline (workflow tool は MCP tool の一種であり、別レイヤーではない)
-
 **primitive tool**:
-単一操作を行う細粒度の MCP tool。`audio.master` / `thumbnail.generate` / `benchmark.collect` 等。workflow tool が内部で呼ぶほか、agent が直接呼んで細かい制御もできる。
+単一操作を行う細粒度の MCP tool。`audio.master` / `thumbnail.generate` / `benchmark.collect` 等。knowledge codec を読んだ agent がこれを順に呼んで collection lifecycle を進める。関門は各 tool の事前条件が持ち、すべての tool が冪等 (実体があれば作らず返す) + 明示的な再生成手段を備える (ADR-0007)。
+_Avoid_: workflow tool (粗粒度の MCP tool を置く設計は ADR-0007 で廃止した。区間を歩くのは codec を読んだ agent であり、tool ではない)
+
+**ゲート承認**:
+collection lifecycle の GO/NO-GO ゲートを人間が越えた記録。`tayk collection produce <id>` / `tayk collection publish <id>` を**人間が叩いた事実そのもの**が承認であり、`approve` という独立操作は存在しない。書き込みは CLI 専用 (agent は書けない)、読み取りは MCP に開く (ADR-0007)。
+_Avoid_: approve, 承認フロー (独立した承認操作は作らない。起動 = 承認)
 
 **knowledge codec**:
-「いつ・どの MCP tool を・どう使うか」のドメイン知識パッケージ。MCP tool の description (WHAT) に対し、knowledge codec は WHEN/HOW を提供する。5 本構成: `collection-lifecycle` / `channel-management` / `analytics` / `content-quality` / `distribution`。下流へ配布する操作面は codec のみで、旧個別 skill は配布しない。旧 skill は codec の設計材料として扱う。
+「いつ・どの MCP tool を・どう使うか」のドメイン知識パッケージ。MCP tool の description (WHAT) に対し、knowledge codec は WHEN/HOW を提供する。粗粒度の workflow tool を置かないため (ADR-0007)、**区間を歩く手順を持つ唯一の担い手**でもある。5 本構成: `collection-lifecycle` / `channel-management` / `analytics` / `content-quality` / `distribution`。下流へ配布する操作面は codec のみで、旧個別 skill は配布しない。旧 skill は codec の設計材料として扱う。
 _Avoid_: skill guide, routing layer (knowledge codec は知識の bundled 提供であり、単なるルーティングではない)
 
 **adapter**:
-core の MCP tool を各プロトコルへ橋渡しする薄いラッパ。MCP adapter (primary) と CLI adapter (`tayk <cmd>`) がある。
+core の MCP tool を各プロトコルへ橋渡しする薄いラッパ。MCP adapter (primary) と CLI adapter (`tayk <cmd>`) がある。2 本立ての存在理由は分業 — **人間が叩くものは CLI、agent が叩くものは MCP**。CLI は人間が直接触る唯一の面であり、ゲート承認の書き込み口を独占する。業務ロジックは core に置き、adapter は呼ぶだけ (ADR-0001)。
 _Avoid_: thin client, thin wrapper (同一概念。canonical は adapter)
 
 **tracer**:
-アーキテクチャ規約 (ADR-0001) を確定させるために最初に end-to-end で通す垂直スライス。`collection.plan`（benchmark 収集 → local store 書き込み → read model クエリ → 企画出力）が該当 — データ 4 分類と read model の設計を最初に実地検証できるため。
+アーキテクチャ規約 (ADR-0001) を確定させるために最初に end-to-end で通す垂直スライス。plan 区間（benchmark 収集 → local store 書き込み → read model クエリ → 企画出力）が該当 — データ 4 分類と read model の設計を最初に実地検証できるため。
 _Avoid_: PoC (PoC は撤退判定用の別物)
 
 ## 設定・データ形式
@@ -92,7 +93,7 @@ _Avoid_: アルバム, プレイリスト (collection は YouTube 動画単位�
 **collection lifecycle**:
 collection の制作フロー。人間の GO/NO-GO ゲートで 3 区間に分かれる:
 `TTP 収集・分析 → 企画 →[GO/NO-GO]→ サムネ生成 →[GO/NO-GO]→ 音源生成 → MIX/マスタリング → 動画生成 → upload → 公開後運用`。
-ゲート 1 (企画後): 「作る / 作らない」。ゲート 2 (サムネ後): 「出す / 出さない」。各区間が workflow tool (`collection.plan` / `collection.produce` / `collection.publish`) に対応する。
+ゲート 1 (企画後): 「作る / 作らない」。ゲート 2 (サムネ後): 「出す / 出さない」。各区間は人間のゲート承認 (`tayk collection <gate> <id>`) で区切られ、区間を歩くのは knowledge codec を読んだ agent (ADR-0007)。区間名は plan (TTP 収集・分析→企画) / produce (サムネ生成) / publish (音源生成→MIX/マスタリング→動画生成→upload→公開後運用)。
 _Avoid_: pipeline, workflow (lifecycle は collection 固有の制作工程を指す。汎用の概念ではない)
 
 **master（マスター音源）**:
