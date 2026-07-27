@@ -6,6 +6,16 @@ YouTube チャンネル運営を自動化するツールキット。agent (Claud
 - アーキテクチャ規約: [docs/adr/0001-thin-architecture.md](https://github.com/daiki-beppu/tayk/blob/main/docs/adr/0001-thin-architecture.md)
 - 出自: [00-automation ADR-0021](https://github.com/daiki-beppu/youtube-automation/blob/main/docs/adr/0021-separate-repo-restart.md)（Python 版からの転換の経緯）
 
+## Setup
+
+前提: [Nix](https://nixos.org) + [direnv](https://direnv.net)。bun / node は flake devShell が提供する（バージョンの SSOT は `flake.lock`）。
+
+```bash
+direnv allow   # devShell を有効化（初回と worktree 作成後）
+bun install    # devDependencies を導入
+bun test       # 動作確認
+```
+
 ## Status
 
 v0.1.0 に向けて開発中。ゲートは first-party チャンネルでの dogfood 完走（collection フルライフサイクル 1 周）。Python 版 (`youtube-channels-automation`) は tayk が実運用カバレッジに達するまでメンテナンスモードで維持される。

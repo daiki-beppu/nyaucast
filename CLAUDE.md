@@ -24,6 +24,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 読み取りは local store の read model に一本化（① ④ はミラー。ミラーは SSOT ではない）
 - tayk が読み書きするファイルはすべて JSON（YAML 禁止。外部ツール所有ファイルは除く）
 
+## 開発環境
+
+- 前提: Nix + direnv。bun / node は flake devShell（`flake.nix`）が提供し、グローバルにはインストールされていない（Bun バージョンの SSOT は `flake.lock`。ADR-0003）
+- 初回および worktree 作成後は毎回: `direnv allow && bun install`（devDependencies の tsc / oxlint / oxfmt / lefthook は worktree ごとの `node_modules` に必要）
+- **落とし穴**: direnv を通さないシェルには bun が存在しない。takt worktree（`<repo-parent>/takt-worktrees/`）で bun が動くのは起動元シェルの環境継承によるもので、フレッシュなシェルから入る場合は `direnv allow` が必要
+- 開発コマンド（CI と同一ゲート）: `bun run typecheck` / `bun run lint` / `bun run format:check` / `bun test` / `bun scripts/verify-workflows.ts` / `bun run fallow`
+
 ## 開発ワークフロー
 
 - 開発は **takt メイン**。workflow は tayk 専用の `.takt/workflows/` を使う（ADR-0008）
