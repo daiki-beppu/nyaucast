@@ -9,7 +9,7 @@ YouTube チャンネル運営を自動化するツールキット。skill に蓄
 ## 環境
 
 - bun / node は Nix flake devShell が供給する。**direnv を通していないシェルには bun が存在しない**（グローバルには入っていない）
-- worktree を作ったら毎回 `direnv allow && bun install` — `node_modules` は worktree ごとに要る
+- worktree を作ったら毎回 `direnv allow` — devShell 入場時に `bun install --frozen-lockfile` が走る（`node_modules` は worktree ごとに要る）
 - パッケージ操作・スクリプト実行は bun のみ。npm / pnpm / yarn とそのラッパを使わない
 - **検査ゲートは `bun run check` の 1 コマンド**（最初に失敗したゲートで止まる）。CI・pre-push フックも同じ script を呼ぶため、ここで通れば CI でも通る。ゲートが何本あり何を実行するかは `package.json` の `check` script だけが定義する — **このファイルを含め、どこにも書き写さない**
 

@@ -11,10 +11,11 @@ YouTube チャンネル運営を自動化するツールキット。agent (Claud
 前提: [Nix](https://nixos.org) + [direnv](https://direnv.net)。bun / node は flake devShell が提供する（バージョンの SSOT は `flake.lock`）。
 
 ```bash
-direnv allow   # devShell を有効化（初回と worktree 作成後）
-bun install    # devDependencies を導入
+direnv allow   # devShell 有効化 + 依存導入（初回と worktree 作成後）
 bun test       # 動作確認
 ```
+
+devShell に入るたびに `bun install --frozen-lockfile` が走るため、依存の導入は別手順にならない（direnv を使わない場合は `nix develop` が同じ役割を果たす）。
 
 ## Status
 
