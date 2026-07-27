@@ -14,10 +14,6 @@
           default = pkgs.mkShell {
             packages = with pkgs; [ bun nodejs_24 ];
             shellHook = ''
-              export TMP="$PWD/.tmp"
-              export TEMP="$TMP"
-              export TMPDIR="$TMP"
-              mkdir -p "$TMP"
               export PATH="$PWD/node_modules/.bin:$PATH"
             '';
           };

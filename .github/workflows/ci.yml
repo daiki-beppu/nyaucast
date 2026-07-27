@@ -28,6 +28,6 @@ jobs:
       - name: Format check
         run: nix develop --command bun run format:check
       - name: Test
-        run: nix develop --command bun test
+        run: nix develop --command bun run test
       - name: Fallow
         run: nix develop --command bun run fallow
