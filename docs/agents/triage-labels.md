@@ -12,4 +12,4 @@ The skills speak in terms of five canonical triage roles. This file maps those r
 
 When a skill mentions a role (e.g. "apply the AFK-ready triage label"), use the corresponding label string from this table.
 
-`needs-info` と `ready-for-human` は GitHub 標準ラベル（`question` / `help wanted`）を流用している。`ready-for-agent` の付いた issue は takt workflow（`takt-issue` skill）で AFK 実装可能なことを意味する — 詳細は `docs/agents/issue-tracker.md` を参照。
+`needs-info` と `ready-for-human` は GitHub 標準ラベル（`question` / `help wanted`）を流用している。`ready-for-agent` の付いた issue は tayk 専用 takt workflow（`tayk-feature`。ADR-0008）で AFK 実装可能なことを意味する — 詳細は `docs/agents/issue-tracker.md` を参照。

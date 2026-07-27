@@ -1,18 +1,52 @@
 # tayk リポジトリの takt 設定
 # provider / model / language はグローバル設定 (~/.takt/config.yaml) を継承する。
-# workflow は組み込み default (9 step) を素のまま使う (docs/adr/0001 Consequences)。
-# custom workflow / facets は置かない — レビュー終了条件の追加は再発観測後に別 ADR で判断する。
+#
+# workflow は tayk 専用の .takt/workflows/ を使う (ADR-0008):
+#   tayk-feature  — 新機能・機能拡張（intake → 計画 → テスト設計 → 設計レビュー →
+#                   テスト先行実装 → 実装 → 実装レビュー → 最終ゲート → spillover → delivery）
+#   tayk-fix      — バグ修正・回帰修正（intake → 診断 → 診断レビュー → 再現テスト →
+#                   修正 → 実装レビュー → 最終ゲート → spillover → delivery）
+#   tayk-intake   — feature / fix 共通の intake（wayfinder map / ticket 対応）
+#   tayk-delivery — feature / fix 共通の delivery（PR / CI 監視 / レビュー指摘解消）
+# facets は .takt/facets/、structured output schema は .takt/schemas/。
+# 定義を変えたら `takt workflow doctor <name>` で検証する。
 draft_pr: false
 base_branch: main
 
 provider: codex
-persona_providers:
-  coder:
-    provider: codex
-  planner:
-    provider: codex
+
+# tayk 専用 workflow が使う persona のルーティング。coder / 既存 reviewer 系は
+# グローバル (~/.takt/config.yaml) の provider_routing.personas が解決する。
+# ここに置くのは、グローバルに登録がなく既定モデルへフォールバックしてしまう persona。
+provider_routing:
+  personas:
+    # intake の判定が全工程の入口。誤って着手を通すと後段すべてが無駄になるため最上位モデル
+    tayk-intake-analyst:
+      provider: codex
+      model: gpt-5.6-sol
+    # 設計ゲートの一角（ADR-0008 決定 3）。テスト設計の誤りは write_tests で red を
+    # 確認しても表面化せず、「通るだけで要件を検証しないテスト」として実装後まで残る。
+    # グローバルに登録がないため既定モデルへ落ちていた。planner と同格に置く
+    test-planner:
+      provider: codex
+      model: gpt-5.6-sol
+    # 診断ゲートの一角（ADR-0008 決定 9）。誤った原因のまま進むと、テストも修正も
+    # すべて無駄になる。再現テストの red は「症状を再現できたか」しか見ないため、
+    # 「症状は再現するが因果の理解が違う」誤診はここでしか捕まらない。intake と同格に置く
+    tayk-diagnosis-reviewer:
+      provider: codex
+      model: gpt-5.6-sol
+    # ADR 本文と差分の照合。他 reviewer と同格
+    tayk-adr-conformance-reviewer:
+      provider: codex
+      model: gpt-5.6-terra
+    # commit / push / gh 操作が主。手続き的な作業なので軽量モデル
+    tayk-delivery-operator:
+      provider: codex
+      model: gpt-5.6-luna
 
 # トークン消費の計測。記録先: .takt/runs/<run>/logs/<session>-usage-events.phase.jsonl
+# tayk-feature は default より step が多いため、費用が見合うかをここで観測する（ADR-0008 Consequences）
 observability:
   enabled: true
   usage_events_phase: true

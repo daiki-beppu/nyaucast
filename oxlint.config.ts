@@ -31,6 +31,15 @@ export default {
       },
     },
     {
+      // scripts/ はリポジトリ自身を検査する開発ツールで、出荷物ではない。
+      // test/** と同じ扱いにする。YAML パースの型付けは境界で 1 回だけ行う。
+      files: ["scripts/**/*.ts"],
+      rules: {
+        "eslint/func-style": "off",
+        "typescript/no-unsafe-type-assertion": "off",
+      },
+    },
+    {
       // src/index.ts は bin ランチャの委譲先として存在するだけで、中身は
       // #1 (tracer) で MCP tool のフラットな import 配列になる (ADR-0001)。
       files: ["src/index.ts"],

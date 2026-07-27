@@ -5,7 +5,8 @@
     "bin/**/*.test.ts",
     "test/**",
     "*.config.ts",
-    "prototype/**"
+    "prototype/**",
+    "scripts/**"
   ],
   "ignoreDependencies": ["@modelcontextprotocol/sdk", "ultracite", "zod"],
   "duplicates": {

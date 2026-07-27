@@ -1,0 +1,5 @@
+# worktree 作成時に持ち込む gitignore 済みファイル（.gitignore 構文）。
+# エージェントが worktree を作るとき（Claude Code の --worktree / EnterWorktree /
+# subagent、Codex デスクトップの Worktree チャット）に自動コピーされる。
+# 手動 git worktree add / takt では適用されないので、その場合は自分でコピーする。
+.env
