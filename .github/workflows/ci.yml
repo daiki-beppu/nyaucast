@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  pull_request: {}
+  push: { branches: [main] }
+  workflow_call: {}
+
+jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    # Nix cache が FlakeHub の OIDC 認証に使う。無いと cache が無効化される。
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      - name: Enable Nix cache
+        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+      - name: Install dependencies with frozen-lockfile
+        run: nix develop --command bun install --frozen-lockfile
+      - name: Typecheck
+        run: nix develop --command bun run typecheck
+      - name: Lint
+        run: nix develop --command bun run lint
+      - name: Format check
+        run: nix develop --command bun run format:check
+      - name: Test
+        run: nix develop --command bun run test
+      - name: Fallow
+        run: nix develop --command bun run fallow

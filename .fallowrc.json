@@ -1,0 +1,25 @@
+{
+  "$schema": "./node_modules/fallow/schema.json",
+  "entry": ["bin/tayk.js", "src/index.ts"],
+  "ignorePatterns": [
+    "bin/**/*.test.ts",
+    "test/**",
+    "*.config.ts",
+    "prototype/**"
+  ],
+  "ignoreDependencies": ["@modelcontextprotocol/sdk", "ultracite", "zod"],
+  "duplicates": {
+    "enabled": true,
+    "mode": "semantic",
+    "minTokens": 10,
+    "minLines": 1,
+    "minOccurrences": 2,
+    "threshold": 50
+  },
+  "health": {
+    "maxCyclomatic": 5,
+    "maxCognitive": 5,
+    "maxCrap": 30,
+    "maxUnitSize": 60
+  }
+}
