@@ -315,7 +315,13 @@ describe("package foundation", () => {
       expect(invocation.slice(1)).toEqual(args);
       expect(invocation[0]).toBe(
         realpathSync(
-          join(consumerRoot, "node_modules", "tayk", "src", "index.ts")
+          join(
+            consumerRoot,
+            "node_modules",
+            "@daiki-beppu/tayk",
+            "src",
+            "index.ts"
+          )
         )
       );
 
