@@ -2,7 +2,7 @@
 
 ## Status
 
-accepted (2026-07-26) / 改訂 2026-07-27（`tayk-fix` の実装に伴い決定 9〜11 を追加）/ 改訂 2026-07-27（PR #67 のレビュー指摘を受け、決定 6 の判断基準を訂正し、決定 8 に issue 確定の要求を、決定 12 にレビューループの内包を追加）
+accepted (2026-07-26) / 改訂 2026-07-27（`tayk-fix` の実装に伴い決定 9〜11 を追加）/ 改訂 2026-07-27（PR #67 のレビュー指摘を受け、決定 6 の判断基準を訂正し、決定 8 に issue 確定の要求を、決定 12 にレビューループの内包を追加）/ 採番変更 2026-07-27（main で ADR-0006 / ADR-0007 が先に採番されたため 0006 → 0008 へ繰り下げ。決定の内容は変えていない）
 
 ## Context
 
@@ -102,6 +102,7 @@ ADR-0001 の Consequences は takt 運用について 2 点を定めていた（
 ## Related
 
 - ADR-0001（薄いアーキテクチャ規約。本 ADR が Consequences の takt 運用項を上書きする）/ ADR-0005（wayfinder map 起点で決定された先例）
+- ADR-0006（takt を製品の orchestration に採用しない）— **本 ADR とは対象が違い、矛盾しない。** ADR-0006 が扱うのは製品（collection lifecycle）の orchestration で、同 ADR 自身が「開発側で takt を使うことは本 ADR の対象外」「CLAUDE.md / AGENTS.md / `docs/agents/issue-tracker.md` の記述は改訂しない」と定めている。本 ADR が扱うのは開発側のみで、tayk の runtime 依存に `takt` を加えるものではない
 - issue #55「feat: tayk 専用の takt feature / fix workflow を確立する」
 - `docs/agents/issue-tracker.md`（issue 運用と wayfinding operations）
 - `.takt/workflows/tayk-feature.yaml` / `tayk-fix.yaml`（本体）と `tayk-intake.yaml` / `tayk-impl-review.yaml` / `tayk-delivery.yaml`（callable sub-workflow）

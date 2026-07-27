@@ -19,7 +19,7 @@
    - ADR 整合性の結論（差分が ADR の決定に触れるか。逸脱があれば ADR 改訂の有無）
 6. PR 番号と URL を報告する
 
-**`plan.md` / `diagnosis.md` をファイルとして探さないでください。** この step は callable sub-workflow（`tayk-delivery`）の中で動くため、親の Report Directory は見えません。要件の担体はテストコードです（ADR-0006 決定 13）。
+**`plan.md` / `diagnosis.md` をファイルとして探さないでください。** この step は callable sub-workflow（`tayk-delivery`）の中で動くため、親の Report Directory は見えません。要件の担体はテストコードです（ADR-0008 決定 13）。
 
 スコープ外発見の起票結果は、この step の後に走る `spillover` が PR 本文へ追記します。ここでは扱いません。
 

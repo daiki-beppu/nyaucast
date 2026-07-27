@@ -8,7 +8,7 @@ subworkflow:
   returns:
     - blocked
   # instruction を param で差し替えない。fix 用に差し替えると wayfinder map / ticket の
-  # 判定手順が丸ごと複製され、「複製された定義は必ず片方だけ更新される」（ADR-0006
+  # 判定手順が丸ごと複製され、「複製された定義は必ず片方だけ更新される」（ADR-0008
   # Considered Options）に自分でぶつかる。着手可能性の判定（未決事項・矛盾・依存・情報不足）は
   # feature / fix で変わらない。fix 固有の入口検査（再現条件が確定できるか）は diagnose が持つ
 workflow_config:

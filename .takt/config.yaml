@@ -1,7 +1,7 @@
 # tayk リポジトリの takt 設定
 # provider / model / language はグローバル設定 (~/.takt/config.yaml) を継承する。
 #
-# workflow は tayk 専用の .takt/workflows/ を使う (ADR-0006):
+# workflow は tayk 専用の .takt/workflows/ を使う (ADR-0008):
 #   tayk-feature  — 新機能・機能拡張（intake → 計画 → テスト設計 → 設計レビュー →
 #                   テスト先行実装 → 実装 → 実装レビュー → 最終ゲート → spillover → delivery）
 #   tayk-fix      — バグ修正・回帰修正（intake → 診断 → 診断レビュー → 再現テスト →
@@ -24,13 +24,13 @@ provider_routing:
     tayk-intake-analyst:
       provider: codex
       model: gpt-5.6-sol
-    # 設計ゲートの一角（ADR-0006 決定 3）。テスト設計の誤りは write_tests で red を
+    # 設計ゲートの一角（ADR-0008 決定 3）。テスト設計の誤りは write_tests で red を
     # 確認しても表面化せず、「通るだけで要件を検証しないテスト」として実装後まで残る。
     # グローバルに登録がないため既定モデルへ落ちていた。planner と同格に置く
     test-planner:
       provider: codex
       model: gpt-5.6-sol
-    # 診断ゲートの一角（ADR-0006 決定 9）。誤った原因のまま進むと、テストも修正も
+    # 診断ゲートの一角（ADR-0008 決定 9）。誤った原因のまま進むと、テストも修正も
     # すべて無駄になる。再現テストの red は「症状を再現できたか」しか見ないため、
     # 「症状は再現するが因果の理解が違う」誤診はここでしか捕まらない。intake と同格に置く
     tayk-diagnosis-reviewer:
@@ -46,7 +46,7 @@ provider_routing:
       model: gpt-5.6-luna
 
 # トークン消費の計測。記録先: .takt/runs/<run>/logs/<session>-usage-events.phase.jsonl
-# tayk-feature は default より step が多いため、費用が見合うかをここで観測する（ADR-0006 Consequences）
+# tayk-feature は default より step が多いため、費用が見合うかをここで観測する（ADR-0008 Consequences）
 observability:
   enabled: true
   usage_events_phase: true

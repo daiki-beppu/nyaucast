@@ -29,7 +29,7 @@ loop_monitors:
   # final_gate / delivery の needs_fix が fix へ直接飛び込むため、この経路で上限 3 が
   # 失われていた。呼び出し元は fix ではなくこの sub-workflow を再呼び出しするため、
   # 内側では [impl_review, fix] が必ず連続し、monitor だけで上限が保証される
-  # （ADR-0006 決定 12・Consequences）
+  # （ADR-0008 決定 12・Consequences）
   - cycle:
       - impl_review
       - fix

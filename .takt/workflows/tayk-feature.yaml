@@ -121,7 +121,7 @@ steps:
       # plan は 8 方向から再訪される（intake / test_design / design_review の NEED_REPLAN /
       # design_fix / draft の need_replan / impl_gate の needs_replan / final_gate /
       # spillover、加えて loop monitor 2 本）。cycle パターンが安定しないため、
-      # やり直し回数の上限をこの step 自身が持つ（ADR-0006 決定 6）
+      # やり直し回数の上限をこの step 自身が持つ（ADR-0008 決定 6）
       - condition: これが 4 回目以降の計画である（3 回作り直しても方針が定まらなかった）
         next: ABORT
         appendix: |
@@ -296,7 +296,7 @@ steps:
       # design_fix は design_review からだけでなく write_tests（テストを書けない要件が
       # 残る）からも再入する。挟み込みで loop monitor ① の cycle
       # [design_review, design_fix] が途切れ、カウントが 1 に戻ることがあるため、
-      # ラウンド上限をこの step 自身にも持たせる（ADR-0006 決定 6）
+      # ラウンド上限をこの step 自身にも持たせる（ADR-0008 決定 6）
       - condition: これが 4 回目以降の設計修正である（3 ラウンドで設計が固まらなかった）
         next: plan
         appendix: |
@@ -338,7 +338,7 @@ steps:
         next: draft
       # テスト未作成のまま draft へ進む出口は置かない。テストのない要件は
       # 「検証不能」としてテスト設計に明記し、設計レビューを通してから実装へ入る
-      # （1 要件に最低 1 テストケース: ADR-0006 決定 5）
+      # （1 要件に最低 1 テストケース: ADR-0008 決定 5）
       - condition: テストを書けない要件が残る（テスト設計の誤り、または依存する基盤が未実装）
         next: design_fix
       - condition: ユーザーへの確認事項があるためユーザー入力が必要
@@ -369,7 +369,7 @@ steps:
   # feature / fix 共通の callable sub-workflow。4 並列レビュー ⇄ 修正のループごと
   # 内側に閉じてある。呼び出し元が fix へ直接飛び込まないため、内側では
   # [impl_review, fix] が必ず連続し、loop monitor の上限 3 が実効化する
-  # （ADR-0006 決定 12）
+  # （ADR-0008 決定 12）
   - name: impl_gate
     kind: workflow_call
     call: tayk-impl-review
@@ -395,7 +395,7 @@ steps:
       - condition: COMPLETE
         next: delivery
       # fix へ直接戻さず実装ゲートを回り直す。そうしないと sub-workflow の内側にある
-      # [impl_review, fix] の cycle が外から破られ、上限 3 が失われる（ADR-0006 決定 12）
+      # [impl_review, fix] の cycle が外から破られ、上限 3 が失われる（ADR-0008 決定 12）
       - condition: needs_fix
         next: impl_gate
       - condition: need_replan
@@ -411,7 +411,7 @@ steps:
     rules:
       - condition: COMPLETE
         next: spillover
-      # final_gate と同じ理由で、fix ではなく実装ゲートを回り直す（ADR-0006 決定 12）
+      # final_gate と同じ理由で、fix ではなく実装ゲートを回り直す（ADR-0008 決定 12）
       - condition: needs_fix
         next: impl_gate
       - condition: ABORT
@@ -422,13 +422,13 @@ steps:
   #
   # callable sub-workflow にしない。この step の職務は「Report Directory の全レポートを
   # 走査する」ことだが、callable の子は自分専用の report namespace を持ち、親のレポートが
-  # 見えない（ADR-0006 決定 13）。feature / fix で定義が重複するが、複製を避けて職務が
+  # 見えない（ADR-0008 決定 13）。feature / fix で定義が重複するが、複製を避けて職務が
   # 成立しなくなるより重複を選ぶ。
   #
   # delivery の *後* に置く。PR 本文の初版へ載せるなら前に置きたいが、前に置くと
   # 「起票結果を PR 本文へ転記する」担当が child である pr_open になり、親のレポートを
   # 読めないため転記そのものが成立しない。PR ができてから gh pr edit で追記する
-  # （ADR-0006 決定 11）
+  # （ADR-0008 決定 11）
   - name: spillover
     description: 各レポートのスコープ外の発見を集め、起票する / 捨てるに仕分ける
     tags:
@@ -460,7 +460,7 @@ steps:
         next: plan
       # gh 失敗を「仕分けが終わった」と同じ rule に畳まない。畳むと実行ログ上で成功と
       # 区別できなくなる。起票できなかった発見と手動起票コマンドは PR 本文へ書き込むため、
-      # 実装と PR が完了している以上ここでは止めない（ADR-0006 決定 11）
+      # 実装と PR が完了している以上ここでは止めない（ADR-0008 決定 11）
       - condition: gh issue の操作に失敗し、起票できなかった発見が残っている
         next: COMPLETE
       - condition: 仕分けが終わり、起票・追記・破棄をすべて記録し PR 本文へ転記した（発見ゼロの場合を含む）

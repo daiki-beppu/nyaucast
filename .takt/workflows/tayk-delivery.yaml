@@ -27,7 +27,7 @@ loop_monitors:
   # 重要: 照合は「履歴末尾でパターンが *連続して* threshold 回反復する」厳密一致である。
   # 待機の再試行（ci_check の pending / review_triage の awaiting）がループの途中に挟まると
   # カウントは 1 に戻る。したがって ② ④ のような多要素 cycle だけでは上限 3 を保証できない。
-  # 実効的な上限は ci_fix / review_fix 自身が {step_iteration} で持つ（ADR-0006 Consequences）。
+  # 実効的な上限は ci_fix / review_fix 自身が {step_iteration} で持つ（ADR-0008 Consequences）。
   #
   # ① CI の完了待ちが終わらない。正常系でも数周するため threshold は大きめ。
   - cycle:
@@ -191,7 +191,7 @@ steps:
       - 原因を特定したうえで修正していること（症状への場当たり修正でないこと）
     rules:
       # loop monitor ② は ci_check の pending 挟み込みでカウントが崩れるため、
-      # ラウンド上限をこの step 自身にも持たせる（ADR-0006 決定 6）
+      # ラウンド上限をこの step 自身にも持たせる（ADR-0008 決定 6）
       - condition: これが 4 回目以降の CI 修正である（3 ラウンドで CI が緑にならなかった）
         return: needs_fix
       - condition: 原因を特定して修正し push した
@@ -266,7 +266,7 @@ steps:
       - 修正後に影響範囲のテストをローカルで実行していること
     rules:
       # loop monitor ④ は review_triage の awaiting 挟み込みでカウントが崩れるため、
-      # ラウンド上限をこの step 自身にも持たせる（ADR-0006 決定 6）
+      # ラウンド上限をこの step 自身にも持たせる（ADR-0008 決定 6）
       - condition: これが 4 回目以降のレビュー指摘修正である（3 ラウンドで収束しなかった）
         return: needs_fix
       - condition: 全 actionable を修正して push した

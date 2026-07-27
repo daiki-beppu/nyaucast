@@ -3,7 +3,7 @@
 ## 手順
 
 1. **ブリーフの読み込み**: ブリーフは**この指示に添えられた直前の出力**として渡されています。「確定している決定」「要件候補」「対象外」「制約」を読む。ブリーフに書かれていない要求を足さない。
-   **`intake-brief.md` をファイルとして探さないでください。** intake は callable sub-workflow であり、そのレポートは子の report namespace に置かれるため、この step の Report Directory には存在しません（ADR-0006 決定 13）
+   **`intake-brief.md` をファイルとして探さないでください。** intake は callable sub-workflow であり、そのレポートは子の report namespace に置かれるため、この step の Report Directory には存在しません（ADR-0008 決定 13）
 2. **要件 ID の採番**: 要件候補に `REQ-<issue番号>-<2桁連番>` を振る。Policy の採番規則に従う。ここで振った ID は後段で不変
 3. **ADR の確認**: Knowledge の Source Path を Read で開き、ADR 本文を取得する。今回の変更が ADR-0001 の 7 決定のどれに触れるかを特定する
 4. **現状の把握**: 対象ファイルを Read / Glob / Grep で確認する。tayk はまだ実装が薄いため、**「既存にならう」が成立しない前提**で、新規に置く構造を明示的に決める
@@ -22,7 +22,7 @@
 
 ## 判定
 
-**これは {step_iteration} 回目の計画です。作り直しの上限は 3 回です。** `{step_iteration}` が 4 以上なら、内容にかかわらず打ち切ってください。3 回作り直しても方針が定まらない issue は、この workflow で扱える範囲を超えています（ADR-0006 決定 6）。
+**これは {step_iteration} 回目の計画です。作り直しの上限は 3 回です。** `{step_iteration}` が 4 以上なら、内容にかかわらず打ち切ってください。3 回作り直しても方針が定まらない issue は、この workflow で扱える範囲を超えています（ADR-0008 決定 6）。
 
 計画のやり直しは 8 方向から来ます — テスト設計が要件の曖昧さで戻した、設計レビューの `NEED_REPLAN`、設計修正が計画の前提を否定した、実装 (`draft`) の `need_replan`、実装ゲートの `needs_replan`、最終ゲートの `need_replan`、`spillover` が因果ありの発見を引き戻した、loop monitor の判定。**どの経路で戻ってきても同じラウンドに数えます。**
 

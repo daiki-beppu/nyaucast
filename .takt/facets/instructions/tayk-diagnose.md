@@ -8,7 +8,7 @@
 
 **この指示に添えられた直前の出力**（intake が作った実装ブリーフ）と issue 本文から、**報告された症状をすべて**列挙する。解釈を混ぜず、観測されたことだけを書く。
 
-**`intake-brief.md` をファイルとして探さないでください。** intake は callable sub-workflow であり、そのレポートは子の report namespace に置かれるため、この step の Report Directory には存在しません（ADR-0006 決定 13）。
+**`intake-brief.md` をファイルとして探さないでください。** intake は callable sub-workflow であり、そのレポートは子の report namespace に置かれるため、この step の Report Directory には存在しません（ADR-0008 決定 13）。
 
 このとき、以下が揃っているかを確認する:
 
@@ -76,7 +76,7 @@
 
 ## 判定
 
-**これは {step_iteration} 回目の診断です。やり直しの上限は 3 回です。** `{step_iteration}` が 4 以上なら、内容にかかわらず打ち切ってください。3 回やり直しても原因を確定できないバグは、この workflow で扱える範囲を超えています（ADR-0006 決定 6）。
+**これは {step_iteration} 回目の診断です。やり直しの上限は 3 回です。** `{step_iteration}` が 4 以上なら、内容にかかわらず打ち切ってください。3 回やり直しても原因を確定できないバグは、この workflow で扱える範囲を超えています（ADR-0008 決定 6）。
 
 診断のやり直しは 3 方向から来ます — 診断レビューの `NEED_REDIAGNOSE`、再現テストが red にならなかった、修正が対症療法にしかならなかった。**どの経路で戻ってきても同じラウンドに数えます。**
 
