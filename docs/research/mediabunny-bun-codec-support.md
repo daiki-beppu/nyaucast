@@ -18,11 +18,13 @@
 
 mediabunny 本体は「Pure TypeScript media toolkit」であり、README は次のように明言している:
 
-> "Works in all browsers as well as in Node, Bun, and Deno using `@mediabunny/server`." — https://github.com/Vanilagy/mediabunny (README)
+> "Works in all browsers as well as in Node, Bun, and Deno using `@mediabunny/server`."
+> — https://github.com/Vanilagy/mediabunny (README)
 
 公式ドキュメントの導入ページも同旨:
 
-> "Mediabunny was primarily built for client-side environments, but when combined with the @mediabunny/server extension, the full Mediabunny feature set is available in server-side environments such as Node, Bun, and Deno." — https://mediabunny.dev/guide/introduction
+> "Mediabunny was primarily built for client-side environments, but when combined with the @mediabunny/server extension, the full Mediabunny feature set is available in server-side environments such as Node, Bun, and Deno."
+> — https://mediabunny.dev/guide/introduction
 
 つまり設計はランタイム非依存（コアは mux/demux + WebCodecs ラッパーの集合）で、WebCodecs が無い環境向けの穴埋めが `@mediabunny/server` という公式拡張として提供されている。`@mediabunny/server` の package.json は説明文・keywords の両方で Bun を明示している（"server-side environments (Node, Bun, Deno)" / keywords: `"bun"`）— https://github.com/Vanilagy/mediabunny/blob/main/packages/server/package.json
 
@@ -34,7 +36,8 @@ npm 実測（2026-07-23）: mediabunny 1.51.0 (MPL-2.0)、@mediabunny/server 1.5
 
 mediabunny 本体に `registerEncoder()` / `registerDecoder()` があり、`CustomVideoEncoder` / `CustomAudioEncoder` / `CustomVideoDecoder` / `CustomAudioDecoder` を継承したクラスを登録する。static `supports()` が `true` を返すと **デフォルト（WebCodecs）より優先して**使われる:
 
-> "If it returns `true`, a new instance of your encoder class will be created by the library and will be used for encoding, taking precedence over the default encoders." — https://mediabunny.dev/guide/supported-formats-and-codecs（Custom coders 節）
+> "If it returns `true`, a new instance of your encoder class will be created by the library and will be used for encoding, taking precedence over the default encoders."
+> — https://mediabunny.dev/guide/supported-formats-and-codecs（Custom coders 節）
 
 実装必須メソッドは `init()` / `encode(sample)` または `decode(packet)` / `flush()` / `close()`（同上）。
 
@@ -43,7 +46,7 @@ mediabunny 本体に `registerEncoder()` / `registerDecoder()` があり、`Cust
 monorepo `packages/` の全一覧（https://github.com/Vanilagy/mediabunny/tree/main/packages 、GitHub API 実測）: `aac-encoder` / `ac3` / `flac-encoder` / `mp3-encoder` / `prores` / `server` の 6 つ。
 
 | パッケージ | 実装 | 対象 |
-| --- | --- | --- |
+|---|---|---|
 | `@mediabunny/mp3-encoder` | LAME 3.100 の SIMD 対応 WASM ビルド。"works with bundlers, directly in the browser, as well as in Node, Deno, and Bun" | MP3 エンコード（WebCodecs 非対応領域） https://mediabunny.dev/guide/extensions/mp3-encoder |
 | `@mediabunny/aac-encoder` | FFmpeg AAC エンコーダの WASM ビルド。"for use in the browser and on the server" | AAC エンコード https://mediabunny.dev/guide/extensions/aac-encoder |
 | `@mediabunny/flac-encoder` | WASM | FLAC エンコード https://mediabunny.dev/guide/supported-formats-and-codecs |
@@ -70,7 +73,8 @@ monorepo `packages/` の全一覧（https://github.com/Vanilagy/mediabunny/tree/
 - カスタムコーダー API は video クラスも公開されているため、サードパーティが WASM 版 x264/libvpx/aom を `CustomVideoEncoder` として接続すること自体は可能だが、**既製のサードパーティ製 mediabunny 用 WASM 映像エンコーダは今回の調査では発見できなかった**（Web 検索でヒットなし。→ 未確認事項）。
 - **コンテナ mux はコーデック不要で可能。** `EncodedVideoPacketSource` / `EncodedAudioPacketSource` で既エンコード済みパケットを直接 output に流せる:
 
-  > "This source requires that you take care of the encoding process yourself, which enables you to use the WebCodecs API manually or to plug in your own encoding stack. Alternatively, you may retrieve the encoded packets directly by reading them from another media file, allowing you to skip decoding and reencoding." — https://mediabunny.dev/guide/media-sources
+  > "This source requires that you take care of the encoding process yourself, which enables you to use the WebCodecs API manually or to plug in your own encoding stack. Alternatively, you may retrieve the encoded packets directly by reading them from another media file, allowing you to skip decoding and reencoding."
+  > — https://mediabunny.dev/guide/media-sources
 
   つまり外部 FFmpeg CLI 等でエンコードした H.264 ストリームを mediabunny で MP4/WebM に mux するパススルー構成は、WebCodecs / server 拡張なしの素の Bun でも成立する（mux/demux は pure TS）。
 

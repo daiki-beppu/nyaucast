@@ -21,7 +21,7 @@
 権威ソースは 3 つ。
 
 | 対象 | ファイル |
-| --- | --- |
+|---|---|
 | YAML の受理可能な形（zod schema） | `dist/core/models/workflow-schemas.js`（559 行）、`dist/core/models/workflow-system-schemas.js`（271 行）、`dist/core/models/mcp-schemas.js` |
 | 実行時の意味 | `dist/core/workflow/engine/`（`WorkflowRunLoop.js` / `StepExecutor.js` / `OptionsBuilder.js`）、`dist/core/workflow/evaluation/`（`RuleEvaluator.js` / `rule-utils.js` / `when-evaluator.js`） |
 | 仕様書（同梱・日本語） | `builtins/skill/references/yaml-schema.md`（278 行）、`builtins/skill/references/engine.md` |
@@ -35,7 +35,7 @@ step の種別は `agent` / `system` / `workflow_call` の 3 つで、これに 
 ### 判明した 3 つの構文と、その非対話時の挙動
 
 | 構文 | 置き場所 | 非対話時（`interactive !== true`）の挙動 | 性質 |
-| --- | --- | --- | --- |
+|---|---|---|---|
 | `requires_user_input: true` | **step**（agent step 限定） | `user_input_required` で **workflow を ABORT** | **fail-closed** |
 | `requires_user_input: true` | **rule**（遷移） | `onUserInput` ハンドラが無ければ ABORT | fail-closed |
 | `interactive_only: true` | **rule**（遷移） | **その rule を評価候補から除外し、他の rule で先へ進む** | **fail-open** |
@@ -78,9 +78,9 @@ function validateUserInputRuntime(deps, step) {
  * 決定的条件（when(...)）は選択対象にしない。
  */
 export function isJudgeableRule(rule, interactive) {
-  if (rule === undefined) return false;
-  if (rule.interactiveOnly && !interactive) return false;
-  return !isDeterministicCondition(rule.condition);
+    if (rule === undefined) return false;
+    if (rule.interactiveOnly && !interactive) return false;
+    return !isDeterministicCondition(rule.condition);
 }
 ```
 
@@ -90,10 +90,10 @@ export function isJudgeableRule(rule, interactive) {
 
 ```yaml
 # builtins/ja/workflows/draft.yaml:79-84
-- condition: ユーザー入力が必要
-  next: implement
-  requires_user_input: true
-  interactive_only: true
+      - condition: ユーザー入力が必要
+        next: implement
+        requires_user_input: true
+        interactive_only: true
 ```
 
 この rule は「LLM が『ユーザー入力が必要』と判定したら人間に聞く」という**任意の**分岐であって、必ず通る関門ではない。対話時は聞く / 非対話時は rule ごと消える、という設計。**GO/NO-GO ゲートの雛形として転用してはいけない。**
@@ -108,8 +108,7 @@ export function isJudgeableRule(rule, interactive) {
 
 ```js
 // dist/core/workflow/ask-user-question-error.js
-const DENY_MESSAGE =
-  "AskUserQuestion is not available in non-interactive mode. Present your questions directly as text output and wait for the user to respond.";
+const DENY_MESSAGE = 'AskUserQuestion is not available in non-interactive mode. Present your questions directly as text output and wait for the user to respond.';
 ```
 
 `workflowExecution.js:150` で `onAskUserQuestion: options.onAskUserQuestion ?? createDenyAskUserQuestionHandler()` が既定。つまり **agent step の中から Claude の AskUserQuestion で人間に聞く経路は塞がれている**（拒否され、AI は「自力で進め」と促される）。人間への問い合わせは takt の `requires_user_input` 機構を通すしかない。
@@ -200,7 +199,7 @@ exit code 0 のみ成功。失敗時は stdout/stderr（サニタイズ・上限
 ### 状態ファイルの配置（tayk リポジトリの実物）
 
 | パス | 中身 |
-| --- | --- |
+|---|---|
 | `.takt/runs/<slug>/meta.json` | run のメタ + `currentStep` / `currentIteration` / `phase` / `resume_point` |
 | `.takt/runs/<slug>/reports/` | output_contracts の成果物。上書き時は `<name>.<ISO8601>` で世代保存される |
 | `.takt/runs/<slug>/context/` | `previous_responses` / `knowledge` / `policy` / `subworkflows` |
@@ -236,9 +235,9 @@ claude provider では一時的な MCP config ファイルを書き出して SDK
 ```js
 // dist/infra/providers/provider-capabilities.js:2-6
 const MCP_SERVER_PROVIDERS = new Set([
-  "claude",
-  "claude-sdk",
-  "claude-terminal",
+    'claude',
+    'claude-sdk',
+    'claude-terminal',
 ]);
 ```
 
@@ -247,7 +246,7 @@ const MCP_SERVER_PROVIDERS = new Set([
 // Silent-drop: workflows may carry options for providers they aren't currently
 // running under. Keep the value only when capability is confirmed true.
 function keepWhenProviderSupports(value, provider, probe) {
-  return probe(provider) === true ? value : undefined;
+    return probe(provider) === true ? value : undefined;
 }
 ```
 
@@ -272,28 +271,12 @@ function keepWhenProviderSupports(value, provider, probe) {
 `.takt/runs/<slug>/logs/<session>-usage-events.phase.jsonl` の 1 行:
 
 ```json
-{
-  "run_id": "20260724-131055-tayk-takt-github-issue-wo",
-  "session_id": "20260724-221055-f1m4za",
-  "provider": "codex",
-  "provider_model": "gpt-5.6-sol",
-  "step": "plan",
-  "step_type": "agent",
-  "persona": "planner",
-  "tags": ["plan"],
-  "phase": "phase1_execute",
-  "phase_name": "execute",
-  "phase_execution_id": "plan:1:1:1",
-  "timestamp": "2026-07-24T13:17:10.524Z",
-  "success": true,
-  "usage_missing": false,
-  "usage": {
-    "input_tokens": 2708136,
-    "output_tokens": 15197,
-    "total_tokens": 2723333,
-    "cached_input_tokens": 2499840
-  }
-}
+{"run_id":"20260724-131055-tayk-takt-github-issue-wo","session_id":"20260724-221055-f1m4za",
+ "provider":"codex","provider_model":"gpt-5.6-sol","step":"plan","step_type":"agent",
+ "persona":"planner","tags":["plan"],"phase":"phase1_execute","phase_name":"execute",
+ "phase_execution_id":"plan:1:1:1","timestamp":"2026-07-24T13:17:10.524Z",
+ "success":true,"usage_missing":false,
+ "usage":{"input_tokens":2708136,"output_tokens":15197,"total_tokens":2723333,"cached_input_tokens":2499840}}
 ```
 
 実ログ全体のキー集合: `run_id` / `session_id` / `provider` / `provider_model` / `step` / `step_type` / `persona` / `tags` / `phase` / `phase_name` / `phase_execution_id` / `timestamp` / `success` / `usage_missing` / `usage` / `judge_method` / `judge_stage` / `reason`。
@@ -317,11 +300,8 @@ charting 時の前提（地図 Notes:「`rules` は `condition:` の自然言語
 ```js
 // dist/core/workflow/evaluation/when-evaluator.js:166-168
 export function evaluateWhenExpression(expression, state) {
-  return splitTopLevel(expression, "||").some((orPart) =>
-    splitTopLevel(orPart, "&&").every((andPart) =>
-      evaluateClause(andPart, state)
-    )
-  );
+    return splitTopLevel(expression, '||').some((orPart) =>
+        splitTopLevel(orPart, '&&').every((andPart) => evaluateClause(andPart, state)));
 }
 ```
 
@@ -336,15 +316,9 @@ export function evaluateWhenExpression(expression, state) {
 
 ```js
 // dist/core/workflow/evaluation/rule-utils.js:135-140
-const preemptIndex = findImmediateDeterministicMatch(
-  rules,
-  state,
-  interactive,
-  0,
-  phase3Result.ruleIndex
-);
+const preemptIndex = findImmediateDeterministicMatch(rules, state, interactive, 0, phase3Result.ruleIndex);
 if (preemptIndex !== -1) {
-  result = { ...result, ruleIndex: preemptIndex, method: "auto_select" };
+    result = { ...result, ruleIndex: preemptIndex, method: 'auto_select' };
 }
 ```
 
@@ -361,7 +335,7 @@ step に `structured_output: { schema_ref: <name> }` を付けると、JSON Sche
 ## 総括表
 
 | 要件 | 可否 | 条件 / 注意 |
-| --- | --- | --- |
+|---|---|---|
 | 人間 GO/NO-GO ゲート（fail-closed） | **できる** | step レベル `requires_user_input: true`（agent step 限定）。非対話なら ABORT |
 | 人間 GO/NO-GO ゲート（rule で分岐） | **条件付き** | `interactive_only: true` は非対話で**消える**。ゲートには使えない |
 | 非対話実行（`--pipeline`） | できる | `interactive` 既定 false。`-q` は出力抑制のみで別物 |

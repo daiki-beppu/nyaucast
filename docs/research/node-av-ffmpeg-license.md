@@ -50,7 +50,6 @@ LICENSE_FILE="COPYING.GPLv3"
 - **Windows MSVC** (line 453-458): seydx/ffmpeg-msvc-prebuilt の release asset **`ffmpeg...gpl-${ARCH}-static.zip`** をダウンロードしてリンク。同リポジトリ README: 「The binaries are **GPL-licensed** due to included components like x264, x265, and fdk-aac.」
 
 出典:
-
 - https://github.com/seydx/node-av/blob/main/.github/workflows/build-prebuilds.yaml
 - https://raw.githubusercontent.com/seydx/jellyfin-ffmpeg/ffmpeg-master/msys2/build.sh
 - https://raw.githubusercontent.com/seydx/ffmpeg-msvc-prebuilt/main/README.md
@@ -91,7 +90,6 @@ configure に `--enable-libfdk-aac` があるが `--enable-nonfree` はない。
 - **特許面**: x264 のコピイラ(GPL)問題とは別に、H.264/H.265 自体の特許プール（Via LA 等)は残る。エンドユーザーの私的利用・自社チャンネル運用の範囲では実務上問題化しにくい
 
 出典:
-
 - https://github.com/seydx/jellyfin-ffmpeg/tree/ffmpeg-master/builder/scripts.d （50-x264.sh あり、openh264 なし）
 - https://raw.githubusercontent.com/seydx/jellyfin-ffmpeg/ffmpeg-master/msys2/build.sh （`--enable-libx264`）
 - https://raw.githubusercontent.com/seydx/jellyfin-ffmpeg/ffmpeg-master/builder/variants/defaults-mac.sh
@@ -101,12 +99,11 @@ configure に `--enable-libfdk-aac` があるが `--enable-nonfree` はない。
 ### 配布方式（2 系統）
 
 | 成果物 | 配布経路 | 失敗時の挙動 |
-| --- | --- | --- |
+|---|---|---|
 | ネイティブアドオン `node-av.node`（libav 静的リンク済み、約 60 MB） | npm **optionalDependencies**: `@seydx/node-av-{darwin,linux}-{x64,arm64}`, `@seydx/node-av-win32-{x64,arm64}-{msvc,mingw}`。v5.2.4 以降は **非圧縮でパッケージに同梱**（`files: ["node-av.node"]`、scripts なし） | 対応プラットフォームなら npm レジストリ/キャッシュから取得できれば動く。**未対応環境（musl/Alpine、他 arch）では node-av の `install` スクリプト（`install/check.js`）が exit 1 してインストール失敗**。npm パッケージにはソースが含まれないため node_modules 内でのソースビルドは不可（check.js が明言） |
 | ffmpeg CLI バイナリ（jellyfin ビルド） | **postinstall**（`dist/ffmpeg/install.js`）が **GitHub Releases**（`https://github.com/seydx/node-av/releases/download/v<pkgver>/ffmpeg-v8.1-<platform>-<arch>[-jellyfin].zip`）から DL。SHA256SUMS 検証・リトライ 2 回・API フォールバックあり | **失敗しても警告のみで `process.exit(0)`** — インストールは成功し、アドオン機能は使える。ffmpeg CLI 依存機能のみ欠ける。`SKIP_FFMPEG=true` で明示スキップ可 |
 
 出典:
-
 - https://raw.githubusercontent.com/seydx/node-av/main/install/check.js （プラットフォームパッケージ解決と失敗時 exit 1、musl 検出メッセージ）
 - https://raw.githubusercontent.com/seydx/node-av/main/src/ffmpeg/install.ts （line 19-22: SKIP_FFMPEG、line 32-33: GitHub Releases URL、line 293-301: 失敗時も exit 0）
 - npm registry: node-av@6.1.1 の `optionalDependencies` / `scripts.install` / `scripts.postinstall`
@@ -139,7 +136,7 @@ configure に `--enable-libfdk-aac` があるが `--enable-nonfree` はない。
 ### リスクと回避策
 
 | リスク | 深刻度 | 回避策 |
-| --- | --- | --- |
+|---|---|---|
 | tayk を npm 公開 / バイナリ配布する将来、node-av 直依存だと実効 GPLv3 の議論を招く | 中（v0.2 以降の話） | node-av（@mediabunny/server）を **optionalDependencies / プラグイン境界**に隔離し、コア機能は node-av なしで動く設計にする。または「エンコードはユーザー環境の ffmpeg CLI を spawn」に逃がす |
 | Docker イメージ等 node_modules 同梱物を配布すると GPL バイナリの再配布に該当 | 中 | イメージ配布時は GPLv3 表記とソース入手先明示（jellyfin-ffmpeg はソース公開済みなので対応可能）。もしくはイメージに node-av を含めない |
 | node-av 側の npm license 表記（MIT）と実体（GPL 同梱）の乖離 — 自動ライセンススキャナは検出しない | 低〜中 | 依存ライセンス監査で node-av を手動アノテーションする。本レポートを根拠資料として残す |

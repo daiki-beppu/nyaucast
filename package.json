@@ -14,7 +14,7 @@
     "prepare": "if [ -e .git ]; then lefthook install; fi",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint --config oxlint.config.ts --type-aware --no-error-on-unmatched-pattern .",
-    "lint:fix": "oxlint --config oxlint.config.ts --fix",
+    "lint:fix": "oxlint --config oxlint.config.ts --no-error-on-unmatched-pattern --fix",
     "format:check": "oxfmt --check .",
     "format:fix": "oxfmt --write",
     "test": "bun test",

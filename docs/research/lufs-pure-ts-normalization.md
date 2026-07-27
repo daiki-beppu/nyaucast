@@ -23,7 +23,7 @@ npm registry を "lufs" / "ebur128" / "bs1770" / "loudness" / "r128" / "true pea
 ### 1.1 一覧
 
 | パッケージ | 方式 | integrated (ゲーティング込み) | 最終更新 | DL/月 | ライセンス | Bun 適性 |
-| --- | --- | --- | --- | --- | --- | --- |
+|---|---|---|---|---|---|---|
 | **`@audio/loudness-lufs`** ([npm](https://www.npmjs.com/package/@audio/loudness-lufs) / [GitHub](https://github.com/audiojs/loudness)) | 純 JS | ○ 2 段ゲート実装を実コードで確認 | 2026-07-11 | 608 | MIT | ◎ 純 ESM・Node API 非依存 |
 | **`lufs-web`** ([npm](https://www.npmjs.com/package/lufs-web) / [GitHub](https://github.com/JeffreyG244/lufs-web)) | 純 JS | ○ 同上（+LRA, true peak） | 2026-05-13 | 87 | MIT | ◎ zero-dep 純 ESM |
 | `@audio/loudness-truepeak` ([npm](https://www.npmjs.com/package/@audio/loudness-truepeak)) | 純 JS | —（true peak 専用） | 2026-07-11 | 715 | MIT | ◎ だが 1h 素材で非実用（実測 >2 分） |
@@ -41,7 +41,7 @@ npm registry を "lufs" / "ebur128" / "bs1770" / "loudness" / "r128" / "true pea
 EBU Tech 3341 の minimum requirements 相当のテスト信号（997 Hz 正弦波、ステレオ、許容 ±0.1 LU。[Tech 3341 v4.0, 2023-11](https://tech.ebu.ch/publications/tech3341)）を生成して Node v25.4 で実測した:
 
 | テスト | 期待値 | `@audio/loudness-lufs` | `lufs-web` | `ebur128-wasm` |
-| --- | --- | --- | --- | --- |
+|---|---|---|---|---|
 | -23 dBFS 20s | -23.0 LUFS | -22.99998 | -22.99998 | -22.99998 |
 | -33 dBFS 20s | -33.0 LUFS | -32.99998 | -32.99998 | — |
 | ゲーティング（-36 dBFS 10s + -23 dBFS 60s） | ≈ -23.0 | -23.010 | -23.010 | — |
@@ -51,7 +51,7 @@ EBU Tech 3341 の minimum requirements 相当のテスト信号（997 Hz 正弦�
 1 時間ステレオ 48 kHz（想定ユースケースそのもの）の性能実測（Apple Silicon Mac / Node v25.4）:
 
 | 処理 | 実装 | 時間 |
-| --- | --- | --- |
+|---|---|---|
 | integrated LUFS | `@audio/loudness-lufs` | **4.4 秒** |
 | true peak | `ebur128-wasm` | 13.3 秒 |
 | true peak | `lufs-web` (24-tap 4× polyphase) | 37.2 秒 |
