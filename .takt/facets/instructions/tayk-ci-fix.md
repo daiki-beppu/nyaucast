@@ -12,7 +12,7 @@ CI の失敗を修正してください。
 1. `{structured:ci_check.failed_checks}` の各項目について、`cause` と `location` を確認する
 2. `cause` が「ログから特定できず」のものは、自分で `gh run view <run-id> --log-failed` を実行して原因を特定する
 3. **原因を特定してから直す。** 症状に対する場当たり的な修正をしない
-4. 修正が済んだら、ローカルで同じ検証を再現する（`bun run typecheck` / `bun run lint` / `bun run format:check` / `bun run test` 等、CI が実行しているコマンドと同じもの）
+4. 修正が済んだら、ローカルで CI と同じ検証を再現する。Policy のツールチェーンポリシー「検査ゲート」の 6 本がそれであり、**落ちた check に対応するものだけでなく全部を通す**（1 つ直して別のゲートを割る修正を、push してから CI に見つけさせない）
 5. ローカルで通ったら commit・push する:
    - 日本語 Conventional Commits + タイトル末尾に `(#<N>)`
    - `fix:` ではなく、元の変更の一部なら `feat:` 等を維持する。CI 修正だけの commit なら `ci:` または `fix:`

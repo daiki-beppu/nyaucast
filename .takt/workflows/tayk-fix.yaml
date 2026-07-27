@@ -312,6 +312,7 @@ steps:
       - testing
       - tayk-traceability
       - existing-system-respect
+      - tayk-toolchain
     knowledge:
       - unit-testing
       - e2e-testing
@@ -368,6 +369,7 @@ steps:
       - tayk-traceability
       - existing-system-respect
       - tayk-scope-spillover
+      - tayk-toolchain
     knowledge:
       - architecture
       - tayk-adr
