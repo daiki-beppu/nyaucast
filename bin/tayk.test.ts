@@ -20,6 +20,7 @@ const installationGuidePattern =
 const installationUrlPattern = /https:\/\/bun\.sh/i;
 const subprocessTimeoutMilliseconds = 20_000;
 const nodePath = Bun.which("node");
+const bunPath = Bun.which("bun");
 
 setDefaultTimeout(30_000);
 
@@ -27,7 +28,12 @@ if (nodePath === null) {
   throw new Error("The launcher integration tests require Node on PATH");
 }
 
+if (bunPath === null) {
+  throw new Error("The launcher integration tests require Bun on PATH");
+}
+
 const nodeExecutablePath = nodePath;
+const realBunDirectory = dirname(bunPath);
 
 function withTemporaryDirectory(run: (directory: string) => void): void {
   const directory = mkdtempSync(join(tmpdir(), "tayk-launcher-"));
@@ -48,14 +54,6 @@ function createFakeBun(directory: string): {
   const fakeBunPath = join(binDirectory, "bun");
 
   mkdirSync(binDirectory);
-  // fake Bun は拡張子なしの CJS スクリプト。nix の shellHook が TMPDIR を
-  // $PWD/.tmp に向けるので一時ディレクトリがリポジトリ内に入り、ルートの
-  // package.json ("type": "module") を継承して ESM 扱いになると require が
-  // 落ちる。最も近い package.json として CJS を明示しておく。
-  writeFileSync(
-    join(binDirectory, "package.json"),
-    `${JSON.stringify({ type: "commonjs" })}\n`
-  );
   writeFileSync(
     fakeBunPath,
     `#!${nodeExecutablePath}
@@ -104,6 +102,8 @@ function runLauncher(options: {
   args: readonly string[];
   cwd: string;
   path: string;
+  /** 既定はリポジトリ内の bin/tayk.js。entrypoint 不在の検証だけ複製を指す。 */
+  launcher?: string;
   fakeBun?: {
     recordPath: string;
     exitCode: number;
@@ -131,7 +131,7 @@ function runLauncher(options: {
 
   const result = spawnSync(
     nodeExecutablePath,
-    [launcherPath, ...options.args],
+    [options.launcher ?? launcherPath, ...options.args],
     {
       cwd: options.cwd,
       encoding: "utf-8",
@@ -265,10 +265,32 @@ describe("tayk launcher", () => {
     });
   });
 
+  test("should propagate the delegate failure without guidance when the entrypoint is missing", () => {
+    withTemporaryDirectory((directory) => {
+      // launcher だけを複製し src/index.ts を置かない。委譲自体は成功する
+      // (Bun は起動する) が、委譲先が entrypoint 不在で落ちる経路になる。
+      const isolatedBinDirectory = join(directory, "bin");
+      const isolatedLauncherPath = join(isolatedBinDirectory, "tayk.js");
+      mkdirSync(isolatedBinDirectory);
+      writeFileSync(isolatedLauncherPath, readFileSync(launcherPath, "utf-8"));
+
+      const result = runLauncher({
+        args: [],
+        cwd: directory,
+        launcher: isolatedLauncherPath,
+        path: realBunDirectory,
+      });
+
+      expect(result.status).not.toBe(0);
+      expect(result.signal).toBeNull();
+      expect(result.stderr).not.toMatch(installationGuidePattern);
+      expect(result.stderr).not.toMatch(installationUrlPattern);
+      expect(result.stdout).not.toMatch(installationGuidePattern);
+    });
+  });
+
   test("should execute the TypeScript entrypoint with the real Bun runtime", () => {
     withTemporaryDirectory((directory) => {
-      const realBunDirectory = dirname(process.execPath);
-
       const result = runLauncher({
         args: [],
         cwd: directory,
