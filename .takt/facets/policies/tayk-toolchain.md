@@ -26,6 +26,8 @@ bun run check
 
 個々のゲートを名指しで実行してよいのは、失敗を絞り込む反復の途中だけである（例: 実装中に `bun test` を繰り返す）。**push 前・報告前には必ず `bun run check` を通すこと。** 1 つのゲートを直して別のゲートを割る修正を、push してから CI に見つけさせない。
 
+**例外は、実装前に red を観測する step（`write_tests` / `reproduce`）である。** あそこでの `bun test` はゲートの再現ではなく、テストが要件を検証していることの証拠（ADR-0008 決定 5 / 9 / 10）を得る手順そのものだ。実装がまだ無い時点で `check` が通ることは設計上ありえないため、**red を「壊れている」と読み替えて直しにいってはならない**。`check` を通す責任は、実装を持つ後段の step（`implement` / `repair`）にある。
+
 `check` には workflow 定義の検査が含まれる（`bun test` は `*.test.ts` しか拾わないため独立したゲートになっている）。`.takt/workflows/` または `.takt/facets/` を変更したなら、`bun run check` と `takt workflow doctor` の両方を通す。
 
 ## 禁止

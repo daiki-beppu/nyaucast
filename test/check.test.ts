@@ -7,7 +7,8 @@ const packageRoot = resolve(import.meta.dirname, "..");
 const subprocessTimeoutMilliseconds = 20_000;
 
 /**
- * CI と同一の検査ゲート。集合も順序も `check` の契約であり、ここが唯一の定義である。
+ * `check` が満たすべき契約（ゲートの集合と順序）を、テスト側から固定した期待値。
+ * 定義そのものは `package.json` の `check` script にあり、ゲートを増減したらここが落ちる。
  * 呼び出し元（ci.yml / lefthook / takt facets）はこの列挙を複製せず `bun run check` を呼ぶ。
  */
 const gateScriptNames = [
@@ -34,13 +35,18 @@ const gateInstructingFacetPaths = [
   ".takt/facets/instructions/tayk-review-fix.md",
 ] as const;
 
-/** ゲート集合の複製を検出する表記。`test` は red 観測にも使うため対象外 */
+/**
+ * ゲート集合の複製を検出する表記。`test` は red 観測にも使うため対象外。
+ *
+ * `lint` だけ後読みで絞るのは、`lint:fix` が fix 系でありゲートの複製ではないため。
+ * 末尾改行で代用すると、行末以外に現れた `bun run lint` を取りこぼす。
+ */
 const enumeratedGateCommands = [
-  "bun run typecheck",
-  "bun run lint\n",
-  "bun run format:check",
-  "bun run verify-workflows",
-  "bun run fallow",
+  /bun run typecheck/,
+  /bun run lint(?![\w:-])/,
+  /bun run format:check/,
+  /bun run verify-workflows/,
+  /bun run fallow/,
 ] as const;
 
 setDefaultTimeout(60_000);
@@ -150,7 +156,7 @@ function runCheck(
   };
 }
 
-describe("quality gate command", () => {
+describe("check command", () => {
   // REQ-82-01
   test("should run every gate in order and stop at the first failure", () => {
     const checkScript = readPackageScripts()["check"];
@@ -182,7 +188,7 @@ describe("quality gate command", () => {
 
     expect(workflow).toContain("bun run check");
     for (const command of enumeratedGateCommands) {
-      expect(workflow).not.toContain(command);
+      expect(workflow).not.toMatch(command);
     }
     expect(workflow).not.toContain("scripts/verify-workflows.ts");
   });
@@ -202,7 +208,7 @@ describe("quality gate command", () => {
 
       expect(facet).toContain("bun run check");
       for (const command of enumeratedGateCommands) {
-        expect(facet).not.toContain(command);
+        expect(facet).not.toMatch(command);
       }
       expect(facet).not.toContain("bun scripts/verify-workflows.ts");
     }

@@ -1,15 +1,17 @@
-# fix 系はリポジトリ全体を対象にする（script 側が `.` を持つ）。glob は「その種類の
+# 2 段構え: pre-commit は整形だけ、検査は pre-push の check が全部見る。
+#
+# 整形はリポジトリ全体を対象にする（script 側が `.` を持つ）。glob は「その種類の
 # ファイルが staged のときだけ走らせる」トリガとしてのみ使い、対象範囲は絞らない。
-# staged ファイルだけ整形・修正すると、commit 時に通ったものが CI の全体検査で落ちる。
+# oxfmt は冪等なので、範囲を広げても壊れるものが無い。
+#
+# lint はここに置かない。`oxlint --fix .` は修正しきれないエラーが**どこかに**残れば
+# 非 0 で終わるため、commit と無関係なファイルのエラーで commit 自体が止まる。
+# lint を含む全ゲートは pre-push の check が見るので、commit 時に持つ必要がない。
 pre-commit:
   commands:
     format-fix:
       glob: "*.{js,jsx,ts,tsx,json,jsonc,md,yml,yaml}"
       run: bun run format:fix
-      stage_fixed: true
-    lint-fix:
-      glob: "*.{js,jsx,ts,tsx}"
-      run: bun run lint:fix
       stage_fixed: true
 
 # push 前に CI と同一のゲートを通す。ゲート集合は package.json の check script が持つ。
