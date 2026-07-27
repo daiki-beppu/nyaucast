@@ -102,7 +102,7 @@ CONTEXT.md の `workflow tool` 定義（`produce` = 音源→動画→サムネ 
 
 ## Consequences
 
-- **CONTEXT.md の 7 項目を改訂する** — `MCP tool`（2 層 → 1 層 + 読み口）/ `workflow tool`（廃止）/ `primitive tool`（「workflow tool が内部で呼ぶ」を削除）/ `knowledge codec`（役割の格上げ）/ `adapter`（CLI = 人間が直接触る唯一の面）/ `tracer`（指す先の変更）/ `collection lifecycle`（「各区間が workflow tool に対応する」→ ゲート起動で区切る）
+- **CONTEXT.md の 8 項目を改訂する** — `MCP tool`（2 層 → 1 層 + 読み口）/ `workflow tool`（廃止し `primitive tool` の _Avoid_ へ）/ `primitive tool`（「workflow tool が内部で呼ぶ」を削除し、冪等規約を追記）/ **`ゲート承認`（新規）** / `knowledge codec`（役割の格上げ）/ `adapter`（CLI = 人間が直接触る唯一の面）/ `tracer`（指す先を plan 区間へ）/ `collection lifecycle`（「各区間が workflow tool に対応する」→ ゲート承認で区切る）
 - **knowledge codec が v0.1 の中心成果物になる。** 記述要素は 5 → 7 に増える（#63 が特定した残余のうち「人間の却下時の戻り経路」と「コスト見積り」が追加。前者は Decision 3 により却下が次の起動になる以上、codec しか持てない）
 - **issue #34 / #35（workflow tool の実装）は要件がすべて他へ分散するため close する。** 受け皿の無い「承認記録 + 読み口 + CLI ゲートコマンド」は新規チケットとして起票する
 - **すべての primitive tool に冪等性 + 明示的な再生成手段が課される**（Decision 4）。既存の tool チケット群はこの規約を前提に再スコープする
