@@ -1,6 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "enabledManagers": ["npm", "github-actions", "nix"],
+  "enabledManagers": ["bun", "npm", "github-actions", "nix"],
   "rangeStrategy": "pin",
   "lockFileMaintenance": {
     "enabled": true
