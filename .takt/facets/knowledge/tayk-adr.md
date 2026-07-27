@@ -8,41 +8,41 @@ tayk の設計・実装が ADR に整合しているかを判定するための�
 
 **まず `docs/adr/` を Glob で列挙し、出てきた ADR をすべて Read する。** 下の表は現時点の索引にすぎず、増えた ADR を落とさないために列挙を先に行う。要約や記憶で判定してはならない。
 
-| ファイル | 内容 |
-|---------|------|
-| `docs/adr/0001-thin-architecture.md` | 薄いアーキテクチャ規約（最重要・全変更が対象） |
-| `docs/adr/0002-no-llm-in-core.md` | core に LLM を持ち込まない |
-| `docs/adr/0003-bun-only-distribution.md` | Bun 前提の配布 |
-| `docs/adr/0004-auto-migration.md` | 自動マイグレーション |
-| `docs/adr/0005-media-processing-foundation.md` | メディア処理基盤（mediabunny + node-av） |
-| `docs/adr/0006-takt-dedicated-workflow.md` | takt 専用 workflow。**`.takt/**` への変更はこの ADR が統治する** |
-| `CONTEXT.md` | 用語の正書（グロッサリ）。データ 4 分類もここが正本 |
+| ファイル                                       | 内容                                                             |
+| ---------------------------------------------- | ---------------------------------------------------------------- |
+| `docs/adr/0001-thin-architecture.md`           | 薄いアーキテクチャ規約（最重要・全変更が対象）                   |
+| `docs/adr/0002-no-llm-in-core.md`              | core に LLM を持ち込まない                                       |
+| `docs/adr/0003-bun-only-distribution.md`       | Bun 前提の配布                                                   |
+| `docs/adr/0004-auto-migration.md`              | 自動マイグレーション                                             |
+| `docs/adr/0005-media-processing-foundation.md` | メディア処理基盤（mediabunny + node-av）                         |
+| `docs/adr/0006-takt-dedicated-workflow.md`     | takt 専用 workflow。**`.takt/**` への変更はこの ADR が統治する** |
+| `CONTEXT.md`                                   | 用語の正書（グロッサリ）。データ 4 分類もここが正本              |
 
 ## ADR-0001 の決定に対する違反パターン
 
 ADR-0001 は「レビュー表面積の最小化」を目的とする。**決定の文言は本文の Decision 節を読むこと**（ここへ再掲すると本文とドリフトする）。以下は決定ごとの典型的な違反であり、網羅ではない。
 
-| ADR-0001 の決定 | 違反パターン |
-|----------------|-------------|
-| 決定 1（tool のファイル構成） | tool 1 本のために schema / service / handler / index を別ファイルへ分割している。zod schema を `schemas/` へ切り出している |
-| 決定 2（registry を置かない） | `registry.ts` / `tools/index.ts` での登録テーブル、`registerTool()` 相当の関数、tool を動的に集める glob import |
-| 決定 3（エラーの扱い） | `Result<T, E>` 型、`createService()` フレーム、`toServiceError()` 相当のラッパ、core 内部での戻り値によるエラー表現 |
-| 決定 4（adapter は 2 本） | adapter に業務ロジック（分岐・整形・状態遷移）が入っている。3 本目の adapter が増えている |
-| 決定 5（技術選定） | Node 前提の API 依存、zod 以外のバリデータ、Drizzle を経由しない生 SQL の常用、libSQL 以外の DB |
-| 決定 6（旧リポからの引き継ぎ） | npm 配布 / `tayk` ブランド / JSON-only config / libSQL local store / CONTEXT.md 用語の蒸し返し |
-| 決定 7（tracer 完走までの規約確定・黙って逸脱しない） | tracer (`collection.plan`) 未完走の段階で追加の制約を課す。ADR を改訂せずに逸脱する |
+| ADR-0001 の決定                                       | 違反パターン                                                                                                               |
+| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| 決定 1（tool のファイル構成）                         | tool 1 本のために schema / service / handler / index を別ファイルへ分割している。zod schema を `schemas/` へ切り出している |
+| 決定 2（registry を置かない）                         | `registry.ts` / `tools/index.ts` での登録テーブル、`registerTool()` 相当の関数、tool を動的に集める glob import            |
+| 決定 3（エラーの扱い）                                | `Result<T, E>` 型、`createService()` フレーム、`toServiceError()` 相当のラッパ、core 内部での戻り値によるエラー表現        |
+| 決定 4（adapter は 2 本）                             | adapter に業務ロジック（分岐・整形・状態遷移）が入っている。3 本目の adapter が増えている                                  |
+| 決定 5（技術選定）                                    | Node 前提の API 依存、zod 以外のバリデータ、Drizzle を経由しない生 SQL の常用、libSQL 以外の DB                            |
+| 決定 6（旧リポからの引き継ぎ）                        | npm 配布 / `tayk` ブランド / JSON-only config / libSQL local store / CONTEXT.md 用語の蒸し返し                             |
+| 決定 7（tracer 完走までの規約確定・黙って逸脱しない） | tracer (`collection.plan`) 未完走の段階で追加の制約を課す。ADR を改訂せずに逸脱する                                        |
 
 ## ADR-0006 の決定に対する違反パターン
 
 `.takt/` 配下（workflow 定義・facet・schema）を変更する差分では、ADR-0006 も照合対象になる。
 
-| ADR-0006 の決定 | 違反パターン |
-|----------------|-------------|
-| 決定 4（ADR 整合性レビュー） | 逸脱に正当性があるとき、ADR 改訂を求めずに承認している |
-| 決定 5（要件 ID の貫通） | 要件 ID を後段で振り直している。テストのない要件を「検証不能」と明示せずに通している |
-| 決定 6（ループ上限） | **cycle の外から再入される step に、自前のラウンド上限がない**。takt の cycle 判定は履歴末尾の連続完全一致であり、外から再入されるとカウントが 1 に戻る |
-| 決定 11（スコープ外の発見） | 因果のある発見を issue へ逃がしている。発見を記録せずに捨てている |
-| 決定 12（レビューループの内包） | レビュー ⇄ 修正のループへ、sub-workflow の外から直接飛び込む遷移を足している |
+| ADR-0006 の決定                 | 違反パターン                                                                                                                                            |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 決定 4（ADR 整合性レビュー）    | 逸脱に正当性があるとき、ADR 改訂を求めずに承認している                                                                                                  |
+| 決定 5（要件 ID の貫通）        | 要件 ID を後段で振り直している。テストのない要件を「検証不能」と明示せずに通している                                                                    |
+| 決定 6（ループ上限）            | **cycle の外から再入される step に、自前のラウンド上限がない**。takt の cycle 判定は履歴末尾の連続完全一致であり、外から再入されるとカウントが 1 に戻る |
+| 決定 11（スコープ外の発見）     | 因果のある発見を issue へ逃がしている。発見を記録せずに捨てている                                                                                       |
+| 決定 12（レビューループの内包） | レビュー ⇄ 修正のループへ、sub-workflow の外から直接飛び込む遷移を足している                                                                            |
 
 ## データ規約
 

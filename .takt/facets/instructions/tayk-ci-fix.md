@@ -1,6 +1,7 @@
 CI の失敗を修正してください。
 
 失敗内容:
+
 - PR: `#{structured:ci_check.pr_number}`
 - 状況: {structured:ci_check.summary}
 

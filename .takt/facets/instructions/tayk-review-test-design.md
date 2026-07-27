@@ -4,10 +4,10 @@
 
 対象は呼び出し元の workflow によって変わります。Report Directory にあるものを読んでください。
 
-| workflow | 要件一覧の出どころ | テスト設計の出どころ |
-|----------|------------------|--------------------|
-| `tayk-feature` | `plan.md` の「要件一覧」 | `test-design.md` |
-| `tayk-fix` | `diagnosis.md` の「要件一覧」 | `diagnosis.md` の「回帰テスト設計」節 |
+| workflow       | 要件一覧の出どころ            | テスト設計の出どころ                  |
+| -------------- | ----------------------------- | ------------------------------------- |
+| `tayk-feature` | `plan.md` の「要件一覧」      | `test-design.md`                      |
+| `tayk-fix`     | `diagnosis.md` の「要件一覧」 | `diagnosis.md` の「回帰テスト設計」節 |
 
 ## 手順
 

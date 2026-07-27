@@ -41,6 +41,12 @@
       "description": "1-2 文の状況要約"
     }
   },
-  "required": ["status", "pr_number", "failed_checks", "pending_checks", "summary"],
+  "required": [
+    "status",
+    "pr_number",
+    "failed_checks",
+    "pending_checks",
+    "summary"
+  ],
   "additionalProperties": false
 }

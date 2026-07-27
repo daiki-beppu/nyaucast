@@ -18,28 +18,28 @@
  * 使い方: bun scripts/verify-workflows.ts
  */
 
-import { readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
 
-const WORKFLOW_DIR = '.takt/workflows';
-const INSTRUCTION_DIR = '.takt/facets/instructions';
+const WORKFLOW_DIR = ".takt/workflows";
+const INSTRUCTION_DIR = ".takt/facets/instructions";
 /** takt が遷移先として解釈する予約語。実在 step を指さなくてよい */
-const RESERVED_TARGETS = new Set(['COMPLETE', 'ABORT']);
+const RESERVED_TARGETS = new Set(["COMPLETE", "ABORT"]);
 /** ラウンド上限の rule を見分ける表記。ADR-0006 決定 6 の二重化はこの形で書く */
-const ROUND_CAP_PATTERN = /回目以降/;
+const ROUND_CAP_MARKER = "回目以降";
 
-type Rule = {
+interface Rule {
   condition?: string;
   when?: string;
   next?: string;
   return?: string;
-};
+}
 
-type OutputContracts = {
+interface OutputContracts {
   report?: { name: string; format?: string }[];
-};
+}
 
-type Step = {
+interface Step {
   name: string;
   kind?: string;
   call?: string;
@@ -52,21 +52,21 @@ type Step = {
   output_contracts?: OutputContracts;
   parallel?: Step[];
   rules?: Rule[];
-};
+}
 
-type Monitor = {
+interface Monitor {
   cycle: string[];
   threshold?: number;
   judge?: { rules?: Rule[] };
-};
+}
 
-type Workflow = {
+interface Workflow {
   name: string;
   initial_step?: string;
   subworkflow?: { callable?: boolean; returns?: string[] };
   loop_monitors?: Monitor[];
   steps: Step[];
-};
+}
 
 const failures: string[] = [];
 const notes: string[] = [];
@@ -83,7 +83,10 @@ function note(workflow: string, check: string, message: string): void {
 function outgoingTargets(step: Step): string[] {
   return (step.rules ?? [])
     .map((rule) => rule.next)
-    .filter((next): next is string => next !== undefined && !RESERVED_TARGETS.has(next));
+    .filter(
+      (next): next is string =>
+        next !== undefined && !RESERVED_TARGETS.has(next)
+    );
 }
 
 /** step とその parallel 子 step を平坦に並べる */
@@ -101,41 +104,64 @@ function reportNames(step: Step): string[] {
  * これらは子の中で実行されるため、親のレポートは見えない（ADR-0006 決定 13）
  */
 function delegatedInstructions(step: Step): string[] {
-  return Object.entries(step.args ?? {})
-    .filter(([key]) => key.endsWith('instruction'))
-    .flatMap(([, value]) => (Array.isArray(value) ? value : [value]))
-    .filter((value): value is string => typeof value === 'string');
+  const collected: string[] = [];
+  for (const [key, value] of Object.entries(step.args ?? {})) {
+    if (!key.endsWith("instruction")) {
+      continue;
+    }
+    for (const item of Array.isArray(value) ? value : [value]) {
+      if (typeof item === "string") {
+        collected.push(item);
+      }
+    }
+  }
+  return collected;
 }
 
 /** その step が自前のラウンド上限を持つか（ADR-0006 決定 6 の二重化） */
 function hasRoundCap(step: Step): boolean {
-  return (step.rules ?? []).some((rule) => ROUND_CAP_PATTERN.test(rule.condition ?? ''));
+  return (step.rules ?? []).some((rule) =>
+    (rule.condition ?? "").includes(ROUND_CAP_MARKER)
+  );
 }
 
 /**
  * origins のいずれかから target へ至る最短経路を返す（origins 自身は含まず target を含む）。
  * 到達できなければ null。cycle から流入元へ戻れるか = その流入が往復かどうかの判定に使う。
  */
-function shortestPath(origins: string[], target: string, byName: Map<string, Step>): string[] | null {
+function shortestPath(
+  origins: string[],
+  target: string,
+  byName: Map<string, Step>
+): string[] | null {
   const previous = new Map<string, string>();
   const seen = new Set<string>(origins);
   const queue = [...origins];
   while (queue.length > 0) {
-    const current = queue.shift() as string;
+    const current = queue.shift();
+    if (current === undefined) {
+      break;
+    }
     const step = byName.get(current);
-    if (!step) continue;
+    if (!step) {
+      continue;
+    }
     for (const next of outgoingTargets(step)) {
-      if (seen.has(next)) continue;
+      if (seen.has(next)) {
+        continue;
+      }
       seen.add(next);
       previous.set(next, current);
       if (next === target) {
-        const path = [target];
+        const route = [target];
         let cursor = current;
-        while (previous.has(cursor)) {
-          path.unshift(cursor);
-          cursor = previous.get(cursor) as string;
+        let parent = previous.get(cursor);
+        while (parent !== undefined) {
+          route.unshift(cursor);
+          cursor = parent;
+          parent = previous.get(cursor);
         }
-        return path;
+        return route;
       }
       queue.push(next);
     }
@@ -144,12 +170,14 @@ function shortestPath(origins: string[], target: string, byName: Map<string, Ste
 }
 
 const files = readdirSync(WORKFLOW_DIR)
-  .filter((file) => file.endsWith('.yaml'))
-  .sort();
+  .filter((file) => file.endsWith(".yaml"))
+  .toSorted();
 
 const workflows = new Map<string, Workflow>();
 for (const file of files) {
-  const parsed = Bun.YAML.parse(readFileSync(join(WORKFLOW_DIR, file), 'utf8')) as Workflow;
+  const parsed = Bun.YAML.parse(
+    readFileSync(path.join(WORKFLOW_DIR, file), "utf-8")
+  ) as Workflow;
   workflows.set(parsed.name, parsed);
 }
 
@@ -160,40 +188,71 @@ for (const [name, workflow] of workflows) {
 
   // ── A. 遷移先が実在するか ────────────────────────────────────────
   const initial = workflow.initial_step;
-  if (initial && !stepNames.has(initial)) {
-    fail(name, 'A/遷移先の実在', `initial_step "${initial}" に対応する step がない`);
+  if (initial !== undefined && !stepNames.has(initial)) {
+    fail(
+      name,
+      "A/遷移先の実在",
+      `initial_step "${initial}" に対応する step がない`
+    );
   }
   for (const step of steps) {
     for (const target of outgoingTargets(step)) {
       if (!stepNames.has(target)) {
-        fail(name, 'A/遷移先の実在', `${step.name} → "${target}" は実在しない step`);
+        fail(
+          name,
+          "A/遷移先の実在",
+          `${step.name} → "${target}" は実在しない step`
+        );
       }
     }
   }
   for (const monitor of workflow.loop_monitors ?? []) {
     for (const member of monitor.cycle) {
       if (!stepNames.has(member)) {
-        fail(name, 'A/遷移先の実在', `loop monitor の cycle に実在しない step "${member}"`);
+        fail(
+          name,
+          "A/遷移先の実在",
+          `loop monitor の cycle に実在しない step "${member}"`
+        );
       }
     }
     for (const rule of monitor.judge?.rules ?? []) {
-      if (rule.next && !RESERVED_TARGETS.has(rule.next) && !stepNames.has(rule.next)) {
-        fail(name, 'A/遷移先の実在', `loop monitor の rule が実在しない step "${rule.next}" を指す`);
+      if (
+        rule.next !== undefined &&
+        !RESERVED_TARGETS.has(rule.next) &&
+        !stepNames.has(rule.next)
+      ) {
+        fail(
+          name,
+          "A/遷移先の実在",
+          `loop monitor の rule が実在しない step "${rule.next}" を指す`
+        );
       }
     }
   }
 
   // ── B. initial_step から全 step に到達できるか ──────────────────
-  if (initial && stepNames.has(initial)) {
+  if (initial !== undefined && stepNames.has(initial)) {
     const reached = new Set<string>([initial]);
     const queue = [initial];
     while (queue.length > 0) {
-      const current = byName.get(queue.shift() as string);
-      if (!current) continue;
+      const head = queue.shift();
+      if (head === undefined) {
+        break;
+      }
+      const current = byName.get(head);
+      if (!current) {
+        continue;
+      }
       const fromMonitors = (workflow.loop_monitors ?? [])
         .filter((monitor) => monitor.cycle.includes(current.name))
-        .flatMap((monitor) => (monitor.judge?.rules ?? []).map((rule) => rule.next))
-        .filter((next): next is string => next !== undefined && !RESERVED_TARGETS.has(next));
+        .flatMap((monitor) =>
+          (monitor.judge?.rules ?? []).map((rule) => rule.next)
+        )
+        .filter(
+          (next): next is string =>
+            next !== undefined && !RESERVED_TARGETS.has(next)
+        );
       for (const target of [...outgoingTargets(current), ...fromMonitors]) {
         if (!reached.has(target)) {
           reached.add(target);
@@ -203,7 +262,7 @@ for (const [name, workflow] of workflows) {
     }
     for (const step of steps) {
       if (!reached.has(step.name)) {
-        fail(name, 'B/到達性', `${step.name} は initial_step から到達できない`);
+        fail(name, "B/到達性", `${step.name} は initial_step から到達できない`);
       }
     }
   }
@@ -218,7 +277,7 @@ for (const [name, workflow] of workflows) {
   // ラウンド上限を持つ step が 1 つでもあれば、monitor が発火しなくても実行は止まる。
   // 1 つもなければ、その往復は max_steps まで回りうる。
   for (const monitor of workflow.loop_monitors ?? []) {
-    const cycle = monitor.cycle;
+    const { cycle } = monitor;
     for (const [index, member] of cycle.entries()) {
       const predecessor = cycle[(index - 1 + cycle.length) % cycle.length];
       const intruders = steps
@@ -229,7 +288,9 @@ for (const [name, workflow] of workflows) {
       for (const intruder of intruders) {
         // cycle から流入元へ戻れないなら入口。往復しないので上限は不要
         const back = shortestPath(cycle, intruder, byName);
-        if (!back) continue;
+        if (!back) {
+          continue;
+        }
 
         // 往復を構成する step 全体（cycle 本体 + 戻り経路）のどこかに上限が要る
         const loopSteps = new Set([...cycle, ...back]);
@@ -240,30 +301,32 @@ for (const [name, workflow] of workflows) {
         });
         // 上限がなくても、この往復に収まる cycle を別の monitor が見ているなら発火する
         const covering = (workflow.loop_monitors ?? []).find(
-          (other) => other !== monitor && other.cycle.every((member2) => loopSteps.has(member2)),
+          (other) =>
+            other !== monitor &&
+            other.cycle.every((member2) => loopSteps.has(member2))
         );
-        const detour = back.join(' → ');
+        const detour = back.join(" → ");
         if (capped.length > 0) {
           note(
             name,
-            'C/ループの上限',
-            `cycle [${cycle.join(', ')}] は ${detour} → ${member} の往復で途切れうるが、` +
-              `${capped.join(' / ')} のラウンド上限で止まる`,
+            "C/ループの上限",
+            `cycle [${cycle.join(", ")}] は ${detour} → ${member} の往復で途切れうるが、` +
+              `${capped.join(" / ")} のラウンド上限で止まる`
           );
         } else if (covering) {
           note(
             name,
-            'C/ループの上限',
-            `cycle [${cycle.join(', ')}] は ${detour} → ${member} の往復で途切れうるが、` +
-              `その往復は monitor [${covering.cycle.join(', ')}] が見ている`,
+            "C/ループの上限",
+            `cycle [${cycle.join(", ")}] は ${detour} → ${member} の往復で途切れうるが、` +
+              `その往復は monitor [${covering.cycle.join(", ")}] が見ている`
           );
         } else {
           fail(
             name,
-            'C/ループの上限',
-            `cycle [${cycle.join(', ')}] は ${detour} → ${member} の往復で途切れる。` +
+            "C/ループの上限",
+            `cycle [${cycle.join(", ")}] は ${detour} → ${member} の往復で途切れる。` +
               `takt の cycle 判定は連続一致なので monitor は発火せず、この往復には上限を持つ step が 1 つもない` +
-              `（ADR-0006 決定 6）。往復を見る monitor を足すか、どこかに {step_iteration} の上限を置くこと`,
+              `（ADR-0006 決定 6）。往復を見る monitor を足すか、どこかに {step_iteration} の上限を置くこと`
           );
         }
       }
@@ -271,32 +334,40 @@ for (const [name, workflow] of workflows) {
   }
 
   // ── D. sub-workflow の返り値が宣言と呼び出し側で整合するか ────────
-  const declaredReturns = new Set(workflow.subworkflow?.returns ?? []);
+  const declaredReturns = new Set(workflow.subworkflow?.returns);
   for (const step of steps) {
     for (const rule of step.rules ?? []) {
-      if (rule.return && !declaredReturns.has(rule.return)) {
+      if (rule.return !== undefined && !declaredReturns.has(rule.return)) {
         fail(
           name,
-          'D/返り値の整合',
-          `${step.name} が return: ${rule.return} を返すが subworkflow.returns に宣言がない`,
+          "D/返り値の整合",
+          `${step.name} が return: ${rule.return} を返すが subworkflow.returns に宣言がない`
         );
       }
     }
   }
   for (const step of steps) {
-    if (step.kind !== 'workflow_call' || !step.call) continue;
-    const callee = workflows.get(step.call);
-    if (!callee) {
-      note(name, 'D/返り値の整合', `${step.name} が呼ぶ "${step.call}" は builtin（検査対象外）`);
+    if (step.kind !== "workflow_call" || step.call === undefined) {
       continue;
     }
-    const handled = new Set((step.rules ?? []).map((rule) => rule.condition).filter(Boolean));
+    const callee = workflows.get(step.call);
+    if (!callee) {
+      note(
+        name,
+        "D/返り値の整合",
+        `${step.name} が呼ぶ "${step.call}" は builtin（検査対象外）`
+      );
+      continue;
+    }
+    const handled = new Set(
+      (step.rules ?? []).map((rule) => rule.condition).filter(Boolean)
+    );
     for (const declared of callee.subworkflow?.returns ?? []) {
       if (!handled.has(declared)) {
         fail(
           name,
-          'D/返り値の整合',
-          `${step.name} は "${step.call}" の返り値 "${declared}" を処理していない`,
+          "D/返り値の整合",
+          `${step.name} は "${step.call}" の返り値 "${declared}" を処理していない`
         );
       }
     }
@@ -311,8 +382,13 @@ for (const [name, workflow] of workflows) {
 const occurrences = new Map<string, { workflow: string; step: Step }[]>();
 for (const [name, workflow] of workflows) {
   for (const step of workflow.steps ?? []) {
-    if (step.kind === 'workflow_call' || step.mode === 'system') continue;
-    occurrences.set(step.name, [...(occurrences.get(step.name) ?? []), { workflow: name, step }]);
+    if (step.kind === "workflow_call" || step.mode === "system") {
+      continue;
+    }
+    occurrences.set(step.name, [
+      ...(occurrences.get(step.name) ?? []),
+      { step, workflow: name },
+    ]);
   }
 }
 
@@ -320,26 +396,32 @@ for (const [name, workflow] of workflows) {
 function stepFingerprint(step: Step): string {
   return JSON.stringify({
     instruction: step.instruction,
-    policy: step.policy,
     knowledge: step.knowledge,
-    quality_gates: step.quality_gates,
     output_contracts: step.output_contracts,
+    policy: step.policy,
+    quality_gates: step.quality_gates,
   });
 }
 
 for (const [stepName, entries] of occurrences) {
-  if (entries.length < 2) continue;
   const [first, ...rest] = entries;
+  if (first === undefined || rest.length === 0) {
+    continue;
+  }
   for (const other of rest) {
     if (stepFingerprint(first.step) === stepFingerprint(other.step)) {
-      note(other.workflow, 'E/複製の一致', `step "${stepName}" は ${first.workflow} と一致（rules 以外）`);
+      note(
+        other.workflow,
+        "E/複製の一致",
+        `step "${stepName}" は ${first.workflow} と一致（rules 以外）`
+      );
       continue;
     }
     fail(
       other.workflow,
-      'E/複製の一致',
+      "E/複製の一致",
       `step "${stepName}" の定義が ${first.workflow} と食い違う（rules 以外）。` +
-        `複製を許した step は両方を同時に更新すること（ADR-0006 決定 13）`,
+        `複製を許した step は両方を同時に更新すること（ADR-0006 決定 13）`
     );
   }
 }
@@ -353,13 +435,16 @@ for (const [stepName, entries] of occurrences) {
 //
 // instruction が「その workflow が生成しないレポート」をファイル名で参照していたら止める。
 // 境界そのものを説明している行（「探さないでください」等）は対象外。
-const BOUNDARY_NOTE = /探さないで|見えません|参照しない|存在しません|読めない/;
+const BOUNDARY_NOTE = /探さないで|見えません|参照しない|存在しません|読めない/u;
 
 const reportOwners = new Map<string, Set<string>>();
 for (const [name, workflow] of workflows) {
   for (const step of flattenSteps(workflow.steps ?? [])) {
     for (const reportName of reportNames(step)) {
-      reportOwners.set(reportName, (reportOwners.get(reportName) ?? new Set<string>()).add(name));
+      reportOwners.set(
+        reportName,
+        (reportOwners.get(reportName) ?? new Set<string>()).add(name)
+      );
     }
   }
 }
@@ -372,57 +457,79 @@ for (const [name, workflow] of workflows) {
 const facetReaders = new Map<string, Set<string>>();
 for (const [name, workflow] of workflows) {
   for (const step of flattenSteps(workflow.steps ?? [])) {
-    if (step.instruction) {
-      facetReaders.set(step.instruction, (facetReaders.get(step.instruction) ?? new Set()).add(name));
+    if (step.instruction !== undefined) {
+      facetReaders.set(
+        step.instruction,
+        (facetReaders.get(step.instruction) ?? new Set()).add(name)
+      );
     }
     // args で渡した instruction は子の中で動くので、reader は親ではなく子
     for (const facet of delegatedInstructions(step)) {
-      const child = step.call ?? '(child)';
-      facetReaders.set(facet, (facetReaders.get(facet) ?? new Set()).add(child));
-    }
-  }
-}
-
-for (const [facet, readers] of facetReaders) {
-  const owner = [...readers].sort().join(' / ');
-  let body: string;
-  try {
-    body = readFileSync(join(INSTRUCTION_DIR, `${facet}.md`), 'utf8');
-  } catch {
-    note(owner, 'F/レポート境界', `instruction "${facet}" は builtin（検査対象外）`);
-    continue;
-  }
-  const flagged = new Set<string>();
-  for (const line of body.split('\n')) {
-    if (BOUNDARY_NOTE.test(line)) continue;
-    for (const [reportName, owners] of reportOwners) {
-      if (!line.includes(reportName) || flagged.has(reportName)) continue;
-      if ([...readers].some((reader) => owners.has(reader))) continue;
-      flagged.add(reportName);
-      fail(
-        owner,
-        'F/レポート境界',
-        `instruction "${facet}" が "${reportName}" を参照しているが、` +
-          `これを生成するのは ${[...owners].sort().join(' / ')} で、${owner} からは読めない` +
-          `（ADR-0006 決定 13）`,
+      const child = step.call ?? "(child)";
+      facetReaders.set(
+        facet,
+        (facetReaders.get(facet) ?? new Set()).add(child)
       );
     }
   }
 }
 
-const checked = [...workflows.keys()].sort().join(', ');
+for (const [facet, readers] of facetReaders) {
+  const owner = [...readers].toSorted().join(" / ");
+  let body: string;
+  try {
+    body = readFileSync(path.join(INSTRUCTION_DIR, `${facet}.md`), "utf-8");
+  } catch {
+    note(
+      owner,
+      "F/レポート境界",
+      `instruction "${facet}" は builtin（検査対象外）`
+    );
+    continue;
+  }
+  const flagged = new Set<string>();
+  for (const line of body.split("\n")) {
+    if (BOUNDARY_NOTE.test(line)) {
+      continue;
+    }
+    for (const [reportName, owners] of reportOwners) {
+      if (!line.includes(reportName) || flagged.has(reportName)) {
+        continue;
+      }
+      if ([...readers].some((reader) => owners.has(reader))) {
+        continue;
+      }
+      flagged.add(reportName);
+      fail(
+        owner,
+        "F/レポート境界",
+        `instruction "${facet}" が "${reportName}" を参照しているが、` +
+          `これを生成するのは ${[...owners].toSorted().join(" / ")} で、${owner} からは読めない` +
+          `（ADR-0006 決定 13）`
+      );
+    }
+  }
+}
+
+const checked = [...workflows.keys()].toSorted().join(", ");
 console.log(`検査対象: ${files.length} workflow (${checked})\n`);
 
-for (const line of notes) console.log(`  note  ${line}`);
-if (notes.length > 0) console.log('');
+for (const line of notes) {
+  console.log(`  note  ${line}`);
+}
+if (notes.length > 0) {
+  console.log("");
+}
 
 if (failures.length > 0) {
-  for (const line of failures) console.log(`  FAIL  ${line}`);
+  for (const line of failures) {
+    console.log(`  FAIL  ${line}`);
+  }
   console.log(`\n${failures.length} 件の問題が見つかりました。`);
   process.exit(1);
 }
 
 console.log(
-  '検査 A（遷移先の実在）/ B（到達性）/ C（ループの上限）/ D（返り値の整合）/ ' +
-    'E（複製の一致）/ F（レポート境界）: すべて pass',
+  "検査 A（遷移先の実在）/ B（到達性）/ C（ループの上限）/ D（返り値の整合）/ " +
+    "E（複製の一致）/ F（レポート境界）: すべて pass"
 );

@@ -22,11 +22,11 @@ degrade しない。** 報告には、探索に使ったコマンドとその結
 
 取得したラベルから起点を 3 分類する。issue が確定していることは手順 1 の前提であり、ここには「issue なし」の分岐はない。
 
-| ラベル | source_kind | 扱い |
-|--------|-------------|------|
-| `wayfinder:map` を持つ | `wayfinder_map` | 手順 3 へ |
+| ラベル                                                             | source_kind        | 扱い      |
+| ------------------------------------------------------------------ | ------------------ | --------- |
+| `wayfinder:map` を持つ                                             | `wayfinder_map`    | 手順 3 へ |
 | `wayfinder:research` / `:prototype` / `:grilling` / `:task` を持つ | `wayfinder_ticket` | 手順 4 へ |
-| それ以外の issue | `plain_issue` | 手順 5 へ |
+| それ以外の issue                                                   | `plain_issue`      | 手順 5 へ |
 
 ### 3. wayfinder map が起点のとき
 

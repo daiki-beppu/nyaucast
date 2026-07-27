@@ -29,5 +29,8 @@ jobs:
         run: nix develop --command bun run format:check
       - name: Test
         run: nix develop --command bun run test
+      # bun test は *.test.ts しか拾わないため、workflow 定義の検査は別 step で回す。
+      - name: Verify workflows
+        run: nix develop --command bun scripts/verify-workflows.ts
       - name: Fallow
         run: nix develop --command bun run fallow

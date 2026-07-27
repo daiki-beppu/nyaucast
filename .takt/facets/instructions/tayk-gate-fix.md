@@ -2,10 +2,10 @@
 
 対象は呼び出し元の workflow によって変わります。Report Directory にあるものを直してください。
 
-| workflow | 直すレポート | レビューレポート 3 種 |
-|----------|------------|---------------------|
-| `tayk-feature` | `plan.md` + `test-design.md` | 設計 / ADR 整合性 / テスト設計 |
-| `tayk-fix` | `diagnosis.md` | 診断妥当性 / ADR 整合性 / テスト設計 |
+| workflow       | 直すレポート                 | レビューレポート 3 種                |
+| -------------- | ---------------------------- | ------------------------------------ |
+| `tayk-feature` | `plan.md` + `test-design.md` | 設計 / ADR 整合性 / テスト設計       |
+| `tayk-fix`     | `diagnosis.md`               | 診断妥当性 / ADR 整合性 / テスト設計 |
 
 ## 手順
 

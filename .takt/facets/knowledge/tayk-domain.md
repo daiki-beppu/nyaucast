@@ -39,15 +39,15 @@ tayk は YouTube チャンネル運営を自動化するツールキット。ski
 
 `CONTEXT.md` の各項が `_Avoid_` として退けた語を、コード識別子・description・レポートで使ってはならない。代表例:
 
-| 使ってはならない | 正書 |
-|-----------------|------|
+| 使ってはならない                                 | 正書          |
+| ------------------------------------------------ | ------------- |
 | orchestrator, pipeline（workflow tool を指して） | workflow tool |
-| thin client, thin wrapper | adapter |
-| database, SQLite（local store を指して） | local store |
-| キャッシュ / SSOT（read model を指して） | read model |
-| アルバム, プレイリスト（collection を指して） | collection |
-| バズ動画, ヒット動画 | 当たり動画 |
-| PoC（tracer を指して） | tracer |
-| yt, yt-automation, youtube-channels-automation | tayk |
+| thin client, thin wrapper                        | adapter       |
+| database, SQLite（local store を指して）         | local store   |
+| キャッシュ / SSOT（read model を指して）         | read model    |
+| アルバム, プレイリスト（collection を指して）    | collection    |
+| バズ動画, ヒット動画                             | 当たり動画    |
+| PoC（tracer を指して）                           | tracer        |
+| yt, yt-automation, youtube-channels-automation   | tayk          |
 
 新しい概念を導入するときは、`CONTEXT.md` に既存の用語がないかを先に確認する。既存語で表せるものに別名を与えない。

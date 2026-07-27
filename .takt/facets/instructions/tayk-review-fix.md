@@ -1,6 +1,7 @@
 レビュー指摘を修正してください。
 
 対応対象:
+
 - PR: `#{structured:review_triage.pr_number}`
 - 状況: {structured:review_triage.summary}
 - 指摘: {structured:review_triage.actionable}
