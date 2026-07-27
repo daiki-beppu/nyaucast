@@ -15,7 +15,7 @@
  *    レポート生成フェーズのプロンプトが探索まで禁じているため、実走行して「ファイルが無い」
  *    で初めて気づくうえ、agent 側のリカバリも効かない（ADR-0006 決定 13）。
  *
- * 使い方: bun scripts/verify-workflows.ts
+ * 使い方: bun run verify-workflows（`bun run check` の 1 ゲートとしても実行される）
  */
 
 import { readdirSync, readFileSync } from "node:fs";

@@ -30,7 +30,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 - 初回および worktree 作成後は毎回: `direnv allow && bun install`（devDependencies の tsc / oxlint / oxfmt / lefthook は worktree ごとの `node_modules` に必要）
 - **落とし穴**: direnv を通さないシェルには bun が存在しない。takt worktree（`<repo-parent>/takt-worktrees/`）で bun が動くのは起動元シェルの環境継承によるもので、フレッシュなシェルから入る場合は `direnv allow` が必要
 - **パッケージ操作・スクリプト実行は bun 経由**（`bun install` / `bun add` / `bun run <script>`、テストは `bun test`）。他のパッケージマネージャ（npm / pnpm / yarn）とそのラッパを使わない
-- 開発コマンド（CI と同一ゲート）: `bun run typecheck` / `bun run lint` / `bun run format:check` / `bun test` / `bun scripts/verify-workflows.ts` / `bun run fallow`
+- **検査ゲートは `bun run check` の 1 コマンド**（typecheck / lint / format:check / test / verify-workflows / fallow を直列実行し、最初の失敗で止まる）。CI・pre-push フックも同じ script を呼ぶため、ここで通れば CI でも通る。ゲート集合の定義は `package.json` にのみ置き、書き写さない
 
 ## 開発ワークフロー
 
@@ -40,7 +40,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
   - `tayk-intake` / `tayk-impl-review` / `tayk-delivery` — feature / fix 共通の callable sub-workflow。**レビュー ⇄ 修正のループは `tayk-impl-review` の内側に閉じてあり、外から修正 step へ直接飛ぶ遷移を足さない**（ADR-0008 決定 12）
   - **callable の子は親のレポートを読めない**（子は専用の report namespace を持つ）。境界をまたぐ情報は前段レスポンス / 親レポートへの転記 / テストコードのいずれかで渡す。`spillover` が callable でないのはこの制約による（ADR-0008 決定 13）
   - 起動例: `takt -w tayk-feature "#<issue番号>"` / `takt -w tayk-fix "#<issue番号>"`
-  - **定義を変えたら `takt workflow doctor` と `bun scripts/verify-workflows.ts` の両方を通す。** doctor は facet 参照と schema を、後者は遷移グラフ（到達性 / ループ上限の実効性 / sub-workflow の返り値の網羅）とレポート境界を検査する
+  - **定義を変えたら `takt workflow doctor` と `bun run check` の両方を通す。** doctor は facet 参照と schema を、`check` に含まれる verify-workflows ゲートは遷移グラフ（到達性 / ループ上限の実効性 / sub-workflow の返り値の網羅）とレポート境界を検査する
 - **実装前に設計ゲートを通る。** 未決事項を抱えた issue、open な子 ticket が残る wayfinder map は intake が着手を拒否する
 - **fix は原因を特定してから直す。** 診断ゲート（原因の因果を `file:line` で示し、対立仮説を棄却する）を通らなければコードに触れない。再現テストが red にならなければ診断が誤っているとみなして差し戻す（ADR-0008 決定 9・10）
 - **ADR から黙って逸脱しない。** 逸脱するなら該当 ADR の改訂を同じ差分に含める（ADR-0001 決定 7 / ADR-0008 決定 4）

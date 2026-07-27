@@ -12,12 +12,14 @@
   "type": "module",
   "scripts": {
     "prepare": "if [ -e .git ]; then lefthook install; fi",
+    "check": "bun run typecheck && bun run lint && bun run format:check && bun run test && bun run verify-workflows && bun run fallow",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint --config oxlint.config.ts --type-aware --no-error-on-unmatched-pattern .",
-    "lint:fix": "oxlint --config oxlint.config.ts --no-error-on-unmatched-pattern --fix",
+    "lint:fix": "oxlint --config oxlint.config.ts --type-aware --no-error-on-unmatched-pattern --fix .",
     "format:check": "oxfmt --check .",
-    "format:fix": "oxfmt --write",
+    "format:fix": "oxfmt --write .",
     "test": "bun test",
+    "verify-workflows": "bun scripts/verify-workflows.ts",
     "fallow": "fallow --no-cache --fail-on-issues"
   },
   "dependencies": {

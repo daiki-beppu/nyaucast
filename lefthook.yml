@@ -1,10 +1,19 @@
+# fix 系はリポジトリ全体を対象にする（script 側が `.` を持つ）。glob は「その種類の
+# ファイルが staged のときだけ走らせる」トリガとしてのみ使い、対象範囲は絞らない。
+# staged ファイルだけ整形・修正すると、commit 時に通ったものが CI の全体検査で落ちる。
 pre-commit:
   commands:
     format-fix:
       glob: "*.{js,jsx,ts,tsx,json,jsonc,md,yml,yaml}"
-      run: bun run format:fix -- {staged_files}
+      run: bun run format:fix
       stage_fixed: true
     lint-fix:
       glob: "*.{js,jsx,ts,tsx}"
-      run: bun run lint:fix -- {staged_files}
+      run: bun run lint:fix
       stage_fixed: true
+
+# push 前に CI と同一のゲートを通す。ゲート集合は package.json の check script が持つ。
+pre-push:
+  commands:
+    check:
+      run: bun run check
