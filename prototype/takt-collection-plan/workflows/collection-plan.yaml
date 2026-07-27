@@ -1,0 +1,123 @@
+name: collection-plan
+description: >-
+  TTP ベンチマークから当たり動画を選び、企画候補を出してゲート① の直前で終わる。
+  collection lifecycle の plan 区間（旧 /collection-ideate 相当）。
+
+# 試作メモ:
+#   - ゲート①（作る / 作らない）は **この workflow の中に無い**。#61 の決定により、
+#     承認 = 人間が次のコマンド（tayk collection produce <id>）を叩いた事実。
+#     したがって plan 区間の終わりは COMPLETE であって requires_user_input ではない。
+#   - mcp_servers は provider が claude 系のときだけ効き、それ以外では無言で破棄される（#58）。
+#     tayk MCP tool を呼ぶ step は provider を明示固定する。
+
+max_steps: 12
+initial_step: gather
+
+# セクションマップ。**これが無いと facet はキー名で引けない** —
+# 素のキー参照は .takt/facets/<kind>/ → ~/.takt/facets/<kind>/ → repertoire → builtin の
+# 4 層しか探さず、workflow YAML の隣は見ない。自己完結したパッケージにするには
+# ここで相対パス（workflow YAML のディレクトリ起点）を宣言する必要がある。
+personas:
+  benchmark-analyst: ../personas/benchmark-analyst.md
+  collection-planner: ../personas/collection-planner.md
+policies:
+  untrusted-input: ../facets/policies/untrusted-input.md
+  plan-originality: ../facets/policies/plan-originality.md
+knowledge:
+  analytics-input-contract: ../facets/knowledge/analytics-input-contract.md
+  ttp-transcription: ../facets/knowledge/ttp-transcription.md
+  plan-candidate-framework: ../facets/knowledge/plan-candidate-framework.md
+instructions:
+  gather-inputs: ../facets/instructions/gather-inputs.md
+  ideate-candidates: ../facets/instructions/ideate-candidates.md
+  preview-thumbnails: ../facets/instructions/preview-thumbnails.md
+report_formats:
+  plan-proposals: ../facets/output-contracts/plan-proposals.md
+
+steps:
+  # ---------------------------------------------------------------------------
+  # 旧 Phase 1（1-1〜1-4）＋「前提スキル状態確認」＋「設定読み込みゲート」
+  # 判定ロジックは tayk MCP tool 側へ寄せ、この step は「読んで構造化して出す」だけ。
+  # ---------------------------------------------------------------------------
+  - name: gather
+    tags: [plan]
+    persona: benchmark-analyst
+    policy: untrusted-input
+    knowledge: [analytics-input-contract]
+    instruction: gather-inputs
+    edit: false
+    provider: claude
+    mcp_servers:
+      tayk:
+        command: tayk
+        args: [mcp]
+    structured_output:
+      schema_ref: plan-inputs
+    rules:
+      # 決定的分岐（エンジンが評価）。LLM の判定候補からは除外される。
+      - when: structured.gather.input_mode == "minimal" && structured.gather.ttp_mode == true
+        next: ABORT
+      - when: structured.gather.hit_video_count == 0 && structured.gather.ttp_mode == true
+        next: ABORT
+      - when: "true"
+        next: ideate
+
+  # ---------------------------------------------------------------------------
+  # 旧 Phase 2（戦略立案）＋ Phase 3（候補生成）＋「ペルソナベース企画フレームワーク」
+  # 旧 skill が 2 つのサブエージェントに分けていた部分は 1 step に畳んだ（FINDINGS.md 問い 3）。
+  # ---------------------------------------------------------------------------
+  - name: ideate
+    tags: [plan]
+    persona: collection-planner
+    policy: [untrusted-input, plan-originality]
+    knowledge: [ttp-transcription, plan-candidate-framework]
+    instruction: ideate-candidates
+    edit: false
+    provider: claude
+    mcp_servers:
+      tayk:
+        command: tayk
+        args: [mcp]
+    output_contracts:
+      report:
+        - name: 01-plan-proposals.md
+          format: plan-proposals
+    quality_gates:
+      - 各候補に転写元（競合チャンネル名 + 当たり動画または勝ちパターン）が明記されていること
+      - 各候補に「参照元が満たす欲求」と「企画が同じ欲求を満たす根拠」が揃っていること
+      - 候補のタイトルが競合のタイトル・シリーズ名の複製になっていないこと
+    rules:
+      - condition: ai("企画候補が必要数そろい、各候補に転写元と欲求整合の根拠がある")
+        next: preview
+      # 旧 skill の「NG なら Phase 3 から再実行」は**人間の却下**であって遷移ではない。
+      # #61 の「頭から再実行 + tool は冪等」方式では、却下 = 次の run。よって自己ループを置かない。
+      - condition: ai("材料が不足しており候補を成立させられない")
+        next: ABORT
+
+  # ---------------------------------------------------------------------------
+  # 旧 Phase 4（プレビューサムネ生成）
+  # 費用が発生する唯一の step。コスト確認・冪等・重複防止は tool の事前条件が持つ（#60 / #62）。
+  # ---------------------------------------------------------------------------
+  - name: preview
+    tags: [plan]
+    persona: collection-planner
+    policy: untrusted-input
+    knowledge: [plan-candidate-framework]
+    instruction: preview-thumbnails
+    edit: false
+    provider: claude
+    mcp_servers:
+      tayk:
+        command: tayk
+        args: [mcp]
+    rules:
+      - condition: ai("プレビュー画像が候補ぶんそろった、またはコスト確認が拒否されてスキップした")
+        next: COMPLETE
+      - condition: ai("プレビュー生成が全件失敗し、原因が入力側にある")
+        next: ABORT
+
+# loop_monitors は置かない。
+#   - この workflow に循環が無いため監視対象のサイクルが存在しない
+#   - なお takt の loop_monitors.cycle は **2 step 以上**を要求するため（zod: min 2）、
+#     単一 step の自己ループは原理的に監視できない。自己ループを入れるなら
+#     監視のためだけに step をもう 1 つ足す必要がある
