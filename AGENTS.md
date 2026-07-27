@@ -29,6 +29,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 - 前提: Nix + direnv。bun / node は flake devShell（`flake.nix`）が提供し、グローバルにはインストールされていない（Bun バージョンの SSOT は `flake.lock`。ADR-0003）
 - 初回および worktree 作成後は毎回: `direnv allow && bun install`（devDependencies の tsc / oxlint / oxfmt / lefthook は worktree ごとの `node_modules` に必要）
 - **落とし穴**: direnv を通さないシェルには bun が存在しない。takt worktree（`<repo-parent>/takt-worktrees/`）で bun が動くのは起動元シェルの環境継承によるもので、フレッシュなシェルから入る場合は `direnv allow` が必要
+- **パッケージ操作・スクリプト実行は bun 経由**（`bun install` / `bun add` / `bun run <script>`、テストは `bun test`）。他のパッケージマネージャ（npm / pnpm / yarn）とそのラッパを使わない
 - 開発コマンド（CI と同一ゲート）: `bun run typecheck` / `bun run lint` / `bun run format:check` / `bun test` / `bun scripts/verify-workflows.ts` / `bun run fallow`
 
 ## 開発ワークフロー
@@ -47,7 +48,6 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 - 要件は `REQ-<issue番号>-<2桁連番>` で採番し、計画（fix では診断）→ テスト設計 → 実装 → レビュー → PR まで引き継ぐ。**issue 番号を確定できない実行は intake が拒否する**（トレーサビリティが最初の一歩で切れるため）
 - worktree 必須・main 直コミット禁止（グローバル AGENTS.md の規約に従う）
 - commit 規約: 日本語 Conventional Commits + タイトル末尾に `(#<N>)`
-- パッケージ操作は ni / nr / nlx 経由（グローバル規約）
 
 ## v0.1.0 のゲート
 

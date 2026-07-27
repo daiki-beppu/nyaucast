@@ -168,6 +168,7 @@ steps:
     policy:
       - coding
       - testing
+      - tayk-toolchain
     knowledge:
       - tayk-adr
     allow_git_commit: true
@@ -243,6 +244,7 @@ steps:
     policy:
       - coding
       - testing
+      - tayk-toolchain
     knowledge:
       - tayk-adr
       - tayk-domain

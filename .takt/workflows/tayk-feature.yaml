@@ -105,6 +105,7 @@ steps:
     persona: planner
     policy:
       - tayk-traceability
+      - tayk-toolchain
     knowledge:
       - architecture
       - tayk-adr
@@ -151,6 +152,7 @@ steps:
     policy:
       - testing
       - tayk-traceability
+      - tayk-toolchain
     knowledge:
       - unit-testing
       - e2e-testing
@@ -319,6 +321,7 @@ steps:
       - coding
       - testing
       - tayk-traceability
+      - tayk-toolchain
     knowledge:
       - unit-testing
       - e2e-testing
@@ -352,6 +355,11 @@ steps:
 
   # builtin の実装 + AI アンチパターン自己レビューループ。
   # implement の instruction だけ tayk の ADR 制約を効かせたものへ差し替える。
+  #
+  # builtin の子へは policy を渡せない（差し替えられるのは args の instruction だけ）。
+  # そのため他 step が policy: tayk-toolchain に集約した bun 規約も、この step にだけは
+  # 届かない。tayk-implement の「禁止」節が bun 以外の PM 実行を止めているのは、
+  # 重複ではなくこの制約の埋め合わせである。tayk-toolchain を変えたら同時に見直す
   - name: draft
     kind: workflow_call
     call: default-draft

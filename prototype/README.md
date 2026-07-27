@@ -8,13 +8,15 @@
 - `@audio/loudness-lufs` の Bun 実機スモーク（#44 引き継ぎ: EBU Tech 3341 相当のテスト信号 + 1 時間素材の性能）
 - 1 時間素材のフルパイプライン性能（合格ライン: 実時間の 2 倍以内）
 
-## 実行方法
+## 実行方法（検証当時）
+
+`proto:*` script と mediabunny 系の依存は現在の `package.json` に残っていないため、**このままでは再実行できない**（#45 の実行記録として残しているもの）。再実行するなら依存を入れ直したうえで、スクリプトを直接叩く。
 
 ```
-ni            # trustedDependencies: ["node-av"] が必要（postinstall で FFmpeg プレビルドを DL）
-nr proto:lufs
-nr proto:master
-nr proto:bench   # BENCH_HOURS=1（既定）
+bun install                  # trustedDependencies: ["node-av"] が必要（postinstall で FFmpeg プレビルドを DL）
+bun prototype/lufs-smoke.ts
+bun prototype/master.ts
+bun prototype/bench-1h.ts    # BENCH_HOURS=1（既定）
 ```
 
 ## 結果
