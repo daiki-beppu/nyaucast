@@ -1,0 +1,59 @@
+name: tayk-spillover
+description: >
+  tayk 共通のスコープ外発見の仕分けフェーズ。各レポートの「スコープ外の発見」を集め、
+  起票する / 引き戻す / 捨てるに仕分ける。feature / fix の両 workflow から呼ばれる。
+subworkflow:
+  callable: true
+  visibility: internal
+  returns:
+    # 「今回の差分と因果あり」と判定された発見は、スコープ外へ逃がしてはならない。
+    # 引き戻す先は計画（fix では診断）であって修正 step ではない —— 因果のある問題には
+    # 要件 ID が要り、採番は計画・診断の責務だからである（ADR-0006 決定 11）。
+    # 呼び出し元がどちらへ戻すかを決めるため、ここでは needs_replan として返す
+    - needs_replan
+workflow_config:
+  provider_options:
+    codex:
+      network_access: true
+    opencode:
+      network_access: true
+max_steps: 5
+initial_step: spillover
+steps:
+  # 「ついで直しをしない」という禁止の受け皿。ここを通さないと発見は実行ログとともに埋もれる。
+  # 呼び出し元が delivery の *前* に置くのは、起票した issue 番号を PR 本文へ載せるため
+  # （ADR-0006 決定 11）
+  - name: spillover
+    description: 各レポートのスコープ外の発見を集め、起票する / 捨てるに仕分ける
+    tags:
+      - delivery
+    edit: false
+    persona: tayk-delivery-operator
+    policy:
+      - tayk-scope-spillover
+    knowledge:
+      - tayk-domain
+    # gh issue create / comment を使うため Bash が要る。ソースは触らないので edit: false
+    provider_options:
+      extends: review-readonly
+    session: refresh
+    instruction: tayk-spillover
+    quality_gates:
+      - Report Directory の全レポートを読み、発見がなかったものも収集元に記録していること
+      - 起票したものが 3 条件（因果なし / 実害あり / 根拠あり）をすべて満たしていること
+      - 起票前に gh issue list で重複を照合していること
+      - 破棄した発見について、満たさなかった条件と理由を記録していること
+      - コードを変更していないこと
+    rules:
+      # 仕分け自体は完了しているため、この rule を先に置かないと下の「仕分けが終わった」に
+      # 吸われて素通りする
+      - condition: 因果ありと判定した発見があり、今回の差分に含めるべきものが残っている
+        return: needs_replan
+      - condition: 仕分けが終わり、起票・追記・破棄をすべて記録した（発見ゼロの場合を含む）
+        next: COMPLETE
+      - condition: gh の実行に失敗した（権限・ネットワーク）
+        next: COMPLETE
+    output_contracts:
+      report:
+        - name: spillover.md
+          format: tayk-spillover

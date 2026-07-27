@@ -10,21 +10,23 @@
 
 issue が紐づいている場合、直前の system step の出力に issue 番号がある。番号を確認したうえで
 `gh issue view <N> --json number,title,body,labels,assignees,comments,state` で本文・ラベル・コメントを取得する。
-番号が出力から読み取れないときは `gh issue list --state open --search "<task の要約>"` で該当 issue を探し、
-特定できなければ issue なしとして扱う。
+番号が出力から読み取れないときは `gh issue list --state open --search "<task の要約>"` で該当 issue を探す。
 
-issue が紐づいていない（`exists` が false）場合は、task 本文だけを起点として扱い、`source_kind` は `task_only` とする。
+**issue 番号を確定できない実行は `blocked` とする。** `exists` が false の場合も、検索で特定できなかった場合も同じ扱いである。
+issue なしで進めると要件 ID が linked issue に紐づかず、PR に `Closes #N` を書けない。intake → 計画 → テスト設計 →
+実装 → レビュー → PR まで要件 ID を貫通させるという前提が、最初の一歩で切れてしまう。**黙って番号なしの採番へ
+degrade しない。** 報告には、探索に使ったコマンドとその結果、および人間が次に取るべきアクション
+（`gh issue create --title "..." --body "..."` の具体形）を書く。
 
 ### 2. 起点の分類
 
-取得したラベルから起点を 4 分類する。
+取得したラベルから起点を 3 分類する。issue が確定していることは手順 1 の前提であり、ここには「issue なし」の分岐はない。
 
 | ラベル | source_kind | 扱い |
 |--------|-------------|------|
 | `wayfinder:map` を持つ | `wayfinder_map` | 手順 3 へ |
 | `wayfinder:research` / `:prototype` / `:grilling` / `:task` を持つ | `wayfinder_ticket` | 手順 4 へ |
 | それ以外の issue | `plain_issue` | 手順 5 へ |
-| issue なし | `task_only` | 手順 5 へ |
 
 ### 3. wayfinder map が起点のとき
 
@@ -51,7 +53,7 @@ map は「決定が出揃うまで実装しない」前提の上に立つ地図�
 4. ticket の種別が `wayfinder:task` 以外（`research` / `prototype` / `grilling`）なら、それは **決定を出すための ticket であって実装 ticket ではない**。`blocked` とし、「この ticket は wayfinder セッションで解決すべきもの」と報告する
 5. `wayfinder:task` で blocking が解消済みなら、ticket の Question と親 map の決定を実装ブリーフに畳み込む
 
-### 5. 通常 issue / task が起点のとき
+### 5. 通常 issue が起点のとき
 
 本文とコメントから、目的・完了条件・制約を抽出する。
 
@@ -59,6 +61,7 @@ map は「決定が出揃うまで実装しない」前提の上に立つ地図�
 
 以下のいずれかに該当すれば `blocked` とし、該当箇所を引用して報告する。
 
+- **issue が確定していない**: 手順 1 で issue 番号を特定できなかった（引用の代わりに、探索コマンドと結果を示す）
 - **未決事項**: 実装者が選択を迫られる分岐が残っている（「A か B か決まっていない」「要検討」「TBD」）
 - **曖昧な受け入れ条件**: 「適切に」「いい感じに」など、達成を客観判定できない条件
 - **矛盾**: 本文とコメント、または受け入れ条件どうしが両立しない

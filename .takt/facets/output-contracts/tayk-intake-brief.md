@@ -6,7 +6,7 @@
 ## 起点
 | 項目 | 値 |
 |------|-----|
-| source_kind | wayfinder_map / wayfinder_ticket / plain_issue / task_only |
+| source_kind | wayfinder_map / wayfinder_ticket / plain_issue |
 | issue | `#<番号> <タイトル>`（なければ「なし」） |
 | 親 map | `#<番号> <タイトル>`（wayfinder_ticket のときのみ） |
 
