@@ -32,9 +32,27 @@ ADR-0001 の Consequences は takt 運用について 2 点を定めていた（
 8. **intake は wayfinder の map / ticket を一級の入力として扱う。** map 起点なら子 ticket の resolution を実装ブリーフへ畳み込み、**open な子 ticket が 1 件でも残っていれば着手を拒否する**。決定を出すための ticket（`research` / `prototype` / `grilling`）を実装 ticket と取り違えないよう、種別で判別する。**また、linked issue を確定できない実行も着手を拒否する。** issue なしで進めると要件 ID が issue に紐づかず、PR に `Closes #N` を書けない。決定 5 の貫通が最初の一歩で切れるため、番号なしの採番へ黙って degrade させない
 9. **fix は修正の前に診断ゲートを通す。** `diagnose`（原因の特定・検証可能な予測・修正方針・回帰テスト設計）→ `diagnose_review`（診断妥当性 / ADR 整合性 / 回帰テスト設計の 3 並列）を通らなければコードに触れない。診断は**因果の連鎖を `file:line` で示し、対立仮説を最低 1 つ棄却し、報告された全症状に対して説明できるか否かを判定する**こと。「〜が怪しい」で止まった診断は差し戻す
 10. **再現テストの red を、診断が正しいことの検証に使う。** `reproduce` は修正前に再現テストを書き、**red になることと、失敗の内容が診断の予測と一致すること**を確認する。green だった（症状を再現できない）場合、または失敗の内容が予測と違う場合は、テストの問題ではなく**原因の特定が誤っている**とみなして診断へ差し戻す。症状を再現しないテストを抱えたまま修正へ進む出口は置かない
-11. **スコープ外の発見は、捨てずに issue へ逃がす。** 「因果関係のない変更を混ぜない」という禁止だけでは発見が消える。各 step はレポートに「スコープ外の発見」を記録し、`final_gate` の後・`delivery` の**前**に置いた `spillover` が、**① 今回の変更と因果関係がない ② 放置すると実害がある ③ 根拠を示せる**の 3 条件で仕分けて起票する。**① を満たさない（因果がある）発見はスコープ内へ引き戻し、先送りしない。** 引き戻す先は計画（fix では診断）であって修正 step ではない — 因果のある問題には要件 ID が要り、採番は計画・診断の責務だからである。破棄した発見も理由とともに記録する。feature / fix の両方に置く
+11. **スコープ外の発見は、捨てずに issue へ逃がす。** 「因果関係のない変更を混ぜない」という禁止だけでは発見が消える。各 step はレポートに「スコープ外の発見」を記録し、`delivery` の**後**に置いた `spillover` が、**① 今回の変更と因果関係がない ② 放置すると実害がある ③ 根拠を示せる**の 3 条件で仕分けて起票する。**① を満たさない（因果がある）発見はスコープ内へ引き戻し、先送りしない。** 引き戻す先は計画（fix では診断）であって修正 step ではない — 因果のある問題には要件 ID が要り、採番は計画・診断の責務だからである。破棄した発見も理由とともに記録する。feature / fix の両方に置く。
 
-12. **レビュー ⇄ 修正のループは callable sub-workflow の内側に閉じる。** 実装レビュー（4 並列）と修正は `tayk-impl-review` に置き、`tayk-feature` / `tayk-fix` はこれを呼び出す。`final_gate` / `delivery` が `needs_fix` を返したときも、修正 step へ直接飛ばさず sub-workflow を呼び直す。**ループの外から修正 step へ飛び込む遷移を作らない。** これにより内側では `[impl_review, fix]` が必ず連続し、決定 6 の上限 3 が loop monitor だけで保証される。ループを内包したことで、レビュー契約が feature / fix で複製されていた状態も同時に解消する。同じ形で `spillover` も `tayk-spillover` として切り出す（こちらはループを持たないが、両 workflow で逐語重複していた）
+    起票結果は `spillover` 自身が `gh pr edit` で PR 本文へ追記する。`gh issue` の操作に失敗しても workflow は止めない（実装と PR は完了しており、発見は手動起票用のコマンドとともにレポートと PR 本文に残る）が、成功と同じ rule に畳まない — 畳むと実行ログ上で区別がつかなくなる。
+
+    **`delivery` の後に置くのは、決定 13 の帰結である。** 当初は前に置いていた（起票番号を PR 本文の初版へ載せるため）。しかしその配置では「起票結果を PR 本文へ転記する」担当が `tayk-delivery` の中の `pr_open` になり、`pr_open` は callable の内側にいるため親の `spillover.md` を読めない。転記そのものが成立しなかった。PR 作成後に `gh pr edit` で追記すれば、初版には載らないが人間がレビューする時点では載っている
+
+12. **レビュー ⇄ 修正のループは callable sub-workflow の内側に閉じる。** 実装レビュー（4 並列）と修正は `tayk-impl-review` に置き、`tayk-feature` / `tayk-fix` はこれを呼び出す。`final_gate` / `delivery` が `needs_fix` を返したときも、修正 step へ直接飛ばさず sub-workflow を呼び直す。**ループの外から修正 step へ飛び込む遷移を作らない。** これにより内側では `[impl_review, fix]` が必ず連続し、決定 6 の上限 3 が loop monitor だけで保証される。ループを内包したことで、レビュー契約が feature / fix で複製されていた状態も同時に解消する
+
+13. **callable sub-workflow は、親のレポートを読む step には使えない。** takt は callable の子に専用の report namespace（`reports/subworkflows/iteration-N--step-X--workflow-Y/`）を与える。子から親のレポートは見えず、親から子のレポートも見えない。レポート生成フェーズのプロンプトは「Report Directory 内のファイルのみ使用してください。他のレポートディレクトリは検索/参照しないでください」と明示的に禁じているため、パスを工夫して回避することもしない。
+
+    したがって **callable 化の可否は「複製が減るか」ではなく「その step がレポート境界をまたぐか」で決める。** 境界をまたぐ情報は、次のいずれかで渡す。
+
+    | 経路 | 使える場面 | 根拠 |
+    |------|-----------|------|
+    | 前段レスポンス | 親の step が、直前に呼んだ子の結果を読む | `workflow_call` の完了時、子の最終レスポンス本文が親の `lastOutput` になる |
+    | レポートへの転記 | 親の後段が、さらに前の子の結果を読む | 親のレポートは親の全 step から見える（`plan.md` の「ブリーフからの引き継ぎ」節） |
+    | ソースコード | 子が親の決定を読む | テストコードに埋め込んだ要件 ID。ファイルシステム上にあり境界の外 |
+
+    子の**最初の** step は親の前段レスポンスを受け取れない（子の state は `lastOutput: undefined` で初期化される）。`args` は facet 参照しか渡せず、実行時の値は運べない。この 2 点が、上表以外の経路を塞いでいる。
+
+    この決定により、`spillover` は callable 化しない（職務が「親の全レポートの走査」そのものであるため）。`tayk-intake` / `tayk-delivery` / `tayk-impl-review` は callable のままだが、境界をまたぐ参照は上表の経路へ寄せた
 
 ## Why
 
@@ -47,7 +65,7 @@ ADR-0001 の Consequences は takt 運用について 2 点を定めていた（
 - **再現テストの red は、fix にしか存在しないフィードバック経路である。** feature のテスト先行で red が出るのは当たり前で（実装がまだない）、red そのものは何も検証しない。fix の red は違う — 「診断した原因が本当にこの症状を生んでいる」ことの証拠になる。これを診断の検証装置として使わない手はない。ただし機能するには、診断が**反証可能**な形で書かれている必要がある。「たぶん null チェック漏れ」では red でも green でも解釈できてしまうため、診断に「入力 X なら症状 Y が出るはず」という予測を書かせ、再現テストがその予測を検証する構造にした
 - **禁止には受け皿が要る。** 「因果関係のない変更を混ぜない」（`existing-system-respect`）は正しいが、禁止だけを置くと、作業中に見つけた問題はそのまま消える。実行ログの中で埋もれるか、TODO コメントとしてコードに残るかのどちらかで、どちらも追跡できない。禁止（変更しない）と受け皿（issue にする）を対にして初めて、禁止が守れる。なお `tayk-traceability` は以前から「残す場合は issue 化して番号を記録する」と要求していた。`spillover` は新しい規律ではなく、**既に要求されていたのに実行者がいなかった**ものに執行者をつけたにすぎない
 - **`spillover` は issue #55 の「v0.1.0 に不要な拡張は着手しない」に反しないのか。** 反しない。この制約が禁じているのは **tayk というプロダクトの機能追加**であって、開発ワークフローの構成要素ではない。`spillover` は tayk のコードを 1 行も増やさず、v0.1.0 の成果物にも含まれない。むしろ制約と同じ向きに働く —— 「作業中に見つけた問題をその場で直す」という、スコープを最も膨らませる経路を塞ぎ、発見を issue（= 先送り）へ流すのが役割である。CLAUDE.md の「スコープを膨らませる提案は issue 化して先送りする」を、workflow の中で実行する担当者だと言ってもよい。ただし issue #55 が明示的に要求した機能ではないため、採用の根拠は本 ADR の決定 11 にある（ADR-0001 決定 7 の「黙って逸脱しない」に従い、ここに記録する）
-- **起票を `delivery` の前に置く理由。** 起票した issue 番号を PR 本文に載せるため。後に置くと「別途起票した」としか書けず、PR から発見への追跡が切れる。また、起票をその場（発見時）で行わないのは、作業の途中では「今回の変更と無関係」の判定がまだ確定しないため（実装を進めた結果、実は因果があったと分かることがある）と、重複起票の照合を 1 箇所に集約するためである
+- **起票を `delivery` の後に置く理由。** 追跡の要件は「PR 本文の初版に載ること」ではなく「PR から発見へ辿れること」である。`spillover` を前に置くと、転記の担当が callable の内側にいる `pr_open` になり、親のレポートを読めないため転記が成立しない（決定 13）。後に置けば `spillover` 自身が `gh pr edit` で追記でき、人間がレビューを始める時点では本文に載っている。なお、起票をその場（発見時）で行わないのは、作業の途中では「今回の変更と無関係」の判定がまだ確定しないため（実装を進めた結果、実は因果があったと分かることがある）と、重複起票の照合を 1 箇所に集約するためである
 
 ## Considered Options
 
@@ -59,7 +77,8 @@ ADR-0001 の Consequences は takt 運用について 2 点を定めていた（
 - **fix 用の intake instruction を param で差し替える**: `tayk-intake` は当初この差し替え口を持っていた（「fix 側は再現手順・回帰範囲を必須情報とする別 instruction を渡す想定」）。しかし実際に fix を作ると、差し替えた instruction には wayfinder map / ticket の判定手順（60 行超）が丸ごと複製されることが分かった。上の「1 本の巨大 workflow にまとめる」で自ら退けた「複製された定義は必ず片方だけ更新される」に、そのままぶつかる。着手可能性の判定（未決事項・矛盾・依存・情報不足）は feature / fix で変わらないため、**差し替え口ごと削除**し、fix 固有の入口検査（再現条件を確定できるか）は診断の一部として `diagnose` に持たせた
 - **診断者に専用 persona を新設する**: 診断**レビュアー**（`tayk-diagnosis-reviewer`）は新設したが、診断者は既存の `planner` を流用した。レビュアーは「独立した観点を持つ人格」であること自体が検出力に直結する（対立仮説を自分で立てる必要がある）のに対し、診断者に要るのは調査手順であり、それは instruction が与えられる。persona を増やすと provider routing の設定も増える。非対称に見えるが、増やす価値がある側にだけ増やした
 - **スコープ外の発見をその場で起票する**: 発見時に `gh issue create` する案。workflow が途中で ABORT しても発見が残るのが利点。ただし作業途中では「今回の変更と因果がない」の判定が確定せず、あとで因果ありと分かっても issue は残る。重複照合も step ごとに必要になる。記録（各レポート）と起票（`spillover`）を分離する形を採った
-- **スコープ外の発見の起票を `delivery` の `finalize` に畳む**: step を増やさずに済むが、`tayk-delivery` は feature / fix 共通の sub-workflow であり、PR の受け渡しという責務に発見の仕分けが混ざる。また `finalize` は CI とレビューが片付いたあとに走るため、起票した issue 番号を PR 本文の初版に載せられない。不採用
+- **スコープ外の発見の起票を `delivery` の `finalize` に畳む**: step を増やさずに済むが、`tayk-delivery` は feature / fix 共通の sub-workflow であり、PR の受け渡しという責務に発見の仕分けが混ざる。さらに決定 13 により、`finalize` は callable の内側にいるため親のレポートを走査できず、仕分けの入力そのものを得られない。不採用
+- **`spillover` を callable sub-workflow として切り出す**: 当初はこの形を採り、`tayk-spillover.yaml` として実装していた（決定 12 と同じ「複製の解消」を狙ったもの）。しかし決定 13 の境界により、子は親のレポートを読めない。`spillover` の職務は「Report Directory の全レポートを走査して発見を集める」ことそのものなので、切り出した時点で職務が成立しなくなる。feature / fix で 49 行の重複が戻るが、複製を避けて機能しないものを持つよりよい。撤回
 
 ## Consequences
 
@@ -75,6 +94,8 @@ ADR-0001 の Consequences は takt 運用について 2 点を定めていた（
 - **遷移グラフの性質は `bun scripts/verify-workflows.ts` で検査する。** `takt workflow doctor` は facet 参照と schema を見るが、到達性・ループ上限の実効性・sub-workflow の返り値の網羅は見ない。とりわけ決定 6 の「cycle の外から再入される step には自前上限が要る」は、目視では追い切れない（`plan` の再入経路は 8 本ある）。定義を変えたら doctor と併せて必ず走らせること。この検査は決定 12 の導入時に、`delivery` の差し戻しが `[impl_gate, final_gate]` を途切れさせる穴を実際に検出している
 - **完全な保証ではない。** 検査 C が見るのは「monitor が宣言した cycle が途切れうる往復」であり、複数の往復が交互に現れる経路までは追わない。混在して monitor がどれも連続一致しない場合は `max_steps` が最後の保険になる。これは決定 6 が「二重化」と呼んでいるものの 3 枚目である
 - **cycle が途切れる条件を「待機の挟み込み」と読んでいたのは誤りだった。** 当初この項は「待機の再試行（`ci_check` の `pending` / `review_triage` の `awaiting`）が挟まるとカウントが 1 に戻る」と書き、そこから「待機を挟まないループ（`impl_review ⇄ fix` / `design_review ⇄ design_fix`）は cycle が連続するため loop monitor だけで足りる」と結論していた。待機は cycle を途切れさせる原因の 1 つにすぎず、正しい条件は **cycle の外から再入されること**である。実際、`fix` は `final_gate` / `delivery` の `needs_fix` から、`design_fix` は `write_tests` から、`plan` は 8 方向から再入されており、いずれも約束した上限 3 が効いていなかった。決定 6 に判断基準を書き直し、決定 12 で `fix` の外部再入そのものを構造から取り除いた（`plan` / `design_fix` は構造では消せないため自前上限で塞いだ）
+- **決定 13 の代償は、`spillover` の定義が feature / fix で重複すること。** 「複製された定義は必ず片方だけ更新される」は本 ADR が Considered Options で自ら挙げた失敗様式であり、ここではそれを承知で複製を選んでいる。片方だけ更新される事故は `scripts/verify-workflows.ts` の検査 E（両 workflow の同名 step が同一定義であること）で機械的に止める
+- **レポート境界は静的に検査する。** 決定 13 の違反（callable の内側から親のレポートファイル名を参照する instruction）は、doctor でも遷移グラフ検査でも検出できず、**実走行して初めて「ファイルが無い」で気づく**。しかもレポート生成フェーズのプロンプトが探索を禁じているため、agent 側のリカバリも期待できない。`scripts/verify-workflows.ts` の検査 F がこれを見る
 - workflow が長くなるぶん 1 issue あたりのトークン消費は default より増える。`.takt/config.yaml` の observability で計測しており、費用が見合わないと判明した場合は step を削る方向で調整する
 
 ## Related
@@ -82,5 +103,5 @@ ADR-0001 の Consequences は takt 運用について 2 点を定めていた（
 - ADR-0001（薄いアーキテクチャ規約。本 ADR が Consequences の takt 運用項を上書きする）/ ADR-0005（wayfinder map 起点で決定された先例）
 - issue #55「feat: tayk 専用の takt feature / fix workflow を確立する」
 - `docs/agents/issue-tracker.md`（issue 運用と wayfinding operations）
-- `.takt/workflows/tayk-feature.yaml` / `tayk-fix.yaml`（本体）と `tayk-intake.yaml` / `tayk-impl-review.yaml` / `tayk-spillover.yaml` / `tayk-delivery.yaml`（callable sub-workflow）
+- `.takt/workflows/tayk-feature.yaml` / `tayk-fix.yaml`（本体）と `tayk-intake.yaml` / `tayk-impl-review.yaml` / `tayk-delivery.yaml`（callable sub-workflow）
 - 旧リポ ADR-0021（「予防的に導入しない」の出典。決定 6 で覆した）

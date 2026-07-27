@@ -14,11 +14,14 @@
    - **存在しない**: `gh pr create` で作成する
 5. PR 本文には以下を必ず含める:
    - `Closes #<N>`（linked issue。wayfinder ticket 起点なら ticket 番号、map 起点なら map 番号）
-   - 要件 ID ごとの充足状況（実装計画または診断の要件一覧を転記し、対応する差分の場所を示す）
+   - 要件 ID ごとの充足状況 — 要件 ID は**テストコードに埋め込まれている**。`rg 'REQ-\d+-\d+' -n` で一覧を取り、各 ID について「それを検証しているテスト」と「対応する差分の場所」を示す
    - テスト実行結果（実際に走らせたコマンドと結果）
-   - ADR 整合性の結論（逸脱があれば ADR 改訂の有無）
-   - **切り出した issue** — Report Directory に `spillover.md` があれば Read で開き、起票した issue 番号と「今回のスコープ外とした理由」を転記する。既存 issue へ追記したものも含める。起票が失敗していれば、その事実と手動起票用のコマンドを載せる
+   - ADR 整合性の結論（差分が ADR の決定に触れるか。逸脱があれば ADR 改訂の有無）
 6. PR 番号と URL を報告する
+
+**`plan.md` / `diagnosis.md` をファイルとして探さないでください。** この step は callable sub-workflow（`tayk-delivery`）の中で動くため、親の Report Directory は見えません。要件の担体はテストコードです（ADR-0006 決定 13）。
+
+スコープ外発見の起票結果は、この step の後に走る `spillover` が PR 本文へ追記します。ここでは扱いません。
 
 ## 制約
 

@@ -5,10 +5,15 @@
  * `takt workflow doctor` は facet 参照や schema の妥当性を見るが、遷移グラフの性質
  * （到達性・ループ上限の実効性・sub-workflow の返り値の網羅）は見ない。ここはその差分を埋める。
  *
- * 中心にあるのは検査 C である。takt の cycle 判定は「履歴末尾でパターンが *連続して*
- * threshold 回反復する」厳密一致なので、cycle の外から再入される step があると
- * カウントが 1 に戻り、loop monitor の上限が永久に発火しない。ADR-0006 決定 6 は
- * この場合に `{step_iteration}` による自前のラウンド上限を要求している。
+ * 中心にあるのは検査 C と F である。
+ *
+ * C: takt の cycle 判定は「履歴末尾でパターンが *連続して* threshold 回反復する」厳密一致
+ *    なので、cycle の外から再入される step があるとカウントが 1 に戻り、loop monitor の
+ *    上限が永久に発火しない。ADR-0006 決定 6 はこの場合に `{step_iteration}` による
+ *    自前のラウンド上限を要求している。
+ * F: callable sub-workflow の子は専用の report namespace を持ち、親のレポートが見えない。
+ *    レポート生成フェーズのプロンプトが探索まで禁じているため、実走行して「ファイルが無い」
+ *    で初めて気づくうえ、agent 側のリカバリも効かない（ADR-0006 決定 13）。
  *
  * 使い方: bun scripts/verify-workflows.ts
  */
@@ -17,6 +22,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const WORKFLOW_DIR = '.takt/workflows';
+const INSTRUCTION_DIR = '.takt/facets/instructions';
 /** takt が遷移先として解釈する予約語。実在 step を指さなくてよい */
 const RESERVED_TARGETS = new Set(['COMPLETE', 'ABORT']);
 /** ラウンド上限の rule を見分ける表記。ADR-0006 決定 6 の二重化はこの形で書く */
@@ -29,12 +35,22 @@ type Rule = {
   return?: string;
 };
 
+type OutputContracts = {
+  report?: { name: string; format?: string }[];
+};
+
 type Step = {
   name: string;
   kind?: string;
   call?: string;
   mode?: string;
-  parallel?: { name: string; rules?: Rule[] }[];
+  instruction?: string;
+  args?: Record<string, unknown>;
+  policy?: string | string[];
+  knowledge?: string | string[];
+  quality_gates?: string[];
+  output_contracts?: OutputContracts;
+  parallel?: Step[];
   rules?: Rule[];
 };
 
@@ -68,6 +84,27 @@ function outgoingTargets(step: Step): string[] {
   return (step.rules ?? [])
     .map((rule) => rule.next)
     .filter((next): next is string => next !== undefined && !RESERVED_TARGETS.has(next));
+}
+
+/** step とその parallel 子 step を平坦に並べる */
+function flattenSteps(steps: Step[]): Step[] {
+  return steps.flatMap((step) => [step, ...(step.parallel ?? [])]);
+}
+
+/** その step が出力するレポートのファイル名 */
+function reportNames(step: Step): string[] {
+  return (step.output_contracts?.report ?? []).map((entry) => entry.name);
+}
+
+/**
+ * args で子 workflow へ渡す instruction facet 名。
+ * これらは子の中で実行されるため、親のレポートは見えない（ADR-0006 決定 13）
+ */
+function delegatedInstructions(step: Step): string[] {
+  return Object.entries(step.args ?? {})
+    .filter(([key]) => key.endsWith('instruction'))
+    .flatMap(([, value]) => (Array.isArray(value) ? value : [value]))
+    .filter((value): value is string => typeof value === 'string');
 }
 
 /** その step が自前のラウンド上限を持つか（ADR-0006 決定 6 の二重化） */
@@ -266,6 +303,113 @@ for (const [name, workflow] of workflows) {
   }
 }
 
+// ── E. 複製された step が食い違っていないか ──────────────────────
+//
+// 決定 13 により spillover は callable 化できず feature / fix に複製される。ADR が
+// Considered Options で自ら挙げた「複製された定義は必ず片方だけ更新される」を機械的に止める。
+// rules は戻り先が workflow ごとに異なる（plan / diagnose）ため比較から除く。
+const occurrences = new Map<string, { workflow: string; step: Step }[]>();
+for (const [name, workflow] of workflows) {
+  for (const step of workflow.steps ?? []) {
+    if (step.kind === 'workflow_call' || step.mode === 'system') continue;
+    occurrences.set(step.name, [...(occurrences.get(step.name) ?? []), { workflow: name, step }]);
+  }
+}
+
+/** rules を除いた step 定義の指紋。複製どうしはこれが一致していなければならない */
+function stepFingerprint(step: Step): string {
+  return JSON.stringify({
+    instruction: step.instruction,
+    policy: step.policy,
+    knowledge: step.knowledge,
+    quality_gates: step.quality_gates,
+    output_contracts: step.output_contracts,
+  });
+}
+
+for (const [stepName, entries] of occurrences) {
+  if (entries.length < 2) continue;
+  const [first, ...rest] = entries;
+  for (const other of rest) {
+    if (stepFingerprint(first.step) === stepFingerprint(other.step)) {
+      note(other.workflow, 'E/複製の一致', `step "${stepName}" は ${first.workflow} と一致（rules 以外）`);
+      continue;
+    }
+    fail(
+      other.workflow,
+      'E/複製の一致',
+      `step "${stepName}" の定義が ${first.workflow} と食い違う（rules 以外）。` +
+        `複製を許した step は両方を同時に更新すること（ADR-0006 決定 13）`,
+    );
+  }
+}
+
+// ── F. レポート境界をまたぐ参照がないか ──────────────────────────
+//
+// callable sub-workflow の子は専用の report namespace を持ち、親のレポートは見えない。
+// レポート生成フェーズのプロンプトが「Report Directory 内のファイルのみ使用してください。
+// 他のレポートディレクトリは検索/参照しないでください」と探索まで禁じているため、
+// 実走行して「ファイルが無い」で初めて気づくうえ、agent 側のリカバリも効かない。
+//
+// instruction が「その workflow が生成しないレポート」をファイル名で参照していたら止める。
+// 境界そのものを説明している行（「探さないでください」等）は対象外。
+const BOUNDARY_NOTE = /探さないで|見えません|参照しない|存在しません|読めない/;
+
+const reportOwners = new Map<string, Set<string>>();
+for (const [name, workflow] of workflows) {
+  for (const step of flattenSteps(workflow.steps ?? [])) {
+    for (const reportName of reportNames(step)) {
+      reportOwners.set(reportName, (reportOwners.get(reportName) ?? new Set<string>()).add(name));
+    }
+  }
+}
+
+// instruction facet ごとに「それを実行する workflow」を集める。
+// feature / fix で共有している facet は、呼び出し元によって対象レポートが変わる
+// （`tayk-review-test-design` が plan.md と diagnosis.md の両方に言及する等）ため、
+// 判定は step 単位ではなく facet 単位で行う —— 実行しうる workflow のどれか 1 つでも
+// そのレポートを生成するなら、その言及は条件分岐であって境界越えではない。
+const facetReaders = new Map<string, Set<string>>();
+for (const [name, workflow] of workflows) {
+  for (const step of flattenSteps(workflow.steps ?? [])) {
+    if (step.instruction) {
+      facetReaders.set(step.instruction, (facetReaders.get(step.instruction) ?? new Set()).add(name));
+    }
+    // args で渡した instruction は子の中で動くので、reader は親ではなく子
+    for (const facet of delegatedInstructions(step)) {
+      const child = step.call ?? '(child)';
+      facetReaders.set(facet, (facetReaders.get(facet) ?? new Set()).add(child));
+    }
+  }
+}
+
+for (const [facet, readers] of facetReaders) {
+  const owner = [...readers].sort().join(' / ');
+  let body: string;
+  try {
+    body = readFileSync(join(INSTRUCTION_DIR, `${facet}.md`), 'utf8');
+  } catch {
+    note(owner, 'F/レポート境界', `instruction "${facet}" は builtin（検査対象外）`);
+    continue;
+  }
+  const flagged = new Set<string>();
+  for (const line of body.split('\n')) {
+    if (BOUNDARY_NOTE.test(line)) continue;
+    for (const [reportName, owners] of reportOwners) {
+      if (!line.includes(reportName) || flagged.has(reportName)) continue;
+      if ([...readers].some((reader) => owners.has(reader))) continue;
+      flagged.add(reportName);
+      fail(
+        owner,
+        'F/レポート境界',
+        `instruction "${facet}" が "${reportName}" を参照しているが、` +
+          `これを生成するのは ${[...owners].sort().join(' / ')} で、${owner} からは読めない` +
+          `（ADR-0006 決定 13）`,
+      );
+    }
+  }
+}
+
 const checked = [...workflows.keys()].sort().join(', ');
 console.log(`検査対象: ${files.length} workflow (${checked})\n`);
 
@@ -278,4 +422,7 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log('検査 A（遷移先の実在）/ B（到達性）/ C（ループの上限）/ D（返り値の整合）: すべて pass');
+console.log(
+  '検査 A（遷移先の実在）/ B（到達性）/ C（ループの上限）/ D（返り値の整合）/ ' +
+    'E（複製の一致）/ F（レポート境界）: すべて pass',
+);

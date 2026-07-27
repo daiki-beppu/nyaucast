@@ -70,13 +70,12 @@ loop_monitors:
           next: diagnose
         - condition: 修正・再診断・異議申告のいずれでも打開できない
           next: ABORT
-  # ④ delivery を含む大回り。delivery が needs_fix を返すと spillover / delivery を挟んで
-  #    実装ゲートへ戻るため、③ は連続一致が崩れて発火しない。この大回り自体を別 cycle で見る。
+  # ④ delivery を含む大回り。delivery が needs_fix を返すと実装ゲートへ戻るため、
+  #    ③ は連続一致が崩れて発火しない。この大回り自体を別 cycle で見る。
   #    末尾 step が delivery なので ③ とは干渉しない
   - cycle:
       - impl_gate
       - final_gate
-      - spillover
       - delivery
     threshold: 3
     judge:
@@ -336,10 +335,9 @@ steps:
         appendix: |
           各ラウンドで書いたテストと失敗の内容:
           - {何を書き、どうなったか}
-      - condition: 再現テストが red であり、既存挙動の回帰テストが green である
-        next: repair
-      # 症状を再現しないテストを抱えたまま修正へ進む出口は置かない。
-      # red にならない再現テストは、修正が効いたかどうかを判定できない
+      # 差し戻し条件を先に置く。「red かつ回帰 green」は予測が外れている場合も満たすため、
+      # 成功条件を先頭に置くと予測不一致がそこへ吸われ、診断の検証機構が働かなくなる
+      # （spillover の rule 順と同じ理由）
       - condition: 再現テストが green である（症状を再現できない）
         next: diagnose
       - condition: 再現テストは red だが、失敗の内容が診断の予測と違う
@@ -348,6 +346,11 @@ steps:
         next: diagnose
       - condition: 再現に環境依存があり決定的なテストにできない
         next: diagnose_fix
+      # 症状を再現しないテストを抱えたまま修正へ進む出口は置かない。
+      # red にならない再現テストは、修正が効いたかどうかを判定できない。
+      # 予測一致を条件に明記する（quality_gates だけに置くと遷移は素通りする）
+      - condition: 再現テストが red で失敗の内容が診断の予測と一致し、既存挙動の回帰テストが green である
+        next: repair
     output_contracts:
       report:
         - name: test-report.md
@@ -419,7 +422,7 @@ steps:
         - tayk-adr
     rules:
       - condition: COMPLETE
-        next: spillover
+        next: delivery
       # fix へ直接戻さず実装ゲートを回り直す。そうしないと sub-workflow の内側にある
       # [impl_review, fix] の cycle が外から破られ、上限 3 が失われる（ADR-0006 決定 12）
       - condition: needs_fix
@@ -429,31 +432,65 @@ steps:
       - condition: ABORT
         next: ABORT
 
-  # ── Phase 5: スコープ外発見の起票 ─────────────────────────────────
-  # feature と共通の callable sub-workflow。「ついで直しをしない」という禁止の受け皿。
-  # delivery の *前* に置くのは、起票した issue 番号を PR 本文へ載せるため（ADR-0006 決定 11）
-  - name: spillover
-    kind: workflow_call
-    call: tayk-spillover
-    rules:
-      - condition: COMPLETE
-        next: delivery
-      # 因果のある発見は、要件 ID の採番からやり直す必要があるため診断へ戻す
-      - condition: needs_replan
-        next: diagnose
-      - condition: ABORT
-        next: ABORT
-
-  # ── Phase 6: delivery ─────────────────────────────────────────────
+  # ── Phase 5: delivery ─────────────────────────────────────────────
   # feature と共通。PR 作成 → CI 監視 → レビュー指摘解消まで
   - name: delivery
     kind: workflow_call
     call: tayk-delivery
     rules:
       - condition: COMPLETE
-        next: COMPLETE
+        next: spillover
       # final_gate と同じ理由で、fix ではなく実装ゲートを回り直す（ADR-0006 決定 12）
       - condition: needs_fix
         next: impl_gate
       - condition: ABORT
         next: ABORT
+
+  # ── Phase 6: スコープ外発見の起票 ─────────────────────────────────
+  # 「ついで直しをしない」という禁止の受け皿。ここを通さないと発見は実行ログとともに埋もれる。
+  #
+  # callable sub-workflow にしない。この step の職務は「Report Directory の全レポートを
+  # 走査する」ことだが、callable の子は自分専用の report namespace を持ち、親のレポートが
+  # 見えない（ADR-0006 決定 13）。feature / fix で定義が重複するが、複製を避けて職務が
+  # 成立しなくなるより重複を選ぶ。
+  #
+  # delivery の *後* に置く。PR 本文の初版へ載せるなら前に置きたいが、前に置くと
+  # 「起票結果を PR 本文へ転記する」担当が child である pr_open になり、親のレポートを
+  # 読めないため転記そのものが成立しない。PR ができてから gh pr edit で追記する
+  # （ADR-0006 決定 11）
+  - name: spillover
+    description: 各レポートのスコープ外の発見を集め、起票する / 捨てるに仕分ける
+    tags:
+      - delivery
+    edit: false
+    persona: tayk-delivery-operator
+    policy:
+      - tayk-scope-spillover
+    knowledge:
+      - tayk-domain
+    # gh issue create / comment を使うため Bash が要る。ソースは触らないので edit: false
+    provider_options:
+      extends: review-readonly
+    session: refresh
+    instruction: tayk-spillover
+    quality_gates:
+      - Report Directory の全レポートを読み、発見がなかったものも収集元に記録していること
+      - 起票したものが 3 条件（因果なし / 実害あり / 根拠あり）をすべて満たしていること
+      - 起票前に gh issue list で重複を照合していること
+      - 破棄した発見について、満たさなかった条件と理由を記録していること
+      - 起票した issue 番号・既存へ追記した番号を gh pr edit で PR 本文へ転記していること
+      - gh issue の操作に失敗したなら、起票できなかった発見と手動起票用のコマンドを
+        レポートと PR 本文の両方に残していること
+      - コードを変更していないこと
+    rules:
+      # 仕分け自体は完了しているため、この rule を先に置かないと下の「仕分けが終わった」に
+      # 吸われて素通りする。因果のある発見は要件 ID の採番からやり直すため診断へ戻す
+      - condition: 因果ありと判定した発見があり、今回の差分に含めるべきものが残っている
+        next: diagnose
+      # gh 失敗を「仕分けが終わった」と同じ rule に畳まない。畳むと実行ログ上で成功と
+      # 区別できなくなる。起票できなかった発見と手動起票コマンドは PR 本文へ書き込むため、
+      # 実装と PR が完了している以上ここでは止めない（ADR-0006 決定 11）
+      - condition: gh issue の操作に失敗し、起票できなかった発見が残っている
+        next: COMPLETE
+      - condition: 仕分けが終わり、起票・追記・破棄をすべて記録し PR 本文へ転記した（発見ゼロの場合を含む）
+        next: COMPLETE

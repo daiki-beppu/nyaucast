@@ -6,7 +6,9 @@
 
 ### 1. 症状を観測事実として並べる
 
-Report Directory の実装ブリーフ（`intake-brief.md`）と issue 本文から、**報告された症状をすべて**列挙する。解釈を混ぜず、観測されたことだけを書く。
+**この指示に添えられた直前の出力**（intake が作った実装ブリーフ）と issue 本文から、**報告された症状をすべて**列挙する。解釈を混ぜず、観測されたことだけを書く。
+
+**`intake-brief.md` をファイルとして探さないでください。** intake は callable sub-workflow であり、そのレポートは子の report namespace に置かれるため、この step の Report Directory には存在しません（ADR-0006 決定 13）。
 
 このとき、以下が揃っているかを確認する:
 
