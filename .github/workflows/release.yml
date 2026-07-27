@@ -3,6 +3,7 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 jobs:
   ci:
@@ -22,14 +23,20 @@ jobs:
         uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
       - name: Install dependencies with frozen-lockfile
         run: nix develop --command bun install --frozen-lockfile
-      - name: Publish package with provenance
+      - name: Publish package
+        env:
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
           nix develop --command bash -euc '
+            if [ "$DRY_RUN" = "true" ]; then
+              npm publish --dry-run
+              exit 0
+            fi
             package_version=$(bun --print "require(\"./package.json\").version")
             tag_version="${GITHUB_REF_NAME#v}"
             if [ "$tag_version" != "$package_version" ]; then
               echo "tag version $tag_version does not match package version $package_version" >&2
               exit 1
             fi
-            npm publish --provenance
+            npm publish
           '

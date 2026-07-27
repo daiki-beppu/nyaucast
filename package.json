@@ -1,5 +1,5 @@
 {
-  "name": "tayk",
+  "name": "@daiki-beppu/tayk",
   "version": "0.0.0",
   "description": "YouTube channel operations toolkit",
   "bin": {
@@ -10,6 +10,9 @@
     "src"
   ],
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "prepare": "if [ -e .git ]; then lefthook install; fi",
     "check": "bun run typecheck && bun run lint && bun run format:check && bun run test && bun run verify-workflows && bun run fallow",
