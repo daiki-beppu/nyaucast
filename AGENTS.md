@@ -40,7 +40,6 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 - 要件は `REQ-<issue番号>-<2桁連番>` で採番し、計画（fix では診断）→ テスト設計 → 実装 → レビュー → PR まで引き継ぐ。**issue 番号を確定できない実行は intake が拒否する**（トレーサビリティが最初の一歩で切れるため）
 - worktree 必須・main 直コミット禁止（グローバル AGENTS.md の規約に従う）
 - commit 規約: 日本語 Conventional Commits + タイトル末尾に `(#<N>)`
-- パッケージ操作は ni / nr / nlx 経由（グローバル規約）
 
 ## v0.1.0 のゲート
 

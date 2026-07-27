@@ -18,7 +18,7 @@
 - **エラーは内部 throw、境界で変換**。`Result` 型 / `createService` フレームを導入しない
 - tayk が読み書きするファイルはすべて JSON（YAML 禁止）
 - v0.1.0 のゲート（collection フルライフサイクル 1 周の dogfood 完走）に不要な拡張を方針へ入れない。必要性を感じたら issue 化を提案する
-- パッケージ操作は ni / nr / nlx 経由で記述する（`npm install` と書かない）
+- パッケージ操作は bun で記述する（`bun install` / `bun add`。`npm install` と書かない）
 
 ## 判定
 
