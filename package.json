@@ -1,6 +1,6 @@
 {
   "name": "@daiki-beppu/tayk",
-  "version": "0.0.0",
+  "version": "0.0.2",
   "description": "YouTube channel operations toolkit",
   "bin": {
     "tayk": "bin/tayk.js"
