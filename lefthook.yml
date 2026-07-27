@@ -1,0 +1,10 @@
+pre-commit:
+  commands:
+    format-fix:
+      glob: "*.{js,jsx,ts,tsx,json,jsonc,md,yml,yaml}"
+      run: bun run format:fix -- {staged_files}
+      stage_fixed: true
+    lint-fix:
+      glob: "*.{js,jsx,ts,tsx}"
+      run: bun run lint:fix -- {staged_files}
+      stage_fixed: true
