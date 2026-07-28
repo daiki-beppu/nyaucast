@@ -189,5 +189,5 @@ steps:
   - name: bail_replan
     mode: system
     rules:
-      - when: "true"
+      - condition: when(true)
         return: needs_replan

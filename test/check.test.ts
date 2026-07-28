@@ -16,7 +16,6 @@ const gateScriptNames = [
   "lint",
   "format:check",
   "test",
-  "verify-workflows",
   "fallow",
 ] as const;
 
@@ -45,7 +44,6 @@ const enumeratedGateCommands = [
   /bun run typecheck/,
   /bun run lint(?![\w:-])/,
   /bun run format:check/,
-  /bun run verify-workflows/,
   /bun run fallow/,
 ] as const;
 
@@ -190,7 +188,6 @@ describe("check command", () => {
     for (const command of enumeratedGateCommands) {
       expect(workflow).not.toMatch(command);
     }
-    expect(workflow).not.toContain("scripts/verify-workflows.ts");
   });
 
   // REQ-82-03
@@ -210,7 +207,6 @@ describe("check command", () => {
       for (const command of enumeratedGateCommands) {
         expect(facet).not.toMatch(command);
       }
-      expect(facet).not.toContain("bun scripts/verify-workflows.ts");
     }
   });
 

@@ -22,13 +22,13 @@ tayk の runtime とパッケージマネージャは **Bun 固定**（ADR-0003 
 bun run check
 ```
 
-**ゲートが何本あり何を実行するかは `package.json` の `check` script だけが定義する。** CI（`.github/workflows/ci.yml`）も pre-push フックもこれを呼ぶだけなので、ここで通れば CI でも通る。最初に失敗したゲートで止まり、非 0 で終了する。
+**ゲートが何本あり何を実行するかは `package.json` の `check` script だけが定義する。** CI（`.github/workflows/ci.yml`）も pre-push フックもゲートを列挙せずこの script を呼ぶので、ここで通れば CI でも通る。最初に失敗したゲートで止まり、非 0 で終了する。
 
 個々のゲートを名指しで実行してよいのは、失敗を絞り込む反復の途中だけである（例: 実装中に `bun test` を繰り返す）。**push 前・報告前には必ず `bun run check` を通すこと。** 1 つのゲートを直して別のゲートを割る修正を、push してから CI に見つけさせない。
 
 **例外は、実装前に red を観測する step（`write_tests` / `reproduce`）である。** あそこでの `bun test` はゲートの再現ではなく、テストが要件を検証していることの証拠（ADR-0008 決定 5 / 9 / 10）を得る手順そのものだ。実装がまだ無い時点で `check` が通ることは設計上ありえないため、**red を「壊れている」と読み替えて直しにいってはならない**。`check` を通す責任は、実装を持つ後段の step（`implement` / `repair`）にある。
 
-`check` には workflow 定義の検査が含まれる（`bun test` は `*.test.ts` しか拾わないため独立したゲートになっている）。`.takt/workflows/` または `.takt/facets/` を変更したなら、`bun run check` と `takt workflow doctor` の両方を通す。
+workflow 定義の検査は `check` に**含まれない** — `takt workflow doctor` の 1 本である（pre-push で自動実行されるが、takt が CI 環境に無いため CI では走らない。ADR-0008）。`.takt/workflows/` または `.takt/facets/` を変更したなら、`bun run check` に加えて `takt workflow doctor` も通す。
 
 ## 禁止
 

@@ -22,7 +22,6 @@
     "*.config.ts",
     "bin/**/*.js",
     "bin/**/*.ts",
-    "scripts/**/*.ts",
     "src/**/*.ts",
     "test/**/*.ts"
   ],

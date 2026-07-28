@@ -11,7 +11,7 @@ YouTube チャンネル運営を自動化するツールキット。skill に蓄
 - bun / node は Nix flake devShell が供給する。**direnv を通していないシェルには bun が存在しない**（グローバルには入っていない）
 - worktree を作ったら毎回 `direnv allow` — devShell 入場時に `bun install --frozen-lockfile` が走る（`node_modules` は worktree ごとに要る）。**lockfile が `package.json` と乖離していると install は失敗するが devShell には入れてしまう** — 警告だけ出て `node_modules` が無い状態になるので、`bun install` で lockfile を更新する
 - パッケージ操作・スクリプト実行は bun のみ。npm / pnpm / yarn とそのラッパを使わない
-- **検査ゲートは `bun run check` の 1 コマンド**（最初に失敗したゲートで止まる）。CI・pre-push フックも同じ script を呼ぶため、ここで通れば CI でも通る。ゲートが何本あり何を実行するかは `package.json` の `check` script だけが定義する — **このファイルを含め、どこにも書き写さない**
+- **検査ゲートは `bun run check` の 1 コマンド**（最初に失敗したゲートで止まる）。CI・pre-push フックも同じ script を呼ぶため、ここで通れば CI でも通る。ただし workflow 定義の検査だけは check の外にある（開発フロー節の doctor）。ゲートが何本あり何を実行するかは `package.json` の `check` script だけが定義する — **このファイルを含め、どこにも書き写さない**
 
 ## アーキテクチャ（ADR-0001）
 
@@ -32,7 +32,9 @@ YouTube チャンネル運営を自動化するツールキット。skill に蓄
 
 - **worktree 必須・main 直コミット禁止**
 - 開発は takt メイン: `takt -w tayk-feature "#<issue番号>"` / `takt -w tayk-fix "#<issue番号>"`。設計ゲート・診断ゲート・レビューループ・要件 ID の採番は workflow 側が持つ（`docs/agents/issue-tracker.md` / ADR-0008）
-- `.takt/` の定義を変えたら `takt workflow doctor` と `bun run check` の**両方**を通す。前者は facet 参照と schema、後者に含まれる verify-workflows ゲートは遷移グラフとレポート境界を見ており、検査範囲が重ならない
+- workflow の検査は `takt workflow doctor` の 1 本（`bun run check` は workflow を見ない）。pre-push で自動実行されるが、**CI では走らない** — takt は dotfiles の profile 由来で CI 環境に無いため。`.takt/` は出荷物ではないので、これで許容している
+- **rule の決定的な分岐は `condition: when(<式>)` と書く。** 決定的か LLM 判定かはキーではなく `condition` の**値の構文**で決まるため、`when()` を外すと `structured.*` の分岐が黙って自然言語判定に化ける。`when:` という別キーは takt が受け付けない
+- **doctor が見ないもの**は目視で保つ — ループ上限の実効性（cycle の外から再入されると loop monitor が発火しない）・複製 step の一致（`spillover`）・レポート境界（callable の子は親のレポートを読めない）。以前は自前ゲートが見ていたが ADR-0008 改訂で削除した。遷移を足すときは同 ADR の Consequences を読むこと
 - スコープ外で見つけた問題は、直さず捨てず issue にする
 - commit: 日本語 Conventional Commits + タイトル末尾に `(#<issue番号>)`
 
