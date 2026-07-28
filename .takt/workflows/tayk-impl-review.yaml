@@ -138,7 +138,9 @@ steps:
             - name: adr-conformance-impl.md
               format: tayk-adr-conformance-review
     rules:
-      - condition: all("approved", "AI特有の問題なし", "APPROVE")
+      # all() の複数引数は並列 sub-step と位置対応で照合され、個数が一致しないと
+      # ルールごとスキップされる（= COMPLETE 不能）。sub-step の宣言順に 4 個並べる
+      - condition: all("approved", "AI特有の問題なし", "approved", "APPROVE")
         next: COMPLETE
       - condition: any("needs_fix", "AI特有の問題あり", "REJECT", "NEEDS_ADR_REVISION")
         next: fix
