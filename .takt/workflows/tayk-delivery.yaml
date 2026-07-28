@@ -129,7 +129,7 @@ steps:
     mode: system
     delay_before_ms: 90000
     rules:
-      - when: "true"
+      - condition: when(true)
         next: ci_check
 
   - name: ci_check
@@ -147,15 +147,15 @@ steps:
     structured_output:
       schema_ref: tayk-ci-status
     rules:
-      - when: structured.ci_check.status == "pending"
+      - condition: when(structured.ci_check.status == "pending")
         next: ci_wait
-      - when: structured.ci_check.status == "success"
+      - condition: when(structured.ci_check.status == "success")
         next: review_wait
-      - when: structured.ci_check.status == "failure"
+      - condition: when(structured.ci_check.status == "failure")
         next: ci_fix
-      - when: structured.ci_check.status == "unavailable"
+      - condition: when(structured.ci_check.status == "unavailable")
         next: review_wait
-      - when: "true"
+      - condition: when(true)
         next: ABORT
 
   - name: ci_fix
@@ -207,7 +207,7 @@ steps:
     mode: system
     delay_before_ms: 60000
     rules:
-      - when: "true"
+      - condition: when(true)
         next: review_triage
 
   - name: review_triage
@@ -225,13 +225,13 @@ steps:
     structured_output:
       schema_ref: tayk-review-triage
     rules:
-      - when: structured.review_triage.status == "actionable"
+      - condition: when(structured.review_triage.status == "actionable")
         next: review_fix
-      - when: structured.review_triage.status == "awaiting"
+      - condition: when(structured.review_triage.status == "awaiting")
         next: review_wait
-      - when: structured.review_triage.status == "clean"
+      - condition: when(structured.review_triage.status == "clean")
         next: finalize
-      - when: "true"
+      - condition: when(true)
         next: ABORT
 
   - name: review_fix
