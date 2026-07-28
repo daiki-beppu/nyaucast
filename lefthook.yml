@@ -1,4 +1,4 @@
-# 2 段構え: pre-commit は整形だけ、検査は pre-push の check が全部見る。
+# 2 段構え: pre-commit は整形だけ、検査は pre-push が見る（check + workflow-doctor）。
 #
 # 整形はリポジトリ全体を対象にする（script 側が `.` を持つ）。glob は「その種類の
 # ファイルが staged のときだけ走らせる」トリガとしてのみ使い、対象範囲は絞らない。
@@ -14,15 +14,12 @@ pre-commit:
       run: bun run format:fix
       stage_fixed: true
 
-# push 前に CI と同一のゲートを通す。ゲート集合は package.json の check script が持つ。
+# push 前に CI のゲート（check）とローカル専用の workflow-doctor を通す。
+# ゲート集合は package.json の check script が持つ。
 #
-# workflow-doctor だけは check の外にある。takt は dotfiles の profile が供給しており
-# CI 環境に存在しないため、check に入れると CI が常時赤になる（ADR-0008: flake への
-# pin は採らない）。ローカル専用のゲートとしてここに置く。
-#
-# glob は付けない。`.takt/**` を変えたときだけ回すと、今回のような **takt 側の
-# バージョンが上がって既存の定義が読めなくなる** 事故を取りこぼす（定義は無変更で
-# 壊れる）。doctor は 1.6 秒なので毎 push で回してよい。
+# workflow-doctor が check の外にある理由（takt は CI 環境に無い / flake に pin しない）と
+# glob を付けない理由（定義が無変更でも takt 側の更新で壊れる）は ADR-0008 を参照。
+# doctor は毎 push で回せるほど速い。
 pre-push:
   commands:
     check:
