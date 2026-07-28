@@ -4,13 +4,18 @@
 
 - issue が紐づいているか: {context:read_issue.issue.exists}
 
+> **環境の前提**: takt の実行クローンには git remote が無い（takt が隔離のため `origin` を除去する）。
+> `gh` はカレントリポジトリを推定できないため、**すべての `gh` コマンドに `-R daiki-beppu/tayk` を付ける**。
+> `gh api` はプレースホルダ `{owner}/{repo}` を解決できないため、`repos/daiki-beppu/tayk/...` と書く。
+> `git fetch` / `git pull` は行わない（参照系の照会は gh で足りる）。remote が無いこと自体は正常であり、blocked の理由にしない。
+
 ## 手順
 
 ### 1. 起点の特定
 
 issue が紐づいている場合、直前の system step の出力に issue 番号がある。番号を確認したうえで
-`gh issue view <N> --json number,title,body,labels,assignees,comments,state` で本文・ラベル・コメントを取得する。
-番号が出力から読み取れないときは `gh issue list --state open --search "<task の要約>"` で該当 issue を探す。
+`gh issue view <N> -R daiki-beppu/tayk --json number,title,body,labels,assignees,comments,state` で本文・ラベル・コメントを取得する。
+番号が出力から読み取れないときは `gh issue list -R daiki-beppu/tayk --state open --search "<task の要約>"` で該当 issue を探す。
 
 **issue 番号を確定できない実行は `blocked` とする。** `exists` が false の場合も、検索で特定できなかった場合も同じ扱いである。
 issue なしで進めると要件 ID が linked issue に紐づかず、PR に `Closes #N` を書けない。intake → 計画 → テスト設計 →
@@ -34,21 +39,21 @@ map は「決定が出揃うまで実装しない」前提の上に立つ地図�
 
 1. map 本文の `## Destination` / `## Notes` / `## Decisions so far` / `## Not yet specified` / `## Out of scope` を読む
 2. map の子 issue（sub-issue）を列挙する:
-   `gh api repos/{owner}/{repo}/issues/<map>/sub_issues --jq '.[] | {number, title, state}'`
+   `gh api repos/daiki-beppu/tayk/issues/<map>/sub_issues --jq '.[] | {number, title, state}'`
    sub-issue が使えないリポでは、map 本文の task list と、子 issue 本文冒頭の `Part of #<map>` 行から辿る
 3. **open な子 ticket が 1 件でもあれば `blocked`。** 残 ticket の番号・タイトル・種別（`wayfinder:<type>`）を列挙して報告する
 4. `## Not yet specified` に未解消の記述が残っていれば `blocked`。地図がまだ霧を抱えている
 5. すべての子 ticket が closed なら、各 ticket の **resolution コメント**（close 直前のコメント）を
-   `gh issue view <n> --json title,body,comments` で取得し、決定の実体を集める。
+   `gh issue view <n> -R daiki-beppu/tayk --json title,body,comments` で取得し、決定の実体を集める。
    map の `## Decisions so far` は索引にすぎず、決定の本体は各 ticket にある。索引だけで実装ブリーフを作らない
 6. `## Out of scope` の項目は **実装対象から明示的に除外** し、ブリーフの「対象外」に転記する
 
 ### 4. wayfinder ticket が起点のとき
 
-1. 親 map を辿る（本文の `Part of #<map>`、または `gh api repos/{owner}/{repo}/issues/<n>/parent`）
+1. 親 map を辿る（本文の `Part of #<map>`、または `gh api repos/daiki-beppu/tayk/issues/<n>/parent`）
 2. 親 map の Destination / Notes / Decisions so far を読み、この ticket が map のどの位置にあるかを掴む
 3. **この ticket を blocking している ticket が open なら `blocked`**:
-   `gh api repos/{owner}/{repo}/issues/<n> --jq '.issue_dependencies_summary.blocked_by'`
+   `gh api repos/daiki-beppu/tayk/issues/<n> --jq '.issue_dependencies_summary.blocked_by'`
    （依存関係が使えないリポでは本文冒頭の `Blocked by: #<n>` 行を見る）
 4. ticket の種別が `wayfinder:task` 以外（`research` / `prototype` / `grilling`）なら、それは **決定を出すための ticket であって実装 ticket ではない**。`blocked` とし、「この ticket は wayfinder セッションで解決すべきもの」と報告する
 5. `wayfinder:task` で blocking が解消済みなら、ticket の Question と親 map の決定を実装ブリーフに畳み込む
