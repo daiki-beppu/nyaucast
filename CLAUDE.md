@@ -11,7 +11,7 @@ YouTube チャンネル運営を自動化するツールキット。skill に蓄
 - bun / node は Nix flake devShell が供給する。**direnv を通していないシェルには bun が存在しない**（グローバルには入っていない）
 - worktree を作ったら毎回 `direnv allow && bun install` — `node_modules` は worktree ごとに要る
 - パッケージ操作・スクリプト実行は bun のみ。npm / pnpm / yarn とそのラッパを使わない
-- CI と同じゲート: `bun run typecheck` / `bun run lint` / `bun run format:check` / `bun test` / `bun scripts/verify-workflows.ts` / `bun run fallow`
+- **検査ゲートは `bun run check` の 1 コマンド**（最初に失敗したゲートで止まる）。CI・pre-push フックも同じ script を呼ぶため、ここで通れば CI でも通る。ゲートが何本あり何を実行するかは `package.json` の `check` script だけが定義する — **このファイルを含め、どこにも書き写さない**
 
 ## アーキテクチャ（ADR-0001）
 
@@ -32,7 +32,7 @@ YouTube チャンネル運営を自動化するツールキット。skill に蓄
 
 - **worktree 必須・main 直コミット禁止**
 - 開発は takt メイン: `takt -w tayk-feature "#<issue番号>"` / `takt -w tayk-fix "#<issue番号>"`。設計ゲート・診断ゲート・レビューループ・要件 ID の採番は workflow 側が持つ（`docs/agents/issue-tracker.md` / ADR-0008）
-- `.takt/` の定義を変えたら `takt workflow doctor` と `bun scripts/verify-workflows.ts` の**両方**を通す。前者は facet 参照と schema、後者は遷移グラフとレポート境界を見ており、検査範囲が重ならない
+- `.takt/` の定義を変えたら `takt workflow doctor` と `bun run check` の**両方**を通す。前者は facet 参照と schema、後者に含まれる verify-workflows ゲートは遷移グラフとレポート境界を見ており、検査範囲が重ならない
 - スコープ外で見つけた問題は、直さず捨てず issue にする
 - commit: 日本語 Conventional Commits + タイトル末尾に `(#<issue番号>)`
 
