@@ -15,7 +15,7 @@ direnv allow   # devShell 有効化 + 依存導入（初回と worktree 作成�
 bun test       # 動作確認
 ```
 
-devShell に入るたびに `bun install --frozen-lockfile` が走るため、依存の導入は別手順にならない（direnv を使わない場合は `nix develop` が同じ役割を果たす）。
+devShell に入るたびに `bun install --frozen-lockfile` が走るため、依存の導入は別手順にならない。
 
 ## Status
 

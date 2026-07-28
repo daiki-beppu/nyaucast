@@ -13,9 +13,13 @@
         in {
           default = pkgs.mkShell {
             packages = with pkgs; [ bun nodejs_24 ];
-            # devShell に入った時点で依存が解決済みであることを不変条件にする。
-            # bun install は変更が無ければ no-op（~0.3s）なので、自前の鮮度判定
-            # （node_modules の有無や lockfile の mtime 比較）は持たない。
+            # devShell へ入るたびに依存の解決を試みる。bun install は変更が無ければ
+            # no-op（~0.3s）なので、自前の鮮度判定（node_modules の有無や lockfile の
+            # mtime 比較）は持たない。
+            #
+            # 失敗は非致命にする。package.json を編集中で lockfile と乖離している間に
+            # devShell へ入れなくなるほうが困るため。ただしその場合 node_modules は
+            # 生成されないので、「入場 = 依存が揃っている」は保証しない。
             shellHook = ''
               export PATH="$PWD/node_modules/.bin:$PATH"
 
