@@ -1,6 +1,8 @@
 # .takt/runs の実行トレースを run 横断で監査する workflow（#143。親: #142 の子 1）。
 # tayk-audit-architecture の骨格（read-only 監査 / supervise の structured 収束 / publish）を
 # 踏襲し、監査対象をコードから実行トレース（trace.md / meta.json / monitor.json）に替えたもの。
+# usage-events のトークン消費集計（#145。子 3）は analyze の統合時に機械集計で行い、
+# レポートの Token Usage 節に載せる。費用の偏りは記録のみで起票しない（ADR-0008 Consequences）。
 #
 # 証拠は本体リポの絶対パス /Users/mba/02-yt/tayk/.takt/runs を読む。タスクの隔離クローンに
 # runs は複製されず、remote も無いため逆引きもできない（#126 / #138 の経緯）。パス固定は
@@ -20,9 +22,10 @@ name: tayk-audit-runs
 description: >
   .takt/runs の実行トレースを run 横断で監査する。計画（対象 run の列挙・採番）→
   分担分析 → 監督 ⇄ 再分析で ABORT 原因・差し戻し経路・loop monitor 発火の
-  再発パターンを抽出し、レポートを docs/audits/ へ配置し、根拠（run 名 +
-  トレース引用）を示せる発見のみ重複照合の上で起票する。publish と起票以外の
-  全 step は read-only でファイルを変更しない。
+  再発パターンを抽出し、usage-events のトークン消費を workflow 別・step 別に
+  集計してレポートに載せ、レポートを docs/audits/ へ配置し、根拠（run 名 +
+  トレース引用）を示せる発見のみ重複照合の上で起票する。費用の偏りは記録のみで
+  起票しない。publish と起票以外の全 step は read-only でファイルを変更しない。
 max_steps: 25
 initial_step: plan
 
@@ -70,7 +73,7 @@ steps:
         next: ABORT
 
   - name: analyze
-    description: 監査対象を 3 パートに分担して並列分析し、全対象の一対一表を初回で作り切る
+    description: 監査対象を 3 パートに分担して並列分析し、全対象の一対一表を初回で作り切る。統合時にトークン消費の機械集計（Token Usage 節）も作る
     tags:
       - review
     edit: false

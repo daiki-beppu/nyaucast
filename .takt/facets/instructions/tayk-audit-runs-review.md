@@ -27,6 +27,7 @@
 - Audit Scope 表は計画の Audit Targets と一対一（同じ #・同じ行数）を維持する。行の削除・統合は禁止
 - 今回分析した行だけ ⏳ → ✅ に更新する。✅ を ⏳ に戻さない
 - 未分析対象が残る場合は Follow-up Notes にその理由を明記する
+- Token Usage 節はそのまま保持する（再集計しない）。節が欠けている・表が空の場合のみ、analyze の集計手順（`logs/*-usage-events.phase.jsonl` の機械集計。`usage_missing` 行を除外し、集計対象外 run は件数と理由を明示）を実行して補う
 
 **厳禁:**
 
