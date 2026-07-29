@@ -2,19 +2,19 @@ name: tayk-feature
 description: >
   tayk の新機能開発ワークフロー。intake（wayfinder map / ticket 対応）→ 計画 → テスト設計 →
   設計レビュー（設計 / ADR 整合性 / テスト設計の 3 並列）→ テスト先行実装 → 実装 →
-  実装レビュー（4 並列）→ 最終ゲート → スコープ外発見の起票 → delivery（PR 作成 / CI 監視 /
-  レビュー指摘解消）。実装に入る前に設計を止められること、ADR からの逸脱を黙って通さないことが
-  default との差分。
+  実装レビュー（4 並列）→ 最終ゲート → スコープ外発見の起票。commit / push / PR 作成は
+  workflow 完了後に takt の auto_pr が行う（ADR-0008 決定 7 改訂）。実装に入る前に設計を
+  止められること、ADR からの逸脱を黙って通さないことが default との差分。
 workflow_config:
   provider_options:
     codex:
       network_access: true
     opencode:
       network_access: true
-# 設計ループ・実装ループ・delivery の CI 待ちを含むため default (30) では足りない。
+# 設計ループ・実装ループを含むため default (30) では足りない。
 # ループの歯止めは loop monitor と各修正 step の上限が持つ。max_steps はそれらを
 # すり抜けた場合の最後の保険であり、正常系が枯渇しない広さを取る
-max_steps: 120
+max_steps: 90
 initial_step: intake
 loop_monitors:
   # ── 設計レビュー ⇄ 設計修正。実装前なので、打ち切りより再計画を優先する ──
@@ -48,7 +48,7 @@ loop_monitors:
   # 実装レビュー ⇄ 修正のループ自体は tayk-impl-review の内側にあり、その上限は
   # sub-workflow 側の loop monitor が持つ。ここで見るのは「最終ゲートが差し戻し、
   # 実装ゲートを回り直す」外側の往復である。非生産的と判定されたときに前進させない
-  # （未解消の指摘を抱えたまま delivery → PR まで到達させない）
+  # （未解消の指摘を抱えたまま完了 → auto_pr の PR 化まで到達させない）
   - cycle:
       - impl_gate
       - final_gate
@@ -58,25 +58,6 @@ loop_monitors:
       instruction: loop-monitor-reviewers-fix
       rules:
         - condition: 健全（指摘数が減少、修正が反映されている）
-          next: impl_gate
-        - condition: 再計画または異議申告で打開できる（指摘が計画・要件の側に帰着する）
-          next: plan
-        - condition: 修正・再計画・異議申告のいずれでも打開できない
-          next: ABORT
-  # ── delivery を含む大回り ──
-  # delivery が needs_fix を返すと実装ゲートへ戻るため、上の [impl_gate, final_gate] は
-  # 連続一致が崩れて発火しない。この大回り自体を別 cycle で見る。
-  # 末尾 step が delivery なので上の monitor とは干渉しない（照合は履歴末尾との一致）
-  - cycle:
-      - impl_gate
-      - final_gate
-      - delivery
-    threshold: 3
-    judge:
-      persona: supervisor
-      instruction: loop-monitor-reviewers-fix
-      rules:
-        - condition: 健全（CI・レビューの指摘が減っている）
           next: impl_gate
         - condition: 再計画または異議申告で打開できる（指摘が計画・要件の側に帰着する）
           next: plan
@@ -401,7 +382,7 @@ steps:
         - tayk-adr
     rules:
       - condition: COMPLETE
-        next: delivery
+        next: spillover
       # fix へ直接戻さず実装ゲートを回り直す。そうしないと sub-workflow の内側にある
       # [impl_review, fix] の cycle が外から破られ、上限 3 が失われる（ADR-0008 決定 12）
       - condition: needs_fix
@@ -411,32 +392,17 @@ steps:
       - condition: ABORT
         next: ABORT
 
-  # ── Phase 5: delivery ─────────────────────────────────────────────
-  # feature / fix 共通。PR 作成 → CI 監視 → レビュー指摘解消まで。
-  - name: delivery
-    kind: workflow_call
-    call: tayk-delivery
-    rules:
-      - condition: COMPLETE
-        next: spillover
-      # final_gate と同じ理由で、fix ではなく実装ゲートを回り直す（ADR-0008 決定 12）
-      - condition: needs_fix
-        next: impl_gate
-      - condition: ABORT
-        next: ABORT
-
-  # ── Phase 6: スコープ外発見の起票 ─────────────────────────────────
+  # ── Phase 5: スコープ外発見の起票 ─────────────────────────────────
   # 「ついで直しをしない」という禁止の受け皿。ここを通さないと発見は実行ログとともに埋もれる。
+  #
+  # commit / push / PR 作成はこの workflow では行わない。workflow 完了後に takt の
+  # auto_pr がサンドボックス外で実行し、push 時の pre-push フック（bun run check +
+  # takt workflow doctor）が最終関門になる（ADR-0008 決定 7 改訂）。
   #
   # callable sub-workflow にしない。この step の職務は「Report Directory の全レポートを
   # 走査する」ことだが、callable の子は自分専用の report namespace を持ち、親のレポートが
   # 見えない（ADR-0008 決定 13）。feature / fix で定義が重複するが、複製を避けて職務が
   # 成立しなくなるより重複を選ぶ。
-  #
-  # delivery の *後* に置く。PR 本文の初版へ載せるなら前に置きたいが、前に置くと
-  # 「起票結果を PR 本文へ転記する」担当が child である pr_open になり、親のレポートを
-  # 読めないため転記そのものが成立しない。PR ができてから gh pr edit で追記する
-  # （ADR-0008 決定 11）
   - name: spillover
     description: 各レポートのスコープ外の発見を集め、起票する / 捨てるに仕分ける
     tags:
@@ -457,9 +423,8 @@ steps:
       - 起票したものが 3 条件（因果なし / 実害あり / 根拠あり）をすべて満たしていること
       - 起票前に gh issue list で重複を照合していること
       - 破棄した発見について、満たさなかった条件と理由を記録していること
-      - 起票した issue 番号・既存へ追記した番号を gh pr edit で PR 本文へ転記していること
       - gh issue の操作に失敗したなら、起票できなかった発見と手動起票用のコマンドを
-        レポートと PR 本文の両方に残していること
+        レポートに残していること
       - コードを変更していないこと
     rules:
       # 仕分け自体は完了しているため、この rule を先に置かないと下の「仕分けが終わった」に
@@ -467,9 +432,9 @@ steps:
       - condition: 因果ありと判定した発見があり、今回の差分に含めるべきものが残っている
         next: plan
       # gh 失敗を「仕分けが終わった」と同じ rule に畳まない。畳むと実行ログ上で成功と
-      # 区別できなくなる。起票できなかった発見と手動起票コマンドは PR 本文へ書き込むため、
-      # 実装と PR が完了している以上ここでは止めない（ADR-0008 決定 11）
+      # 区別できなくなる。起票できなかった発見と手動起票コマンドはレポートに残るため、
+      # 実装が完了している以上ここでは止めない（ADR-0008 決定 11）
       - condition: gh issue の操作に失敗し、起票できなかった発見が残っている
         next: COMPLETE
-      - condition: 仕分けが終わり、起票・追記・破棄をすべて記録し PR 本文へ転記した（発見ゼロの場合を含む）
+      - condition: 仕分けが終わり、起票・追記・破棄をすべて記録した（発見ゼロの場合を含む）
         next: COMPLETE

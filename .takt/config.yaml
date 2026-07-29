@@ -3,11 +3,12 @@
 #
 # workflow は tayk 専用の .takt/workflows/ を使う (ADR-0008):
 #   tayk-feature  — 新機能・機能拡張（intake → 計画 → テスト設計 → 設計レビュー →
-#                   テスト先行実装 → 実装 → 実装レビュー → 最終ゲート → spillover → delivery）
+#                   テスト先行実装 → 実装 → 実装レビュー → 最終ゲート → spillover）
 #   tayk-fix      — バグ修正・回帰修正（intake → 診断 → 診断レビュー → 再現テスト →
-#                   修正 → 実装レビュー → 最終ゲート → spillover → delivery）
+#                   修正 → 実装レビュー → 最終ゲート → spillover）
 #   tayk-intake   — feature / fix 共通の intake（wayfinder map / ticket 対応）
-#   tayk-delivery — feature / fix 共通の delivery（PR / CI 監視 / レビュー指摘解消）
+# commit / push / PR 作成は workflow 完了後に takt の auto_pr が行う（ADR-0008 決定 7 改訂）。
+# タスク投入時は auto_pr: true を設定すること。
 # facets は .takt/facets/、structured output schema は .takt/schemas/。
 # 定義を変えたら `takt workflow doctor <name>` で検証する。
 draft_pr: false
@@ -40,7 +41,7 @@ provider_routing:
     tayk-adr-conformance-reviewer:
       provider: codex
       model: gpt-5.6-terra
-    # commit / push / gh 操作が主。手続き的な作業なので軽量モデル
+    # spillover の gh 操作（起票・重複照合）が主。手続き的な作業なので軽量モデル
     tayk-delivery-operator:
       provider: codex
       model: gpt-5.6-luna

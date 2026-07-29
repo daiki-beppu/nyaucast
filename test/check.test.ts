@@ -29,9 +29,7 @@ const gateScriptNames = [
 const gateInstructingFacetPaths = [
   ".takt/facets/policies/tayk-toolchain.md",
   ".takt/facets/instructions/tayk-implement.md",
-  ".takt/facets/instructions/tayk-ci-fix.md",
   ".takt/facets/instructions/tayk-repair.md",
-  ".takt/facets/instructions/tayk-review-fix.md",
 ] as const;
 
 /**

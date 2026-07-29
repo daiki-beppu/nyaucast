@@ -2,7 +2,8 @@ name: tayk-fix
 description: >
   tayk のバグ修正ワークフロー。intake → 診断（原因特定・検証可能な予測・修正方針・回帰テスト設計）→
   診断レビュー（診断妥当性 / ADR 整合性 / 回帰テスト設計の 3 並列）→ 再現テスト（red 確認）→
-  修正 → 実装レビュー（4 並列）→ 最終ゲート → スコープ外発見の起票 → delivery。
+  修正 → 実装レビュー（4 並列）→ 最終ゲート → スコープ外発見の起票。
+  commit / push / PR 作成は workflow 完了後に takt の auto_pr が行う（ADR-0008 決定 7 改訂）。
   原因を特定してから直すこと、再現テストの red を診断の検証に使うことが feature との差分。
 workflow_config:
   provider_options:
@@ -10,10 +11,10 @@ workflow_config:
       network_access: true
     opencode:
       network_access: true
-# 診断ループ・実装ループ・delivery の CI 待ちを含むため default (30) では足りない。
+# 診断ループ・実装ループを含むため default (30) では足りない。
 # ループの歯止めは loop monitor と各 step の上限が持つ。max_steps はそれらを
 # すり抜けた場合の最後の保険であり、正常系が枯渇しない広さを取る
-max_steps: 120
+max_steps: 90
 initial_step: intake
 loop_monitors:
   # 各 monitor の末尾 step を diagnose_fix / diagnose_review / final_gate に分けてあるため、
@@ -65,24 +66,6 @@ loop_monitors:
       instruction: loop-monitor-reviewers-fix
       rules:
         - condition: 健全（指摘数が減少、修正が反映されている）
-          next: impl_gate
-        - condition: 再診断または異議申告で打開できる（指摘が原因の特定・修正方針に帰着する）
-          next: diagnose
-        - condition: 修正・再診断・異議申告のいずれでも打開できない
-          next: ABORT
-  # ④ delivery を含む大回り。delivery が needs_fix を返すと実装ゲートへ戻るため、
-  #    ③ は連続一致が崩れて発火しない。この大回り自体を別 cycle で見る。
-  #    末尾 step が delivery なので ③ とは干渉しない
-  - cycle:
-      - impl_gate
-      - final_gate
-      - delivery
-    threshold: 3
-    judge:
-      persona: supervisor
-      instruction: loop-monitor-reviewers-fix
-      rules:
-        - condition: 健全（CI・レビューの指摘が減っている）
           next: impl_gate
         - condition: 再診断または異議申告で打開できる（指摘が原因の特定・修正方針に帰着する）
           next: diagnose
@@ -424,7 +407,7 @@ steps:
         - tayk-adr
     rules:
       - condition: COMPLETE
-        next: delivery
+        next: spillover
       # fix へ直接戻さず実装ゲートを回り直す。そうしないと sub-workflow の内側にある
       # [impl_review, fix] の cycle が外から破られ、上限 3 が失われる（ADR-0008 決定 12）
       - condition: needs_fix
@@ -434,32 +417,17 @@ steps:
       - condition: ABORT
         next: ABORT
 
-  # ── Phase 5: delivery ─────────────────────────────────────────────
-  # feature と共通。PR 作成 → CI 監視 → レビュー指摘解消まで
-  - name: delivery
-    kind: workflow_call
-    call: tayk-delivery
-    rules:
-      - condition: COMPLETE
-        next: spillover
-      # final_gate と同じ理由で、fix ではなく実装ゲートを回り直す（ADR-0008 決定 12）
-      - condition: needs_fix
-        next: impl_gate
-      - condition: ABORT
-        next: ABORT
-
-  # ── Phase 6: スコープ外発見の起票 ─────────────────────────────────
+  # ── Phase 5: スコープ外発見の起票 ─────────────────────────────────
   # 「ついで直しをしない」という禁止の受け皿。ここを通さないと発見は実行ログとともに埋もれる。
+  #
+  # commit / push / PR 作成はこの workflow では行わない。workflow 完了後に takt の
+  # auto_pr がサンドボックス外で実行し、push 時の pre-push フック（bun run check +
+  # takt workflow doctor）が最終関門になる（ADR-0008 決定 7 改訂）。
   #
   # callable sub-workflow にしない。この step の職務は「Report Directory の全レポートを
   # 走査する」ことだが、callable の子は自分専用の report namespace を持ち、親のレポートが
   # 見えない（ADR-0008 決定 13）。feature / fix で定義が重複するが、複製を避けて職務が
   # 成立しなくなるより重複を選ぶ。
-  #
-  # delivery の *後* に置く。PR 本文の初版へ載せるなら前に置きたいが、前に置くと
-  # 「起票結果を PR 本文へ転記する」担当が child である pr_open になり、親のレポートを
-  # 読めないため転記そのものが成立しない。PR ができてから gh pr edit で追記する
-  # （ADR-0008 決定 11）
   - name: spillover
     description: 各レポートのスコープ外の発見を集め、起票する / 捨てるに仕分ける
     tags:
@@ -480,9 +448,8 @@ steps:
       - 起票したものが 3 条件（因果なし / 実害あり / 根拠あり）をすべて満たしていること
       - 起票前に gh issue list で重複を照合していること
       - 破棄した発見について、満たさなかった条件と理由を記録していること
-      - 起票した issue 番号・既存へ追記した番号を gh pr edit で PR 本文へ転記していること
       - gh issue の操作に失敗したなら、起票できなかった発見と手動起票用のコマンドを
-        レポートと PR 本文の両方に残していること
+        レポートに残していること
       - コードを変更していないこと
     rules:
       # 仕分け自体は完了しているため、この rule を先に置かないと下の「仕分けが終わった」に
@@ -490,9 +457,9 @@ steps:
       - condition: 因果ありと判定した発見があり、今回の差分に含めるべきものが残っている
         next: diagnose
       # gh 失敗を「仕分けが終わった」と同じ rule に畳まない。畳むと実行ログ上で成功と
-      # 区別できなくなる。起票できなかった発見と手動起票コマンドは PR 本文へ書き込むため、
-      # 実装と PR が完了している以上ここでは止めない（ADR-0008 決定 11）
+      # 区別できなくなる。起票できなかった発見と手動起票コマンドはレポートに残るため、
+      # 実装が完了している以上ここでは止めない（ADR-0008 決定 11）
       - condition: gh issue の操作に失敗し、起票できなかった発見が残っている
         next: COMPLETE
-      - condition: 仕分けが終わり、起票・追記・破棄をすべて記録し PR 本文へ転記した（発見ゼロの場合を含む）
+      - condition: 仕分けが終わり、起票・追記・破棄をすべて記録した（発見ゼロの場合を含む）
         next: COMPLETE
