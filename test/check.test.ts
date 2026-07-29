@@ -5,19 +5,8 @@ import { join, resolve } from "node:path";
 
 const packageRoot = resolve(import.meta.dirname, "..");
 const subprocessTimeoutMilliseconds = 20_000;
-
-/**
- * `check` が満たすべき契約（ゲートの集合と順序）を、テスト側から固定した期待値。
- * 定義そのものは `package.json` の `check` script にあり、ゲートを増減したらここが落ちる。
- * 呼び出し元（ci.yml / lefthook / takt facets）はこの列挙を複製せず `bun run check` を呼ぶ。
- */
-const gateScriptNames = [
-  "typecheck",
-  "lint",
-  "format:check",
-  "test",
-  "fallow",
-] as const;
+const invalidCheckScriptMessage =
+  "check script must contain only bun run commands joined by &&";
 
 /**
  * 「ローカルで CI を再現する」を指示する facet。
@@ -90,37 +79,159 @@ function readPackageScripts(): Record<string, string> {
   );
 }
 
+function tokenizeCheckScript(checkScript: string): string[][] {
+  const shellWord =
+    /(?:[^\s'"\\;&|<>#$`()?*[\]{}~]+|'[^'\r\n]*'|"(?:\\[^\r\n]|[^"\\$`\r\n])*"|\\[^\r\n])+/y;
+  const commands: string[][] = [];
+  let command: string[] = [];
+  let index = 0;
+
+  while (index < checkScript.length) {
+    const whitespace = /^[ \t]+/.exec(checkScript.slice(index));
+    if (whitespace !== null) {
+      index += whitespace[0].length;
+      continue;
+    }
+
+    if (checkScript.startsWith("&&", index)) {
+      if (command.length === 0) {
+        throw new Error(invalidCheckScriptMessage);
+      }
+      commands.push(command);
+      command = [];
+      index += 2;
+      continue;
+    }
+
+    shellWord.lastIndex = index;
+    const word = shellWord.exec(checkScript);
+    if (word === null) {
+      throw new Error(invalidCheckScriptMessage);
+    }
+    command.push(word[0]);
+    index = shellWord.lastIndex;
+  }
+
+  if (command.length === 0) {
+    throw new Error(invalidCheckScriptMessage);
+  }
+  commands.push(command);
+  return commands;
+}
+
+function decodeShellWord(word: string): string {
+  let decoded = "";
+  let quote: "'" | '"' | null = null;
+
+  for (let index = 0; index < word.length; index += 1) {
+    const character = word[index];
+    if (character === "'" && quote !== '"') {
+      quote = quote === "'" ? null : "'";
+      continue;
+    }
+    if (character === '"' && quote !== "'") {
+      quote = quote === '"' ? null : '"';
+      continue;
+    }
+    if (character === "\\" && quote !== "'") {
+      const escaped = word[index + 1];
+      if (escaped === undefined) {
+        throw new Error(invalidCheckScriptMessage);
+      }
+      decoded +=
+        quote !== '"' || '$`"\\'.includes(escaped) ? escaped : `\\${escaped}`;
+      index += 1;
+      continue;
+    }
+    decoded += character;
+  }
+
+  return decoded;
+}
+
+function deriveExpectedGateNames(checkScript: string | undefined): string[] {
+  if (checkScript === undefined || checkScript.trim() === "") {
+    throw new Error(invalidCheckScriptMessage);
+  }
+
+  return tokenizeCheckScript(checkScript).map((command) => {
+    const executable = command[0];
+    const subcommand = command[1];
+    const rawGateName = command[2];
+
+    if (
+      executable === undefined ||
+      subcommand === undefined ||
+      decodeShellWord(executable) !== "bun" ||
+      decodeShellWord(subcommand) !== "run" ||
+      rawGateName === undefined
+    ) {
+      throw new Error(invalidCheckScriptMessage);
+    }
+
+    const gateName = decodeShellWord(rawGateName);
+    if (gateName === "" || gateName.startsWith("-")) {
+      throw new Error(invalidCheckScriptMessage);
+    }
+
+    return gateName;
+  });
+}
+
+function quoteShellArgument(argument: string): string {
+  return `'${argument.replaceAll("'", "'\\''")}'`;
+}
+
 /**
  * 本物の `check` を各ゲートの stub に対して走らせる fixture を作る。
  *
  * `check` は `bun run test` を含むため、リポジトリ本体でそのまま実行すると
  * このテスト自身を経由して無限に再帰する。合成（順序と fail-fast）だけを見る。
  */
-function createCheckFixture(directory: string, checkScript: string): void {
+function createCheckFixture(
+  directory: string,
+  checkScript: string
+): Record<string, string> {
+  const gateNames = deriveExpectedGateNames(checkScript);
+
   writeFileSync(
     join(directory, "record.ts"),
-    `import { appendFileSync } from "node:fs";
+    `import { appendFileSync, readFileSync } from "node:fs";
 
-const gate = process.argv[2] ?? "";
-appendFileSync(process.env["TAYK_GATE_RECORD"] ?? "", \`\${gate}\\n\`);
-process.exit(process.env["TAYK_FAILING_GATE"] === gate ? 1 : 0);
+const gate = process.argv[2];
+const recordPath = process.env["TAYK_GATE_RECORD"];
+const failingIndex = process.env["TAYK_FAILING_INDEX"];
+
+if (gate === undefined || recordPath === undefined || failingIndex === undefined) {
+  throw new Error("gate recorder requires a gate, record path, and failing index");
+}
+
+const recordedGates = readFileSync(recordPath, "utf-8");
+const executionIndex =
+  recordedGates === "" ? 0 : recordedGates.split("\\n").length - 1;
+appendFileSync(recordPath, \`\${gate}\\n\`);
+process.exit(failingIndex === executionIndex.toString() ? 1 : 0);
 `
   );
 
-  const scripts: Record<string, string> = { check: checkScript };
-  for (const gate of gateScriptNames) {
-    scripts[gate] = `bun record.ts ${gate}`;
-  }
+  const scripts = Object.fromEntries([
+    ["check", checkScript],
+    ...gateNames.map(
+      (gate) => [gate, `bun record.ts ${quoteShellArgument(gate)}`] as const
+    ),
+  ]);
 
   writeFileSync(
     join(directory, "package.json"),
     `${JSON.stringify({ name: "tayk-check-fixture", private: true, scripts, type: "module", version: "0.0.0" }, null, 2)}\n`
   );
+
+  return scripts;
 }
 
 function runCheck(
   directory: string,
-  failingGate: string | null
+  failingIndex: number | null
 ): { exitCode: number | null; executedGates: string[] } {
   const recordPath = join(directory, "gates.log");
   writeFileSync(recordPath, "");
@@ -129,7 +240,7 @@ function runCheck(
     cwd: directory,
     env: {
       ...process.env,
-      TAYK_FAILING_GATE: failingGate ?? "",
+      TAYK_FAILING_INDEX: failingIndex === null ? "" : failingIndex.toString(),
       TAYK_GATE_RECORD: recordPath,
     },
     killSignal: "SIGKILL",
@@ -153,28 +264,166 @@ function runCheck(
 }
 
 describe("check command", () => {
-  // REQ-82-01
-  test("should run every gate in order and stop at the first failure", () => {
+  // REQ-114-01 / REQ-114-02 / TC-114-01A
+  test("should run every check-derived gate exactly once in declaration order", () => {
     const checkScript = readPackageScripts()["check"];
 
     if (checkScript === undefined) {
       throw new Error("package.json must declare a check script");
     }
 
+    const expectedGates = deriveExpectedGateNames(checkScript);
+
     withTemporaryDirectory((directory) => {
       createCheckFixture(directory, checkScript);
 
-      const passed = runCheck(directory, null);
-      expect(passed.exitCode).toBe(0);
-      expect(passed.executedGates).toEqual([...gateScriptNames]);
+      const result = runCheck(directory, null);
 
-      const failed = runCheck(directory, "format:check");
-      expect(failed.exitCode).not.toBe(0);
-      expect(failed.executedGates).toEqual([
-        "typecheck",
-        "lint",
-        "format:check",
-      ]);
+      expect(result).toEqual({
+        executedGates: expectedGates,
+        exitCode: 0,
+      });
+    });
+  });
+
+  // REQ-114-02 / TC-114-02B
+  test("should stop at each failing position in the check-derived gate sequence", () => {
+    const checkScript = readPackageScripts()["check"];
+
+    if (checkScript === undefined) {
+      throw new Error("package.json must declare a check script");
+    }
+
+    const derivedGates = deriveExpectedGateNames(checkScript);
+
+    for (const failingIndex of derivedGates.keys()) {
+      withTemporaryDirectory((directory) => {
+        createCheckFixture(directory, checkScript);
+
+        const result = runCheck(directory, failingIndex);
+        const expectedPrefix = derivedGates.slice(0, failingIndex + 1);
+
+        expect(result.exitCode).not.toBe(0);
+        expect(result.executedGates).toEqual(expectedPrefix);
+      });
+    }
+  });
+
+  // REQ-114-03 / TC-114-03A
+  test.each([
+    ["bun run alpha", ["alpha"]],
+    ["bun run __proto__", ["__proto__"]],
+    [
+      " \tbun   run alpha --flag && bun run added argument\t ",
+      ["alpha", "added"],
+    ],
+    [
+      `bun run alpha --label "quality && gate" "left || right" "left \\| right" "a;b" "&" && bun run beta 'literal;value'`,
+      ["alpha", "beta"],
+    ],
+    ["bun run alpha escaped\\|pipe", ["alpha"]],
+    [
+      `b\\un "run" "alpha'beta" "say \\"hi\\"" '$() is literal'`,
+      ["alpha'beta"],
+    ],
+    [
+      `bun run "alpha*beta" '?' '[a]' '{left,right}' '~' escaped\\* escaped\\? escaped\\[a\\] escaped\\{left,right\\} escaped\\~`,
+      ["alpha*beta"],
+    ],
+  ])(
+    "should follow the gates derived from %p without fixture changes",
+    (checkScript, expectedGates) => {
+      withTemporaryDirectory((directory) => {
+        const scripts = createCheckFixture(directory, checkScript);
+
+        const result = runCheck(directory, null);
+
+        expect(Object.keys(scripts)).toEqual([
+          "check",
+          ...new Set(expectedGates),
+        ]);
+        expect(result).toEqual({
+          executedGates: expectedGates,
+          exitCode: 0,
+        });
+      });
+    }
+  );
+
+  // REQ-114-01 / TC-114-01B / TC-114-01C
+  test.each([
+    [undefined],
+    [""],
+    ["   "],
+    ["bun run"],
+    ['bun run ""'],
+    ["bun run --silent"],
+    ["bun run -b alpha"],
+    ["&& bun run alpha"],
+    ["bun run alpha &&"],
+    ["bun run alpha && && bun run beta"],
+    ["bun run alpha && echo skipped"],
+    ["bun run alpha || bun run beta"],
+    ["bun run alpha | bun run beta"],
+    ["bun run alpha & bun run beta"],
+    ["bun run alpha; bun run beta"],
+    ["bun run alpha\nbun run beta"],
+    ["bun run alpha > ignored"],
+    ["bun run alpha < input"],
+    ["bun run alpha $(echo injected)"],
+    ["bun run alpha `echo injected`"],
+    ["bun run alpha # ignored"],
+    ['bun run alpha "unterminated'],
+    ["bun run alpha 'unterminated"],
+    ["bun run alpha dangling\\"],
+    ["bun run alpha $EXPANDED_ARGUMENT"],
+    ["bun run alpha (echo nested)"],
+    ["bun run *"],
+    ["bun run alpha ?"],
+    ["bun run [a]*"],
+    ["bun run ~"],
+    ["bun run {alpha,beta}"],
+  ])(
+    "should reject an invalid check script before fixture creation",
+    (checkScript) => {
+      expect(() => deriveExpectedGateNames(checkScript)).toThrow(
+        "check script must contain only bun run commands joined by &&"
+      );
+    }
+  );
+
+  // REQ-114-03 / TC-114-03B
+  test("should fail each repeated script occurrence by its position", () => {
+    const repeatedGates = ["typecheck", "lint", "typecheck"];
+    const checkScript = repeatedGates
+      .map((gate) => `bun run ${gate}`)
+      .join(" && ");
+
+    for (const failingIndex of repeatedGates.keys()) {
+      withTemporaryDirectory((directory) => {
+        createCheckFixture(directory, checkScript);
+
+        const result = runCheck(directory, failingIndex);
+        const expectedPrefix = repeatedGates.slice(0, failingIndex + 1);
+
+        expect(result.exitCode).not.toBe(0);
+        expect(result.executedGates).toEqual(expectedPrefix);
+      });
+    }
+  });
+
+  // REQ-114-03 / TC-114-03C
+  test("should stop at a failing __proto__ script", () => {
+    const gates = ["alpha", "__proto__", "beta"];
+    const checkScript = gates.map((gate) => `bun run ${gate}`).join(" && ");
+
+    withTemporaryDirectory((directory) => {
+      createCheckFixture(directory, checkScript);
+
+      const result = runCheck(directory, 1);
+
+      expect(result.exitCode).not.toBe(0);
+      expect(result.executedGates).toEqual(["alpha", "__proto__"]);
     });
   });
 
