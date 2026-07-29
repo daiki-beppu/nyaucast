@@ -1,0 +1,190 @@
+# .takt/runs の実行トレースを run 横断で監査する workflow（#143。親: #142 の子 1）。
+# tayk-audit-architecture の骨格（read-only 監査 / supervise の structured 収束 / publish）を
+# 踏襲し、監査対象をコードから実行トレース（trace.md / meta.json / monitor.json）に替えたもの。
+#
+# 証拠は本体リポの絶対パス /Users/mba/02-yt/tayk/.takt/runs を読む。タスクの隔離クローンに
+# runs は複製されず、remote も無いため逆引きもできない（#126 / #138 の経緯）。パス固定は
+# このリポが個人運用である前提で許容し、読めない場合は空レポートを publish せず plan が
+# 明示的に ABORT する（サンドボックスの read 制限や本体リポ移動の自己申告を兼ねる）。
+#
+# 容量: plan(1) + analyze(1) + [supervise+review]×10(20) + publish(1) + file(1) = 24 ≤ 25。
+# plan 側の対象数上限（24。tayk-audit-runs-plan 参照）と review 側の 1 サイクル最低 4 対象の
+# 前進義務が、この max_steps と整合する。
+#
+# ループ上限の実効性（ADR-0008 決定 6 / Consequences の手動チェック C）:
+#   cycle [supervise, review] への遷移は analyze → supervise（初回のみ）、review → supervise、
+#   supervise → review、loop judge → review / publish の 4 本だけ。cycle の外から再入される
+#   step は無いので、loop monitor だけで上限が保証され、{step_iteration} の自前上限は不要。
+#   publish / ABORT は cycle から出る一方向。遷移を足すときはこの前提を崩さないこと
+name: tayk-audit-runs
+description: >
+  .takt/runs の実行トレースを run 横断で監査する。計画（対象 run の列挙・採番）→
+  分担分析 → 監督 ⇄ 再分析で ABORT 原因・差し戻し経路・loop monitor 発火の
+  再発パターンを抽出し、レポートを docs/audits/ へ配置し、根拠（run 名 +
+  トレース引用）を示せる発見のみ重複照合の上で起票する。publish と起票以外の
+  全 step は read-only でファイルを変更しない。
+max_steps: 25
+initial_step: plan
+
+loop_monitors:
+  - cycle:
+      - supervise
+      - review
+    threshold: 3
+    judge:
+      persona: supervisor
+      instruction: tayk-loop-monitor-runs
+      rules:
+        - condition: 監査が完了している（全対象が分析済みで発見が根拠付き）
+          next: publish
+        - condition: 健全（分析済み対象が増え続けており、残りを回収できる見込み）
+          next: review
+        - condition: 非生産的（分析済みが増えていない、または残り iteration で回収不能）
+          next: ABORT
+
+steps:
+  - name: plan
+    description: 証拠パスの読み取りを確認し、対象 run を棚卸しして番号を固定した監査対象表（Audit Targets）を作る
+    tags:
+      - review
+    edit: false
+    persona: planner
+    provider_options:
+      extends: review-readonly
+    instruction: tayk-audit-runs-plan
+    output_contracts:
+      report:
+        - name: 01-runs-audit-plan.md
+          format: tayk-runs-audit-plan
+    rules:
+      - condition: 証拠パスを読めることを確認し、対象 run の棚卸しと監査対象表の作成が完了
+        next: analyze
+      # 証拠パスが読めない環境では、空レポートや推測で埋めた計画を作らず明示的に止める
+      # （instruction 側にも同じ契約を書いてある。appendix でエラー出力を自己申告させる）
+      - condition: 証拠パス（/Users/mba/02-yt/tayk/.takt/runs）が読めない、または run が 1 件も存在しない
+        next: ABORT
+        appendix: |
+          実行したコマンドと、その出力（エラーをそのまま貼る）:
+          - {何を実行し、何が返ったか}
+      - condition: スコープが不明確で監査対象を確定できない
+        next: ABORT
+
+  - name: analyze
+    description: 監査対象を 3 パートに分担して並列分析し、全対象の一対一表を初回で作り切る
+    tags:
+      - review
+    edit: false
+    persona: architecture-reviewer
+    policy: review
+    instruction: tayk-audit-runs-analyze
+    team_leader:
+      max_parts: 3
+      part_persona: architecture-reviewer
+      part_edit: false
+    output_contracts:
+      report:
+        - name: 02-runs-audit.md
+          format: tayk-runs-audit
+    rules:
+      - condition: 分析完了
+        next: supervise
+
+  - name: supervise
+    description: 一対一表の照合と、発見の引用を実トレースと突き合わせる品質判定。判定のみでレポートは書かない
+    tags:
+      - review
+    edit: false
+    persona: supervisor
+    policy: review
+    provider_options:
+      extends: review-readonly
+    instruction: tayk-audit-runs-supervise
+    pass_previous_response: false
+    structured_output:
+      schema_ref: tayk-audit-supervise
+    # 合否は supervisor の申告値による決定的ルーティング（CLAUDE.md の rule 構文規約）。
+    # 素の文字列 condition に落とすと LLM 判定に化けるので必ず when() で包む
+    rules:
+      - condition: when(structured.supervise.verdict == "approve")
+        next: publish
+      - condition: when(structured.supervise.verdict == "rework")
+        next: review
+      - condition: when(structured.supervise.verdict == "table_broken")
+        next: review
+      - condition: when(true)
+        next: ABORT
+
+  - name: review
+    description: 未分析（⏳）と根拠不足の対象を再分析し、一対一表を前進させる
+    tags:
+      - review
+    edit: false
+    persona: architecture-reviewer
+    policy: review
+    provider_options:
+      extends: review-readonly
+    instruction: tayk-audit-runs-review
+    output_contracts:
+      report:
+        - name: 02-runs-audit.md
+          format: tayk-runs-audit
+    rules:
+      - condition: when(true)
+        next: supervise
+
+  - name: publish
+    description: 完成した監査レポートを docs/audits/ へ配置する（この workflow 唯一のファイル書き込み step）
+    tags:
+      - delivery
+    edit: true
+    persona: tayk-delivery-operator
+    required_permission_mode: edit
+    provider_options:
+      extends: edit
+    instruction: tayk-audit-runs-publish
+    pass_previous_response: false
+    quality_gates:
+      - レポート本文を書き換えていないこと（冒頭への出典追記のみ）
+      - docs/audits/ 以外のファイルを変更していないこと
+    rules:
+      - condition: 配置完了
+        next: file
+      - condition: レポートが見つからない、または配置できない
+        next: ABORT
+
+  # spillover（tayk-feature / tayk-fix）の起票規約を流用した run 監査版。
+  # read-only 監査には「今回の差分」が存在しないため、spillover の 3 条件のうち
+  # ①（因果関係）は適用せず、②（実害）③（根拠）だけで仕分ける。差し戻し先も無い。
+  - name: file
+    description: レポートの発見を仕分け、根拠を示せるものだけを重複照合の上で起票する
+    tags:
+      - delivery
+    edit: false
+    persona: tayk-delivery-operator
+    policy:
+      - tayk-scope-spillover
+    # gh issue create / comment を使うため Bash が要る。ソースは触らないので edit: false
+    provider_options:
+      extends: review-readonly
+    session: refresh
+    pass_previous_response: false
+    instruction: tayk-audit-runs-file
+    output_contracts:
+      report:
+        - name: 03-runs-audit-filing.md
+          format: tayk-runs-audit-filing
+    quality_gates:
+      - 分析レポートの全 Finding を仕分けし、判定（起票 / 追記 / 記録のみ）を記録していること
+      - 起票したものが実害と根拠（run 名 + トレース引用）の両方を満たしていること
+      - 起票前に gh issue list で重複を照合していること
+      - 記録のみとした発見について、満たさなかった条件を記録していること
+      - gh issue の操作に失敗したなら、起票できなかった発見と手動起票用のコマンドを
+        レポートに残していること
+      - ファイルを変更していないこと
+    rules:
+      # gh 失敗を「仕分けが終わった」と同じ rule に畳まない。畳むと実行ログ上で成功と
+      # 区別できなくなる（ADR-0008 決定 11。監査は publish 済みのためここでは止めない）
+      - condition: gh issue の操作に失敗し、起票できなかった発見が残っている
+        next: COMPLETE
+      - condition: 仕分けが終わり、起票・追記・記録のみをすべて記録した（起票対象ゼロの場合を含む）
+        next: COMPLETE
