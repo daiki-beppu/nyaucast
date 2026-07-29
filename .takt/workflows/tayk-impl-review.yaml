@@ -42,7 +42,7 @@ loop_monitors:
           next: impl_review
         # loop monitor の rule は next しか取れない（takt の LoopMonitorRuleSchema）。
         # 呼び出し元へ差し戻すために、返すためだけの system step を経由する
-        - condition: 再計画または異議申告で打開できる（指摘が計画・要件の側に帰着する）
+        - condition: 再計画または異議申告で打開できる（指摘が要件・計画 — fix では診断 — の誤りを観測で実証している。論点が計画側にあるというだけでは戻さない）
           next: bail_replan
         - condition: 修正・再計画・異議申告のいずれでも打開できない
           next: ABORT
@@ -60,6 +60,7 @@ steps:
         policy:
           - review
           - existing-system-respect
+          - tayk-review-convergence
         knowledge:
           - architecture
           - tayk-domain
@@ -82,6 +83,7 @@ steps:
           - review
           - ai-antipattern
           - existing-system-respect
+          - tayk-review-convergence
         provider_options:
           extends: review-readonly
         instruction: ai-antipattern-review
@@ -102,6 +104,7 @@ steps:
           - coding
           - tayk-traceability
           - existing-system-respect
+          - tayk-review-convergence
         pass_previous_response: false
         provider_options:
           extends: review-readonly
@@ -122,6 +125,7 @@ steps:
         policy:
           - review
           - tayk-review-rescan
+          - tayk-review-convergence
         knowledge:
           - tayk-adr
           - tayk-domain

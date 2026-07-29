@@ -59,7 +59,7 @@ loop_monitors:
       rules:
         - condition: 健全（指摘数が減少、修正が反映されている）
           next: impl_gate
-        - condition: 再計画または異議申告で打開できる（指摘が計画・要件の側に帰着する）
+        - condition: 再計画または異議申告で打開できる（指摘が計画・要件の誤りを観測で実証している）
           next: plan
         - condition: 修正・再計画・異議申告のいずれでも打開できない
           next: ABORT
@@ -172,6 +172,7 @@ steps:
         policy:
           - review
           - tayk-review-rescan
+          - tayk-review-convergence
         knowledge:
           - architecture
           - tayk-domain
@@ -197,6 +198,7 @@ steps:
         policy:
           - review
           - tayk-review-rescan
+          - tayk-review-convergence
         knowledge:
           - tayk-adr
           - tayk-domain
@@ -223,6 +225,7 @@ steps:
           - testing
           - tayk-traceability
           - tayk-review-rescan
+          - tayk-review-convergence
         knowledge:
           - unit-testing
           - e2e-testing
