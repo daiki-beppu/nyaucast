@@ -105,7 +105,9 @@ steps:
     # 各 step の git commit を禁じている。delivery は PR を自分で立てる必要があるので
     # この step だけ解禁する（trust boundary の明示的な引き上げ）。
     allow_git_commit: true
-    required_permission_mode: edit
+    # edit は codex では workspace-write にマップされ .git が書込禁止になる。
+    # allow_git_commit は指示文にしか効かないため、commit / push には full が必須（#130）
+    required_permission_mode: full
     provider_options:
       extends: edit
     instruction: tayk-pr-open
@@ -172,7 +174,9 @@ steps:
     knowledge:
       - tayk-adr
     allow_git_commit: true
-    required_permission_mode: edit
+    # edit は codex では workspace-write にマップされ .git が書込禁止になる。
+    # allow_git_commit は指示文にしか効かないため、commit / push には full が必須（#130）
+    required_permission_mode: full
     session: refresh
     provider_options:
       extends: edit
@@ -249,7 +253,9 @@ steps:
       - tayk-adr
       - tayk-domain
     allow_git_commit: true
-    required_permission_mode: edit
+    # edit は codex では workspace-write にマップされ .git が書込禁止になる。
+    # allow_git_commit は指示文にしか効かないため、commit / push には full が必須（#130）
+    required_permission_mode: full
     session: refresh
     provider_options:
       extends: edit
