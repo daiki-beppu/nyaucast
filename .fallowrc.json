@@ -8,7 +8,7 @@
     "prototype/**",
     "scripts/**"
   ],
-  "ignoreDependencies": ["@modelcontextprotocol/sdk", "ultracite", "zod"],
+  "ignoreDependencies": ["ultracite"],
   "duplicates": {
     "enabled": true,
     "mode": "semantic",
