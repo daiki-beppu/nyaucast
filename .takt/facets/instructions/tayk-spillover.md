@@ -2,6 +2,8 @@
 
 発見をレポートに書いたまま終わると、workflow の実行ログとともに埋もれます。ここが最後の逃がし口です。
 
+> タスククローンには git remote が無いため、`gh` はリポジトリを自動解決できない。**すべての `gh` コマンドに `-R daiki-beppu/tayk` を付ける。** remote が無いこと自体は正常であり、失敗の理由にしない。
+
 ## 手順
 
 ### 1. 集める
@@ -33,13 +35,13 @@ Policy のスコープ外発見ポリシーの 3 条件に照らす。
 起票対象それぞれについて、既存の open issue を検索する:
 
 ```
-gh issue list --state open --search "<発見の要約から抜いた語>" --json number,title,body
+gh issue list -R daiki-beppu/tayk --state open --search "<発見の要約から抜いた語>" --json number,title,body
 ```
 
 検索語は 1 つに絞らず、場所（ファイル名）・症状・関連する tool 名の 3 方向から引く。既存が見つかったら**起票せず**、その issue へ観測をコメントで足す:
 
 ```
-gh issue comment <N> --body "<今回の workflow で再確認した観測。file:line と根拠>"
+gh issue comment <N> -R daiki-beppu/tayk --body "<今回の workflow で再確認した観測。file:line と根拠>"
 ```
 
 ### 5. 起票する
@@ -47,7 +49,7 @@ gh issue comment <N> --body "<今回の workflow で再確認した観測。file
 重複がないものだけを起票する。**1 発見 = 1 issue**。
 
 ```
-gh issue create --title "<種別>: <1 行で問題>" --body "<本文>"
+gh issue create -R daiki-beppu/tayk --title "<種別>: <1 行で問題>" --body "<本文>"
 ```
 
 本文には、発見時のレポートから以下をそのまま転記する:
