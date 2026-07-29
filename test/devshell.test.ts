@@ -155,6 +155,11 @@ function runGit(directory: string, args: string[]): void {
 function initializeGitRepository(directory: string): void {
   mkdirSync(directory, { recursive: true });
   runGit(directory, ["init", "-b", "main"]);
+  // git 2.51+ は commit 後に background maintenance を detach で走らせ、
+  // 一時ファイル（.git/objects/maintenance.lock）がツリーのスナップショット
+  // 比較へ写り込む。fixture では自動メンテナンスを止めて競合を断つ。
+  runGit(directory, ["config", "maintenance.auto", "false"]);
+  runGit(directory, ["config", "gc.auto", "0"]);
 }
 
 function commitFixture(directory: string): void {
