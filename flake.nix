@@ -12,7 +12,9 @@
         let pkgs = import nixpkgs { inherit system; };
         in {
           default = pkgs.mkShell {
-            packages = with pkgs; [ bun git nodejs_24 ];
+            # direnv は開発者がホスト側に持つが、CI は nix develop 経由で入るため
+            # devShell が供給しないと devshell テストの前提（direnv on PATH）が満たせない
+            packages = with pkgs; [ bun direnv git nodejs_24 ];
             # devShell へ入るたびに依存の解決を試みる。bun install は変更が無ければ
             # no-op（~0.3s）なので、自前の鮮度判定（node_modules の有無や lockfile の
             # mtime 比較）は持たない。
