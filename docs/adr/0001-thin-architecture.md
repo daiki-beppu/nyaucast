@@ -16,7 +16,7 @@ accepted (2026-07-08)
 4. **adapter は MCP primary + CLI thin の 2 本**（CONTEXT.md「adapter」）。adapter に業務ロジックを書かない
 5. **runtime は Bun、schema は zod、DB は libSQL + Drizzle**
 6. **旧リポから引き継ぐ決定**（本リポで再議論しない）: npm 配布（旧 ADR-0006）/ `tayk` ブランド（旧 ADR-0007）/ JSON-only config（旧 ADR-0009）/ libSQL local store（旧 ADR-0017）/ CONTEXT.md の全用語
-7. **本規約の確定は tracer (`collection.plan`) の end-to-end 完走をもって行う**。tracer 実装中に破綻した項目は本 ADR を改訂して直す（黙って逸脱しない）
+7. **本規約の確定は tracer（plan 区間）の end-to-end 完走をもって行う**。tracer 実装中に破綻した項目は本 ADR を改訂して直す（黙って逸脱しない）
 
 ## Why
 
@@ -32,7 +32,7 @@ accepted (2026-07-08)
 
 ## Consequences
 
-- tracer issue (`collection.plan`) が本規約の最初の適用対象。ディレクトリ規約（`src/tools/<domain>.<name>.ts` 等）は tracer 実装で確定させ、本 ADR に追記する
+- tracer（plan 区間）が本規約の最初の適用対象。ディレクトリ規約（`src/tools/<domain>.<name>.ts` 等）は tracer 実装で確定させ、本 ADR に追記する
 - ~~takt 運用は組み込み default workflow を素のまま使う。レビュー終了条件（仕様引用必須 / ラウンド上限）は予防的に導入せず、レビューが 3 ラウンドを超える再発を観測したら実データを根拠に別 ADR で導入する（旧 ADR-0021 の決定）~~
   → **ADR-0008 で置き換え**（2026-07-26）。tayk 専用 workflow を採用し、設計ゲート（fix では診断ゲート）・ADR 整合検査・レビュー ⇄ 修正ループ上限 3 回（CI 待機・レビュー待機のような待機ループは別枠の閾値）を構造として持つ。本項の「予防的に導入しない」は、無人完走を目標に据えた時点で前提が変わったため覆した。経緯は ADR-0008 を参照。
   **なお本項は改訂の前後を通じて開発側の運用規約である** — 製品（collection lifecycle）の orchestration に takt を採用しないことは ADR-0006 が別途確定しており、そちらは本項の改訂と独立に有効（ADR-0006 自身が「開発側の takt 利用は本 ADR の対象外」と定めている）

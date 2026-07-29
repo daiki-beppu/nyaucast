@@ -1,5 +1,11 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -48,6 +54,226 @@ function withTemporaryDirectory(run: (directory: string) => void): void {
 
 function readRepositoryFile(relativePath: string): string {
   return readFileSync(join(packageRoot, relativePath), "utf-8");
+}
+
+function readSection(markdown: string, heading: string): string {
+  const start = markdown.indexOf(`${heading}\n`);
+  if (start === -1) {
+    throw new Error(`missing section: ${heading}`);
+  }
+
+  const contentStart = start + heading.length + 1;
+  const nextHeading = markdown.indexOf("\n## ", contentStart);
+  return markdown.slice(
+    contentStart,
+    nextHeading === -1 ? markdown.length : nextHeading
+  );
+}
+
+function normalizeMarkdownText(value: string): string {
+  return value.replaceAll("**", "").replaceAll(/\s+/g, " ").trim();
+}
+
+function readMarkdownTableRows(markdown: string): string[][] {
+  const rows = markdown
+    .split("\n")
+    .filter((line) => line.trim().startsWith("|"))
+    .map((line) =>
+      line.trim().slice(1, -1).split("|").map(normalizeMarkdownText)
+    );
+
+  if (
+    rows.length < 2 ||
+    rows[1] === undefined ||
+    !rows[1].every((cell) => /^:?-{3,}:?$/.test(cell))
+  ) {
+    throw new Error("missing markdown table");
+  }
+
+  return rows.slice(2);
+}
+
+function readDefinitionRows(
+  markdown: string
+): { definition: string; term: string }[] {
+  return [...markdown.matchAll(/^(?:- )?\*\*([^*\r\n]+)\*\*: (.+)$/gm)].map(
+    (match) => {
+      const term = match[1];
+      const definition = match[2];
+
+      if (term === undefined || definition === undefined) {
+        throw new Error("invalid definition row");
+      }
+
+      return {
+        definition: normalizeMarkdownText(definition),
+        term: normalizeMarkdownText(term),
+      };
+    }
+  );
+}
+
+function readNumberedDecision(markdown: string, number: number): string {
+  const prefix = `${number}. `;
+  const line = markdown
+    .split("\n")
+    .find((candidate) => candidate.startsWith(prefix));
+
+  if (line === undefined) {
+    throw new Error(`missing decision: ${number}`);
+  }
+
+  return normalizeMarkdownText(line.slice(prefix.length));
+}
+
+function readCodecReleaseStatements(markdown: string): string[] {
+  return markdown
+    .split("。")
+    .map(normalizeMarkdownText)
+    .filter((sentence) => sentence.includes("codec"));
+}
+
+function extractBacktickPaths(markdown: string, prefix: string): string[] {
+  return [...markdown.matchAll(/`([^`\r\n]+)`/g)]
+    .map((match) => match[1])
+    .filter((path): path is string => path?.startsWith(prefix) === true);
+}
+
+function listAdrPaths(): string[] {
+  return readdirSync(join(packageRoot, "docs/adr"))
+    .filter((name) => /^\d{4}-.*\.md$/.test(name))
+    .toSorted()
+    .map((name) => `docs/adr/${name}`);
+}
+
+function assertDomainArchitectureContract(markdown: string): void {
+  const terms = readSection(markdown, "## 中核用語");
+  const avoidedTerms = readSection(markdown, "## 禁止語（`_Avoid_`）");
+
+  expect(readDefinitionRows(terms)).toEqual([
+    {
+      definition:
+        "tayk が expose する型付き操作。agent が直接呼ぶ第一級インターフェース。primitive tool 1 層と、local store への読み口で構成される。ドット表記 (`benchmark.collect`) が正書で、MCP wire 名はアンダースコア変換した `benchmark_collect`。",
+      term: "MCP tool",
+    },
+    {
+      definition:
+        "単一操作の細粒度 tool。`audio.master` / `thumbnail.generate` 等",
+      term: "primitive tool",
+    },
+    {
+      definition:
+        "廃止された粗粒度の MCP tool。区間を歩くのは knowledge codec を読んだ agent であり、tool ではない",
+      term: "workflow tool",
+    },
+    {
+      definition:
+        "core の MCP tool を各プロトコルへ橋渡しする薄いラッパ。MCP (primary) と CLI (`tayk <cmd>`) の 2 本。",
+      term: "adapter",
+    },
+    {
+      definition:
+        "「いつ・どの MCP tool を・どう使うか」の知識パッケージ。tool の description が WHAT、codec が WHEN/HOW。5 本構成。",
+      term: "knowledge codec",
+    },
+    {
+      definition:
+        "1 本の YouTube 動画としてまとめられる楽曲群とその成果物一式。",
+      term: "collection",
+    },
+    {
+      definition:
+        "`TTP 収集・分析 → 企画 →[GO/NO-GO]→ サムネ生成 →[GO/NO-GO]→ 音源生成 → MIX/マスタリング → 動画生成 → upload → 公開後運用`。",
+      term: "collection lifecycle",
+    },
+    {
+      definition:
+        "「徹底的にパクる」。benchmark チャンネルの当たりパターンを分析し自チャンネルの企画へ転写する戦略。分析に留まらず転写までを含む。",
+      term: "TTP",
+    },
+    {
+      definition:
+        "`<CHANNEL_DIR>/data/local.db` の libSQL embedded DB。時系列データとコレクション状態 (②) の SSOT。",
+      term: "local store",
+    },
+    {
+      definition:
+        "local store が兼ねる読み取り専用クエリ面。① ④ のミラーを含むが SSOT ではない。",
+      term: "read model",
+    },
+    {
+      definition:
+        "ADR-0001 を確定させるために最初に end-to-end で通す垂直スライス = plan 区間。",
+      term: "tracer",
+    },
+    {
+      definition:
+        "first-party 2 リポで collection フルライフサイクル 1 周を tayk だけで実走させる受け入れ検証。`v0.1.0` の唯一のリリースゲート。",
+      term: "dogfood",
+    },
+    {
+      definition:
+        "リリースをブロックする欠陥は 3 種のみ — ①誤公開・誤メタデータ ②データ破壊 ③auth 破壊。これ以外はブロックせず issue 化する。",
+      term: "critical regression",
+    },
+  ]);
+  expect(
+    readMarkdownTableRows(avoidedTerms).filter((row) =>
+      row.some((cell) => cell.includes("tool"))
+    )
+  ).toEqual([["workflow tool", "primitive tool"]]);
+}
+
+function assertAdrReviewTerminologyContract(markdown: string): void {
+  const terminology = readSection(markdown, "## 用語（CONTEXT.md）");
+
+  expect(readMarkdownTableRows(terminology)).toEqual([
+    [
+      "`<対象ファイル>`",
+      "workflow tool",
+      "廃止済み。primitive tool 1 層と事実だけを返す読み口を使う",
+    ],
+  ]);
+}
+
+function assertDesignArchitectureContract(markdown: string): void {
+  const procedure = readSection(markdown, "## 手順");
+
+  expect(readMarkdownTableRows(procedure)).toEqual([
+    [
+      "要求の充足",
+      "要件 ID ごとの方針が、その要件を実際に満たすか。方針が抽象すぎて実装が一意に決まらない箇所はないか",
+    ],
+    [
+      "責務の配置",
+      "業務ロジックが core にあり、adapter が薄いままか。MCP tool が primitive tool 1 層で、読み口が事実だけを返すか",
+    ],
+    [
+      "データの流れ",
+      "入出力の型が決まっているか。SSOT が データ 4 分類 のどれに当たるかが明示されているか",
+    ],
+    [
+      "失敗の設計",
+      "失敗経路が設計されているか。エラーが内部 throw → 境界変換になっているか",
+    ],
+    [
+      "変更の広がり",
+      "1 要件の実装が想定外に多くのファイルへ波及していないか。波及するなら、その必然性が説明されているか",
+    ],
+    [
+      "未来への負債",
+      "いま入れると後で剥がしにくくなる構造（暗黙の状態・グローバル・双方向依存）がないか",
+    ],
+  ]);
+}
+
+function assertAgentCodecReleaseContract(markdown: string): void {
+  const scope = readSection(markdown, "## v0.1.0 のスコープ");
+
+  expect(readCodecReleaseStatements(scope)).toEqual([
+    "`collection-lifecycle` codec は v0.1 の中心成果物とする",
+    "それ以外（自チャンネル実績分析 / dashboard / Remotion / `collection-lifecycle` 以外の codec）は v0.2 以降に 1 リリース 1 テーマで直列に積む",
+  ]);
 }
 
 function readPackageScripts(): Record<string, string> {
@@ -470,5 +696,185 @@ describe("check command", () => {
     expect(lintFix).toContain("--config oxlint.config.ts");
     expect(formatCheck.endsWith(" .")).toBeTrue();
     expect(formatFix.endsWith(" .")).toBeTrue();
+  });
+});
+
+describe("Issue #84 agent-facing architecture contracts", () => {
+  // REQ-84-01 / TC-01
+  test("should index every current ADR and define the tracer as the plan interval", () => {
+    const knowledge = readRepositoryFile(".takt/facets/knowledge/tayk-adr.md");
+    const index = readSection(knowledge, "## 判定前に必ず読むファイル");
+    const decisionSeven = readSection(
+      knowledge,
+      "## ADR-0001 の決定に対する違反パターン"
+    );
+
+    const indexedAdrs = extractBacktickPaths(index, "docs/adr/")
+      .filter((path) => path.endsWith(".md"))
+      .toSorted();
+
+    expect(indexedAdrs).toEqual(listAdrPaths());
+    expect(readMarkdownTableRows(decisionSeven).at(-1)).toEqual([
+      "決定 7（tracer 完走までの規約確定・黙って逸脱しない）",
+      "tracer（plan 区間）未完走の段階で追加の制約を課す。ADR を改訂せずに逸脱する",
+    ]);
+  });
+
+  // REQ-84-02 / TC-02
+  test("should define one primitive tool layer, factual reads, and the plan tracer", () => {
+    const knowledge = readRepositoryFile(
+      ".takt/facets/knowledge/tayk-domain.md"
+    );
+
+    assertDomainArchitectureContract(knowledge);
+  });
+
+  // REQ-84-04 / TC-04
+  test("should keep ADR-0001 provisional until the plan interval tracer completes", () => {
+    const adr = readRepositoryFile("docs/adr/0001-thin-architecture.md");
+    const decision = readSection(adr, "## Decision");
+    const consequences = readSection(adr, "## Consequences");
+    const tracerConsequences = consequences
+      .split("\n")
+      .filter((line) => line.startsWith("- ") && line.includes("tracer"))
+      .map((line) => normalizeMarkdownText(line.slice(2)));
+
+    expect(readNumberedDecision(decision, 7)).toBe(
+      "本規約の確定は tracer（plan 区間）の end-to-end 完走をもって行う。tracer 実装中に破綻した項目は本 ADR を改訂して直す（黙って逸脱しない）"
+    );
+    expect(tracerConsequences).toEqual([
+      "tracer（plan 区間）が本規約の最初の適用対象。ディレクトリ規約（`src/tools/<domain>.<name>.ts` 等）は tracer 実装で確定させ、本 ADR に追記する",
+    ]);
+  });
+
+  // REQ-84-05 / TC-05
+  test("should reserve v0.1 for collection-lifecycle and defer other codecs", () => {
+    const instructions = readRepositoryFile("AGENTS.md");
+
+    assertAgentCodecReleaseContract(instructions);
+  });
+
+  // REQ-84-06 / TC-06
+  test("should use only a neutral implementation target in the plan contract", () => {
+    const contract = readRepositoryFile(
+      ".takt/facets/output-contracts/tayk-plan.md"
+    );
+    const implementationPlan = readSection(contract, "## 実装方針");
+
+    expect(
+      readMarkdownTableRows(implementationPlan).map((row) => row[1])
+    ).toEqual(["`<対象ファイル>`"]);
+  });
+
+  // REQ-84-07 / TC-07
+  test("should use only neutral implementation and test targets in test design", () => {
+    const contract = readRepositoryFile(
+      ".takt/facets/output-contracts/tayk-test-design.md"
+    );
+    const cases = readSection(contract, "## 要件 ↔ テストケース対応");
+    const placement = readSection(contract, "## テストファイル配置");
+
+    expect(readMarkdownTableRows(cases).map((row) => row[3])).toEqual([
+      "`<対象ファイル>`",
+    ]);
+    expect(
+      readMarkdownTableRows(placement).map((row) => row.slice(0, 2))
+    ).toEqual([["`<テストファイル>`", "`<対象ファイル>`"]]);
+  });
+
+  // REQ-84-09 / TC-09
+  test("should give ADR reviewers the current index and primitive tool terminology", () => {
+    const contract = readRepositoryFile(
+      ".takt/facets/output-contracts/tayk-adr-conformance-review.md"
+    );
+    const index = readSection(contract, "## 照合した ADR");
+    const evidence = readSection(
+      contract,
+      "## 再走査証跡（2回目以降のレビューで必須）"
+    );
+
+    const indexedAdrs = extractBacktickPaths(index, "docs/adr/")
+      .filter((path) => path.endsWith(".md"))
+      .toSorted();
+
+    expect(indexedAdrs).toEqual(listAdrPaths());
+    assertAdrReviewTerminologyContract(contract);
+    expect(readMarkdownTableRows(evidence)).toEqual([
+      ["ADR-0001 決定 1", "`<対象ファイル>`（1 ファイルに凝集）"],
+    ]);
+  });
+
+  // REQ-84-10 / TC-10
+  test("should review designs against primitive tools and factual reads", () => {
+    const instruction = readRepositoryFile(
+      ".takt/facets/instructions/tayk-review-design-arch.md"
+    );
+
+    assertDesignArchitectureContract(instruction);
+  });
+
+  // REQ-84-11 / TC-21
+  test("should keep the codec release boundary in ADR knowledge", () => {
+    const knowledge = readRepositoryFile(".takt/facets/knowledge/tayk-adr.md");
+    const scope = readSection(knowledge, "## スコープの規律");
+
+    expect(readCodecReleaseStatements(scope)).toEqual([
+      "その中心成果物は `collection-lifecycle` codec とする",
+      "これに不要な拡張（自チャンネル実績分析 / dashboard / Remotion / `collection-lifecycle` 以外の 4 本の codec）は v0.2 以降へ送る",
+    ]);
+  });
+
+  test("should reject an alias orchestration layer in the domain definitions", () => {
+    const knowledge = readRepositoryFile(
+      ".takt/facets/knowledge/tayk-domain.md"
+    );
+    const contradictoryKnowledge = knowledge.replace(
+      "**knowledge codec**:",
+      "- **orchestration layer**: primitive tool を束ねる粗粒度の現行層\n\n**knowledge codec**:"
+    );
+
+    expect(() => {
+      assertDomainArchitectureContract(contradictoryKnowledge);
+    }).toThrow();
+  });
+
+  test("should reject a contradictory workflow tool recommendation", () => {
+    const contract = readRepositoryFile(
+      ".takt/facets/output-contracts/tayk-adr-conformance-review.md"
+    );
+    const contradictoryContract = contract.replace(
+      "| `<対象ファイル>` | workflow tool | 廃止済み。primitive tool 1 層と事実だけを返す読み口を使う |",
+      "| `<対象ファイル>` | workflow tool | 廃止済み。primitive tool 1 層と事実だけを返す読み口を使う |\n| `<別の対象>` | orchestration tool | primitive tool を束ねる現行推奨層 |"
+    );
+
+    expect(() => {
+      assertAdrReviewTerminologyContract(contradictoryContract);
+    }).toThrow();
+  });
+
+  test("should reject an additional coarse-grained tool review layer", () => {
+    const instruction = readRepositoryFile(
+      ".takt/facets/instructions/tayk-review-design-arch.md"
+    );
+    const contradictoryInstruction = instruction.replace(
+      "| データの流れ | 入出力の型が決まっているか。",
+      "| データの流れ | orchestration tool が primitive tool を束ねる現行層か。入出力の型が決まっているか。"
+    );
+
+    expect(() => {
+      assertDesignArchitectureContract(contradictoryInstruction);
+    }).toThrow();
+  });
+
+  test("should reject collection-lifecycle from the deferred codec set", () => {
+    const instructions = readRepositoryFile("AGENTS.md");
+    const contradictoryInstructions = instructions.replace(
+      "**それ以外（自チャンネル実績分析 / dashboard / Remotion / `collection-lifecycle` 以外の codec）は v0.2 以降**に 1 リリース 1 テーマで直列に積む。",
+      "**それ以外（自チャンネル実績分析 / dashboard / Remotion / `collection-lifecycle` 以外の codec）は v0.2 以降**に 1 リリース 1 テーマで直列に積む。`collection-lifecycle` codec は v0.2 以降へ送る。"
+    );
+
+    expect(() => {
+      assertAgentCodecReleaseContract(contradictoryInstructions);
+    }).toThrow();
   });
 });

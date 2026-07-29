@@ -40,7 +40,7 @@ YouTube チャンネル運営を自動化するツールキット。skill に蓄
 
 ## v0.1.0 のスコープ
 
-ゲートは collection フルライフサイクル 1 周（TTP ベンチマーク収集 → 企画 → 音源 → 動画 → upload → description）を first-party チャンネルで dogfood 完走すること。**それ以外（自チャンネル実績分析 / dashboard / Remotion / codec）は v0.2 以降**に 1 リリース 1 テーマで直列に積む。スコープを広げる提案は issue 化して先送りする。
+ゲートは collection フルライフサイクル 1 周（TTP ベンチマーク収集 → 企画 → 音源 → 動画 → upload → description）を first-party チャンネルで dogfood 完走すること。`collection-lifecycle` codec は v0.1 の中心成果物とする。**それ以外（自チャンネル実績分析 / dashboard / Remotion / `collection-lifecycle` 以外の codec）は v0.2 以降**に 1 リリース 1 テーマで直列に積む。スコープを広げる提案は issue 化して先送りする。
 
 ## Agent 向けドキュメント
 
