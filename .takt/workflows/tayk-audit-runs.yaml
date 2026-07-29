@@ -7,6 +7,12 @@
 # このリポが個人運用である前提で許容し、読めない場合は空レポートを publish せず plan が
 # 明示的に ABORT する（サンドボックスの read 制限や本体リポ移動の自己申告を兼ねる）。
 #
+# #146: 監査対象には run トレースに加えて workflow 定義そのもの（定義監査）を含む。
+# ADR-0008 Consequences で静的検査から外れた検査 E（spillover 複製の一致）/ F（レポート
+# 境界）と、工程説明と実配線の乖離（drift）を、Audit Targets の固定 3 対象（#1〜#3）と
+# して毎回検査する。定義ファイルは隔離クローン内に git 追跡で存在するため、runs と違い
+# 絶対パスは使わず相対パスで読む。
+#
 # 容量: plan(1) + analyze(1) + [supervise+review]×10(20) + publish(1) + file(1) = 24 ≤ 25。
 # plan 側の対象数上限（24。tayk-audit-runs-plan 参照）と review 側の 1 サイクル最低 4 対象の
 # 前進義務が、この max_steps と整合する。
@@ -18,10 +24,12 @@
 #   publish / ABORT は cycle から出る一方向。遷移を足すときはこの前提を崩さないこと
 name: tayk-audit-runs
 description: >
-  .takt/runs の実行トレースを run 横断で監査する。計画（対象 run の列挙・採番）→
-  分担分析 → 監督 ⇄ 再分析で ABORT 原因・差し戻し経路・loop monitor 発火の
-  再発パターンを抽出し、レポートを docs/audits/ へ配置し、根拠（run 名 +
-  トレース引用）を示せる発見のみ重複照合の上で起票する。publish と起票以外の
+  .takt/runs の実行トレースを run 横断で監査し、併せて workflow 定義そのものを
+  静的監査する（spillover 複製の一致 / callable のレポート境界 / 工程説明 drift。#146）。
+  計画（定義監査の固定 3 対象 + 対象 run の列挙・採番）→ 分担分析 → 監督 ⇄ 再分析で
+  ABORT 原因・差し戻し経路・loop monitor 発火の再発パターンと定義の乖離を抽出し、
+  レポートを docs/audits/ へ配置し、根拠（run 名 + トレース引用。定義監査は
+  ファイルパス + 引用）を示せる発見のみ重複照合の上で起票する。publish と起票以外の
   全 step は read-only でファイルを変更しない。
 max_steps: 25
 initial_step: plan
@@ -44,7 +52,7 @@ loop_monitors:
 
 steps:
   - name: plan
-    description: 証拠パスの読み取りを確認し、対象 run を棚卸しして番号を固定した監査対象表（Audit Targets）を作る
+    description: 証拠パスの読み取りを確認し、定義監査の固定 3 対象と対象 run の棚卸しから番号を固定した監査対象表（Audit Targets）を作る
     tags:
       - review
     edit: false
@@ -90,7 +98,7 @@ steps:
         next: supervise
 
   - name: supervise
-    description: 一対一表の照合と、発見の引用を実トレースと突き合わせる品質判定。判定のみでレポートは書かない
+    description: 一対一表の照合と、発見の引用を実トレース・定義ファイルと突き合わせる品質判定。判定のみでレポートは書かない
     tags:
       - review
     edit: false
@@ -175,7 +183,8 @@ steps:
           format: tayk-runs-audit-filing
     quality_gates:
       - 分析レポートの全 Finding を仕分けし、判定（起票 / 追記 / 記録のみ）を記録していること
-      - 起票したものが実害と根拠（run 名 + トレース引用）の両方を満たしていること
+      - 起票したものが実害と根拠（run 名 + トレース引用。定義監査の発見は定義ファイルの
+        パス + 該当行の引用）の両方を満たしていること
       - 起票前に gh issue list で重複を照合していること
       - 記録のみとした発見について、満たさなかった条件を記録していること
       - gh issue の操作に失敗したなら、起票できなかった発見と手動起票用のコマンドを
