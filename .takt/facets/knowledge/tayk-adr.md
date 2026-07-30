@@ -8,15 +8,17 @@ tayk の設計・実装が ADR に整合しているかを判定するための�
 
 **まず `docs/adr/` を Glob で列挙し、出てきた ADR をすべて Read する。** 下の表は現時点の索引にすぎず、増えた ADR を落とさないために列挙を先に行う。要約や記憶で判定してはならない。
 
-| ファイル                                       | 内容                                                             |
-| ---------------------------------------------- | ---------------------------------------------------------------- |
-| `docs/adr/0001-thin-architecture.md`           | 薄いアーキテクチャ規約（最重要・全変更が対象）                   |
-| `docs/adr/0002-no-llm-in-core.md`              | core に LLM を持ち込まない                                       |
-| `docs/adr/0003-bun-only-distribution.md`       | Bun 前提の配布                                                   |
-| `docs/adr/0004-auto-migration.md`              | 自動マイグレーション                                             |
-| `docs/adr/0005-media-processing-foundation.md` | メディア処理基盤（mediabunny + node-av）                         |
-| `docs/adr/0006-takt-dedicated-workflow.md`     | takt 専用 workflow。**`.takt/**` への変更はこの ADR が統治する** |
-| `CONTEXT.md`                                   | 用語の正書（グロッサリ）。データ 4 分類もここが正本              |
+| ファイル                                                | 内容                                                             |
+| ------------------------------------------------------- | ---------------------------------------------------------------- |
+| `docs/adr/0001-thin-architecture.md`                    | 薄いアーキテクチャ規約（最重要・全変更が対象）                   |
+| `docs/adr/0002-no-llm-in-core.md`                       | core に LLM を持ち込まない                                       |
+| `docs/adr/0003-bun-only-distribution.md`                | Bun 前提の配布                                                   |
+| `docs/adr/0004-auto-migration.md`                       | 自動マイグレーション                                             |
+| `docs/adr/0005-media-processing-foundation.md`          | メディア処理基盤（mediabunny + node-av）                         |
+| `docs/adr/0006-no-takt-for-product-orchestration.md`    | takt を製品 orchestration に採用しない                           |
+| `docs/adr/0007-collection-lifecycle-execution-model.md` | collection lifecycle 実行モデル                                  |
+| `docs/adr/0008-takt-dedicated-workflow.md`              | takt 専用 workflow。**`.takt/**` への変更はこの ADR が統治する** |
+| `CONTEXT.md`                                            | 用語の正書（グロッサリ）。データ 4 分類もここが正本              |
 
 ## ADR-0001 の決定に対する違反パターン
 
@@ -30,7 +32,7 @@ ADR-0001 は「レビュー表面積の最小化」を目的とする。**決定
 | 決定 4（adapter は 2 本）                             | adapter に業務ロジック（分岐・整形・状態遷移）が入っている。3 本目の adapter が増えている                                  |
 | 決定 5（技術選定）                                    | Node 前提の API 依存、zod 以外のバリデータ、Drizzle を経由しない生 SQL の常用、libSQL 以外の DB                            |
 | 決定 6（旧リポからの引き継ぎ）                        | npm 配布 / `tayk` ブランド / JSON-only config / libSQL local store / CONTEXT.md 用語の蒸し返し                             |
-| 決定 7（tracer 完走までの規約確定・黙って逸脱しない） | tracer (`collection.plan`) 未完走の段階で追加の制約を課す。ADR を改訂せずに逸脱する                                        |
+| 決定 7（tracer 完走までの規約確定・黙って逸脱しない） | tracer（plan 区間）未完走の段階で追加の制約を課す。ADR を改訂せずに逸脱する                                                |
 
 ## ADR-0008 の決定に対する違反パターン
 
@@ -66,4 +68,4 @@ ADR-0001 の決定 7 は「破綻した項目は本 ADR を改訂して直す（
 
 ## スコープの規律
 
-v0.1.0 のゲートは collection フルライフサイクル 1 周の dogfood 完走。これに不要な拡張（自チャンネル実績分析 / dashboard / Remotion / codec 全 5 本）は v0.2 以降へ送る。差分にゲート外の機能が混ざっていたら、スコープ逸脱として指摘する。
+v0.1.0 のゲートは collection フルライフサイクル 1 周の dogfood 完走。その中心成果物は `collection-lifecycle` codec とする。これに不要な拡張（自チャンネル実績分析 / dashboard / Remotion / `collection-lifecycle` 以外の 4 本の codec）は v0.2 以降へ送る。差分にゲート外の機能が混ざっていたら、スコープ逸脱として指摘する。
