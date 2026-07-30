@@ -255,6 +255,7 @@ steps:
     policy:
       - tayk-traceability
       - existing-system-respect
+      - tayk-conflict-escalation
     knowledge:
       - architecture
       - tayk-adr

@@ -168,6 +168,7 @@ steps:
       - tayk-traceability
       - existing-system-respect
       - tayk-scope-spillover
+      - tayk-conflict-escalation
     knowledge:
       - architecture
       - tayk-adr

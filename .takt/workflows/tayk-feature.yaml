@@ -264,6 +264,7 @@ steps:
     persona: planner
     policy:
       - tayk-traceability
+      - tayk-conflict-escalation
     knowledge:
       - architecture
       - tayk-adr
