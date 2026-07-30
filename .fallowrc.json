@@ -4,6 +4,8 @@
   "ignorePatterns": [
     "bin/**/*.test.ts",
     "test/**/*.test.ts",
+    "test/package-smoke-support.ts",
+    "test/fixtures/**",
     "*.config.ts",
     "prototype/**",
     "scripts/**"

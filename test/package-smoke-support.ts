@@ -167,7 +167,7 @@ function createIsolatedEnvironment(directory: string): NodeJS.ProcessEnv {
 
 export function sourceDependencies(): Record<string, string> {
   return requireStringRecord(
-    readJsonRecord(packageJsonPath)["dependencies"],
+    readJsonRecord(packageJsonPath)["dependencies"] ?? {},
     "source dependencies"
   );
 }
@@ -370,7 +370,7 @@ export function installedDependencies(
     join(installed.packageDirectory, "package.json")
   );
   return requireStringRecord(
-    manifest["dependencies"],
+    manifest["dependencies"] ?? {},
     "installed dependencies"
   );
 }

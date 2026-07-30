@@ -188,7 +188,7 @@ function selectExportCandidate(
 
 const installedManifest = readJsonRecord(join(packageRoot, "package.json"));
 const dependencies = requireStringRecord(
-  installedManifest["dependencies"],
+  installedManifest["dependencies"] ?? {},
   "installed dependencies"
 );
 const probes: DependencyProbe[] = [];
