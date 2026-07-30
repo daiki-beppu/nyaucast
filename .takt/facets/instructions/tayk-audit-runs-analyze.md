@@ -42,6 +42,17 @@ run 監査を分解し、対象ごとに担当を割り当てて並列分析し�
 - 対象単体の観測に加えて、**複数 run にまたがる再発パターン**を Findings として抽出する（Finding ごとに該当 run をすべて列挙する）
 - 各パートの loop monitor 不発の検査結果を (workflow, step) 単位で 1 行に統合し、「Loop Monitor 不発の疑い」節を作る（該当なしでも節は残す）。高確度（自前上限なし）の行は Findings にも Category: loop-monitor で載せる
 - パートが時間内に完了できなかった対象も ⏳ として行を残し、Follow-up Notes に理由を書く
+- 下記のトークン消費集計を実行し、レポートの Token Usage 節を作る
+
+**統合時のトークン消費集計（Token Usage 節。ADR-0008 Consequences の費用観測）:**
+
+パートに任せず、統合時にあなたが**コマンドで機械的に集計する**（jsonl を 1 件ずつ精読しない）。対象は計画レポートの Run Inventory と同じスコープの全 run（Audit Targets に選ばれなかった run も含む）。
+
+1. 各 run の `/Users/mba/02-yt/tayk/.takt/runs/<run>/logs/*-usage-events.phase.jsonl` を読む。`usage_missing` が true の行は除外し、`usage.total_tokens` を run ごとに合算する（セッションが複数あればすべて合算）
+2. 有効な usage を 1 行も持たない run は**集計対象外**とし、件数と理由（phase.jsonl が無い / 全行 usage_missing）を内訳で明示する。集計対象外があっても集計を壊さず、残りの run で集計を完遂する
+3. workflow 別（run の `meta.json` の workflow で束ねる）に、集計対象 run 数・total_tokens 合計・run あたり中央値を出す
+4. step 別（jsonl の `step` フィールド）に消費を集計し、workflow ごとに消費上位の step と workflow 合計に占める割合を出す
+5. 単一 step が workflow 合計の 3 割を超える場合は突出として所見に明記する。**費用の偏りは所見として記録するだけで、Findings に書かない・起票候補にしない**（見合うか・削るかは人間の判断）。ただし偏りの原因が根拠を示せる欠陥（例: 差し戻しループによる浪費）である場合、その欠陥は通常どおり Findings に書く
 
 **制約:**
 
