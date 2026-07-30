@@ -148,6 +148,13 @@ steps:
         next: COMPLETE
       - condition: any("needs_fix", "AI特有の問題あり", "REJECT", "NEEDS_ADR_REVISION")
         next: fix
+      # sub-step の verdict がどの宣言条件にも分類されないと（分類器の失敗・空応答）、
+      # all() は false・any() は skip になり両 rule が外れ、rule 不一致で run 全体が
+      # ABORT していた（#167。全レビュー APPROVE でも落ちる）。決定的な受け皿で
+      # 再レビューへ戻す。連続自己再入は fix への外部再入ではないため ADR-0008
+      # 決定 12 に反しない。上限は max_steps が持つ
+      - condition: when(true)
+        next: impl_review
 
   - name: fix
     description: 実装レビュー指摘の修正
@@ -161,6 +168,7 @@ steps:
       - tayk-traceability
       - existing-system-respect
       - tayk-scope-spillover
+      - tayk-conflict-escalation
     knowledge:
       - architecture
       - tayk-adr

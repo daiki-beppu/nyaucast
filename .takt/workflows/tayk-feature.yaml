@@ -247,6 +247,13 @@ steps:
         next: plan
       - condition: any("REJECT", "NEEDS_ADR_REVISION")
         next: design_fix
+      # sub-step の verdict がどの宣言条件にも分類されないと（分類器の失敗・空応答）、
+      # all() は false・any() は skip になり全 rule が外れ、rule 不一致で run 全体が
+      # ABORT する（#167）。決定的な受け皿で再レビューへ戻す。連続自己再入は
+      # design_fix への外部再入ではないため ADR-0008 決定 12 に反しない。
+      # 上限は max_steps が持つ
+      - condition: when(true)
+        next: design_review
 
   - name: design_fix
     description: 設計レビュー指摘の解消（レポートのみを直す。コードは書かない）
@@ -257,6 +264,7 @@ steps:
     persona: planner
     policy:
       - tayk-traceability
+      - tayk-conflict-escalation
     knowledge:
       - architecture
       - tayk-adr
