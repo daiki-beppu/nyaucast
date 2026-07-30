@@ -245,7 +245,7 @@ describe("package foundation", () => {
   // REQ-75-01 / TC-75-01 / P-75-01
   // REQ-75-01 / TC-75-04 / existing behavior regression
   // REQ-75-02 / TC-75-05 / existing behavior regression
-  test("should ship and execute the installed npm shim contract", () => {
+  test("[REQ-116-03] should preserve the fake Bun forwarding contract when the installed shim is executed (TC-116-03)", () => {
     withTemporaryDirectory((directory) => {
       const npmEnvironment = createNpmEnvironment(directory);
       const fixtureRoot = createPackFixture(directory);
