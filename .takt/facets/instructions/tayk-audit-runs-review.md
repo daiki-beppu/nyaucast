@@ -19,7 +19,7 @@
 
 1. 分析レポートの Audit Scope を計画レポートの Audit Targets と突き合わせ、⏳ と根拠不足の対象を特定する
 2. そのうち今回分析する対象を優先度順に選ぶ（**最低 4 対象**。残りが 4 未満なら全部）
-3. 選んだ対象の run 群について meta.json で結末を掴み、trace.md の遷移系列を再構成し、run 名 + トレース引用を根拠として分析結果を記録する
+3. 選んだ対象の run 群について meta.json で結末を掴み、trace.md の遷移系列を再構成し、run 名 + トレース引用を根拠として分析結果を記録する。loop monitor 不発の検査（手順と判定は `.takt/facets/instructions/tayk-audit-runs-analyze.md` の「必須の分析手順」3 と同一）も適用し、「Loop Monitor 不発の疑い」節を維持・更新する
 
 **出力の原則（違反したら出力は無効）:**
 
