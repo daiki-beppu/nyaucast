@@ -242,7 +242,7 @@ process.exit(42);
 }
 
 describe("package foundation", () => {
-  test("should ship and execute the installed npm shim contract", () => {
+  test("[REQ-116-03] should preserve the fake Bun forwarding contract when the installed shim is executed (TC-116-03)", () => {
     withTemporaryDirectory((directory) => {
       const npmEnvironment = createNpmEnvironment(directory);
       const fixtureRoot = createPackFixture(directory);
