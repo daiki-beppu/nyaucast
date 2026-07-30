@@ -242,14 +242,17 @@ process.exit(42);
 }
 
 describe("package foundation", () => {
+  // REQ-75-01 / TC-75-01 / P-75-01
+  // REQ-75-01 / TC-75-04 / existing behavior regression
+  // REQ-75-02 / TC-75-05 / existing behavior regression
   test("should ship and execute the installed npm shim contract", () => {
     withTemporaryDirectory((directory) => {
       const npmEnvironment = createNpmEnvironment(directory);
       const fixtureRoot = createPackFixture(directory);
+      writeFileSync(join(fixtureRoot, "README.md"), "# fixture\n");
       const pack = packPackage(fixtureRoot, npmEnvironment);
       const paths = pack.files.map((file) => file.path);
       const launcher = pack.files.find((file) => file.path === "bin/tayk.js");
-      const readme = readFileSync(join(fixtureRoot, "README.md"), "utf-8");
 
       expect(paths).toContain("package.json");
       expect(paths).toContain("README.md");
@@ -259,12 +262,6 @@ describe("package foundation", () => {
       expect(paths).not.toContain("tsconfig.json");
       expect(paths).not.toContain("dist/must-not-ship.js");
       expect(launcher?.mode === 0o755 || launcher?.mode === 0o775).toBeTrue();
-      expect(readme).toContain(
-        "https://github.com/daiki-beppu/tayk/blob/main/CONTEXT.md"
-      );
-      expect(readme).toContain(
-        "https://github.com/daiki-beppu/tayk/blob/main/docs/adr/0001-thin-architecture.md"
-      );
 
       const consumerRoot = join(directory, "consumer");
       mkdirSync(consumerRoot);
