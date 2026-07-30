@@ -32,6 +32,27 @@
 
 - {欠陥の観測がなかった分析済み対象}
 
+## Token Usage
+
+- Source commands: {集計に使ったコマンド}
+- 集計対象: {有効 usage を持つ run 数} / {スコープ全 run 数}（集計対象外 {件数}: {理由別内訳。phase.jsonl 無し / 全行 usage_missing}）
+
+### Workflow 別
+
+| Workflow      | Runs (集計対象) | Total tokens | Median tokens/run  |
+| ------------- | --------------- | ------------ | ------------------ |
+| {workflow 名} | {run 数}        | {合計}       | {run あたり中央値} |
+
+### Step 別
+
+| Workflow      | Step      | Total tokens | Share                       |
+| ------------- | --------- | ------------ | --------------------------- |
+| {workflow 名} | {step 名} | {合計}       | {workflow 合計に占める割合} |
+
+### 所見
+
+- {突出 step（workflow 合計の 3 割超）や費用の偏り。**起票しない — 人間の判断材料**（ADR-0008 Consequences）}
+
 ## Suggested Issue Titles
 
 1. {Issue タイトル}
@@ -52,3 +73,5 @@
 - Evidence は `.takt/runs` の実トレース（trace.md / meta.json / monitor.json）の引用だけ。このレポート自身や Report Directory 内のファイルを根拠とする Finding を書かない
 - 「Loop Monitor 不発の疑い」節は**該当が 1 件も無くても残し、「該当なし」と明記する**（検査を実行した証明。節が無いレポートは検査未実施として差し戻される）。行は (workflow, step) 単位でまとめ、run ごとに割らない
 - 同節で**判定が「起票対象（高確度）」の行**（現行定義に step が存在し `{step_iteration}` 自前上限が無い）は、同じ内容を Findings にも Category: loop-monitor で載せて起票経路に乗せる。「記録のみ」の行（自前上限あり = 二重化が機能 / 現行定義に無い）は Findings に載せない
+- Token Usage 節は最初の統合時に機械集計で作り、以降のサイクルでは**保持する**（再集計しない。節が欠けている場合のみ補う）。Step 別は workflow ごとに消費上位 5 step まで（残りは 1 行に畳んでよい）
+- **費用の偏りを Findings に書かない** — 費用の観測は Token Usage の所見へ（起票対象にしない）。偏りの原因が根拠を示せる欠陥である場合のみ、その欠陥を Findings に書く
