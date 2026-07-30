@@ -101,7 +101,7 @@ steps:
       - v0.1.0 のゲート外の拡張を方針に含めていないこと
     rules:
       # plan は 8 方向から再訪される（intake / test_design / design_review の NEED_REPLAN /
-      # design_fix / draft の need_replan / impl_gate の needs_replan / final_gate /
+      # design_fix / draft の need_replan / impl_gate の need_replan / final_gate /
       # spillover、加えて loop monitor 2 本）。cycle パターンが安定しないため、
       # やり直し回数の上限をこの step 自身が持つ（ADR-0008 決定 6）
       - condition: これが 4 回目以降の計画である（3 回作り直しても方針が定まらなかった）
@@ -376,7 +376,7 @@ steps:
     rules:
       - condition: COMPLETE
         next: final_gate
-      - condition: needs_replan
+      - condition: need_replan
         next: plan
       - condition: ABORT
         next: ABORT
