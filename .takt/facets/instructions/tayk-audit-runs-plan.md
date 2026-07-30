@@ -25,7 +25,7 @@ run とは別に、workflow 定義そのものを対象とする固定 3 対象�
 
 1. タスク（order.md）が指定する監査スコープ（対象期間 / 対象 workflow）を確認する。指定がなければ全 run
 2. 各 run の `meta.json` から workflow / status / currentStep / iterations を**コマンドで機械的に集計する**（全 run を 1 件ずつ精読しない）
-3. 分析価値の高い run を特定する — `status: aborted` の run、iterations が突出して多い run（差し戻しを繰り返した末の完走）、同一 workflow で失敗が連続している時期、loop monitor 発火が疑われる run（trace.md に judge step の Iteration が現れる）
+3. 分析価値の高い run を特定する — `status: aborted` の run、iterations が突出して多い run（差し戻しを繰り返した末の完走）、同一 workflow で失敗が連続している時期、loop monitor 発火が疑われる run（trace.md に judge step の Iteration が現れる）、同一 step の Iteration が judge を挟まず 4 回以上再出現する run（cycle の外からの再入による loop monitor 不発の疑い）
 4. 監査すべき対象を **Audit Targets 表**として採番する。**1 対象 = 1 run ではなく、同じ問いで束ねられる run 群**（例:「workflow X の aborted run 群」「日付 Y 前後の連続失敗」）を 1 対象とする
 5. 再発パターンの抽出に効く順（失敗の集中度・最近性・現行 workflow との関連）で監査順を作る
 

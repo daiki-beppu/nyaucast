@@ -1,6 +1,8 @@
 # .takt/runs の実行トレースを run 横断で監査する workflow（#143。親: #142 の子 1）。
 # tayk-audit-architecture の骨格（read-only 監査 / supervise の structured 収束 / publish）を
 # 踏襲し、監査対象をコードから実行トレース（trace.md / meta.json / monitor.json）に替えたもの。
+# #144 で分析観点にループ上限実効性の実測（cycle 外からの再入による loop monitor 不発の検出）を
+# 追加した。ADR-0008 改訂で削除された静的検査 C の動的代替（同 ADR Consequences 検査 C 項）。
 #
 # 証拠は本体リポの絶対パス /Users/mba/02-yt/tayk/.takt/runs を読む。タスクの隔離クローンに
 # runs は複製されず、remote も無いため逆引きもできない（#126 / #138 の経緯）。パス固定は
@@ -27,10 +29,10 @@ description: >
   .takt/runs の実行トレースを run 横断で監査し、併せて workflow 定義そのものを
   静的監査する（spillover 複製の一致 / callable のレポート境界 / 工程説明 drift。#146）。
   計画（定義監査の固定 3 対象 + 対象 run の列挙・採番）→ 分担分析 → 監督 ⇄ 再分析で
-  ABORT 原因・差し戻し経路・loop monitor 発火の再発パターンと定義の乖離を抽出し、
-  レポートを docs/audits/ へ配置し、根拠（run 名 + トレース引用。定義監査は
-  ファイルパス + 引用）を示せる発見のみ重複照合の上で起票する。publish と起票以外の
-  全 step は read-only でファイルを変更しない。
+  ABORT 原因・差し戻し経路・loop monitor 発火 / 不発（cycle 外からの再入による上限の
+  すり抜け）の再発パターンと定義の乖離を抽出し、レポートを docs/audits/ へ配置し、
+  根拠（run 名 + トレース引用。定義監査はファイルパス + 引用）を示せる発見のみ
+  重複照合の上で起票する。publish と起票以外の全 step は read-only でファイルを変更しない。
 max_steps: 25
 initial_step: plan
 
