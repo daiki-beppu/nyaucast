@@ -242,6 +242,7 @@ process.exit(42);
 }
 
 describe("package foundation", () => {
+  // REQ-88-02 / TC-88-04 / prediction ID: not applicable (existing regression)
   test("should ship and execute the installed npm shim contract", () => {
     withTemporaryDirectory((directory) => {
       const npmEnvironment = createNpmEnvironment(directory);
