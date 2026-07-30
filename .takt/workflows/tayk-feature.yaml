@@ -421,6 +421,10 @@ steps:
       extends: review-readonly
     session: refresh
     instruction: tayk-spillover
+    output_contracts:
+      report:
+        - name: spillover.md
+          format: tayk-spillover
     quality_gates:
       - Report Directory の全レポートを読み、発見がなかったものも収集元に記録していること
       - 起票したものが 3 条件（因果なし / 実害あり / 根拠あり）をすべて満たしていること
