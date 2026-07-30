@@ -1,5 +1,12 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -7,6 +14,10 @@ const packageRoot = resolve(import.meta.dirname, "..");
 const subprocessTimeoutMilliseconds = 20_000;
 const invalidCheckScriptMessage =
   "check script must contain only bun run commands joined by &&";
+const expectedLockfileCheckCommand =
+  "bun install --frozen-lockfile --dry-run --ignore-scripts";
+const lockfileName = "bun.lock";
+const prepareSentinelName = "prepare-ran";
 
 /**
  * 「ローカルで CI を再現する」を指示する facet。
@@ -263,6 +274,214 @@ function runCheck(
   };
 }
 
+interface LockfileCheckFixture {
+  bunEnvironment: Record<string, string | undefined>;
+  expectedFollowingGates: string[];
+  lockfileBeforeCheck: string;
+  recordPath: string;
+}
+
+interface LockfileCheckResult {
+  executedGates: string[];
+  exitCode: number | null;
+  stderr: string;
+}
+
+function createIsolatedBunEnvironment(
+  directory: string
+): Record<string, string | undefined> {
+  const configDirectory = join(directory, "bun-config");
+  const cacheDirectory = join(directory, "bun-cache");
+  mkdirSync(configDirectory);
+  mkdirSync(cacheDirectory);
+
+  return {
+    ...process.env,
+    BUN_INSTALL_CACHE_DIR: cacheDirectory,
+    XDG_CONFIG_HOME: configDirectory,
+  };
+}
+
+function runBunInstallForLockfile(
+  directory: string,
+  bunEnvironment: Record<string, string | undefined>
+): void {
+  const result = Bun.spawnSync(
+    [process.execPath, "install", "--lockfile-only", "--ignore-scripts"],
+    {
+      cwd: directory,
+      env: bunEnvironment,
+      killSignal: "SIGKILL",
+      stderr: "pipe",
+      stdout: "pipe",
+      timeout: subprocessTimeoutMilliseconds,
+    }
+  );
+
+  if (result.exitedDueToTimeout === true || result.exitCode !== 0) {
+    throw new Error(
+      `lockfile fixture generation failed\nstdout:\n${result.stdout.toString()}\nstderr:\n${result.stderr.toString()}`
+    );
+  }
+}
+
+function writeGateRecorder(directory: string): void {
+  writeFileSync(
+    join(directory, "record.ts"),
+    `import { appendFileSync } from "node:fs";
+
+const gate = process.argv[2];
+const recordPath = process.env["TAYK_GATE_RECORD"];
+
+if (gate === undefined || recordPath === undefined) {
+  throw new Error("gate recorder requires a gate and record path");
+}
+
+appendFileSync(recordPath, \`\${gate}\\n\`);
+`
+  );
+}
+
+function createLocalDependency(
+  directory: string,
+  dependencyName: string
+): string {
+  const dependencyDirectory = join(directory, dependencyName);
+  mkdirSync(dependencyDirectory);
+  writeFileSync(
+    join(dependencyDirectory, "package.json"),
+    `${JSON.stringify({ name: dependencyName, version: "1.0.0" }, null, 2)}\n`
+  );
+  return `file:./${dependencyName}`;
+}
+
+function createLockfileCheckFixture(
+  directory: string,
+  makeManifestInconsistent: boolean
+): LockfileCheckFixture {
+  const repositoryScripts = readPackageScripts();
+  const checkScript = repositoryScripts["check"];
+  const lockfileCheckCommand = repositoryScripts["lockfile:check"];
+
+  if (checkScript === undefined || lockfileCheckCommand === undefined) {
+    throw new Error(
+      "package.json must declare check and lockfile:check scripts"
+    );
+  }
+
+  const gateNames = deriveExpectedGateNames(checkScript);
+  const expectedFollowingGates = gateNames.slice(1);
+  const recordPath = join(directory, "gates.log");
+  const scripts = Object.fromEntries([
+    ["prepare", `bun -e "Bun.write('${prepareSentinelName}', '')"`],
+    ["check", checkScript],
+    ["lockfile:check", lockfileCheckCommand],
+    ...expectedFollowingGates.map(
+      (gate) => [gate, `bun record.ts ${quoteShellArgument(gate)}`] as const
+    ),
+  ]);
+  const currentDependencyName = "fixture-current-local-dependency";
+  const currentDependencyReference = createLocalDependency(
+    directory,
+    currentDependencyName
+  );
+  const packageManifest = {
+    dependencies: {
+      [currentDependencyName]: currentDependencyReference,
+    },
+    name: "tayk-lockfile-check-fixture",
+    private: true,
+    scripts,
+    type: "module",
+    version: "0.0.0",
+  };
+
+  writeGateRecorder(directory);
+  writeFileSync(recordPath, "");
+  writeFileSync(
+    join(directory, "package.json"),
+    `${JSON.stringify(packageManifest, null, 2)}\n`
+  );
+
+  const bunEnvironment = createIsolatedBunEnvironment(directory);
+  runBunInstallForLockfile(directory, bunEnvironment);
+  const lockfileBeforeCheck = readFileSync(
+    join(directory, lockfileName),
+    "latin1"
+  );
+
+  if (makeManifestInconsistent) {
+    const addedDependencyName = "fixture-added-local-dependency";
+    const addedDependencyReference = createLocalDependency(
+      directory,
+      addedDependencyName
+    );
+    writeFileSync(
+      join(directory, "package.json"),
+      `${JSON.stringify(
+        {
+          ...packageManifest,
+          dependencies: {
+            ...packageManifest.dependencies,
+            [addedDependencyName]: addedDependencyReference,
+          },
+        },
+        null,
+        2
+      )}\n`
+    );
+  }
+
+  return {
+    bunEnvironment,
+    expectedFollowingGates,
+    lockfileBeforeCheck,
+    recordPath,
+  };
+}
+
+function runLockfileCheckFixture(
+  directory: string,
+  fixture: LockfileCheckFixture
+): LockfileCheckResult {
+  const result = Bun.spawnSync([process.execPath, "run", "check"], {
+    cwd: directory,
+    env: {
+      ...fixture.bunEnvironment,
+      TAYK_GATE_RECORD: fixture.recordPath,
+    },
+    killSignal: "SIGKILL",
+    stderr: "pipe",
+    stdout: "pipe",
+    timeout: subprocessTimeoutMilliseconds,
+  });
+
+  if (result.exitedDueToTimeout === true) {
+    throw new Error(
+      `lockfile check timed out\nstdout:\n${result.stdout.toString()}\nstderr:\n${result.stderr.toString()}`
+    );
+  }
+
+  return {
+    executedGates: readFileSync(fixture.recordPath, "utf-8")
+      .split("\n")
+      .filter((line) => line !== ""),
+    exitCode: result.exitCode,
+    stderr: result.stderr.toString(),
+  };
+}
+
+function expectLockfileFixtureStateUnchanged(
+  directory: string,
+  lockfileBeforeCheck: string
+): void {
+  expect(existsSync(join(directory, "node_modules"))).toBeFalse();
+  expect(existsSync(join(directory, prepareSentinelName))).toBeFalse();
+  expect(readFileSync(join(directory, lockfileName), "latin1")).toBe(
+    lockfileBeforeCheck
+  );
+}
+
 describe("check command", () => {
   // REQ-114-01 / REQ-114-02 / TC-114-01A
   test("should run every check-derived gate exactly once in declaration order", () => {
@@ -427,17 +646,82 @@ describe("check command", () => {
     });
   });
 
-  // REQ-82-02
+  // REQ-106-01 / TC-106-01A
+  test("should reject a stale lockfile without changing dependency state", () => {
+    expect(readPackageScripts()["lockfile:check"]).toBe(
+      expectedLockfileCheckCommand
+    );
+
+    withTemporaryDirectory((directory) => {
+      const fixture = createLockfileCheckFixture(directory, true);
+
+      const result = runLockfileCheckFixture(directory, fixture);
+      const normalizedStderr = result.stderr.toLowerCase();
+
+      expect(result.exitCode).not.toBe(0);
+      expect(normalizedStderr).toContain("lockfile");
+      expect(normalizedStderr).toMatch(
+        /(frozen[\s\S]*(change|update)|(change|update)[\s\S]*frozen)/
+      );
+      expectLockfileFixtureStateUnchanged(
+        directory,
+        fixture.lockfileBeforeCheck
+      );
+    });
+  });
+
+  // REQ-106-03 / TC-106-03A
+  test("should place lockfile:check first in the check-derived gate sequence", () => {
+    const checkScript = readPackageScripts()["check"];
+
+    expect(deriveExpectedGateNames(checkScript)[0]).toBe("lockfile:check");
+  });
+
+  // REQ-106-03 / TC-106-03B
+  test("should stop before every following gate when lockfile validation fails", () => {
+    withTemporaryDirectory((directory) => {
+      const fixture = createLockfileCheckFixture(directory, true);
+
+      const result = runLockfileCheckFixture(directory, fixture);
+
+      expect(result.exitCode).not.toBe(0);
+      expect(result.executedGates).toEqual([]);
+      expectLockfileFixtureStateUnchanged(
+        directory,
+        fixture.lockfileBeforeCheck
+      );
+    });
+  });
+
+  // REQ-106-04 / TC-106-04A
+  test("should continue through every following gate when the lockfile is current", () => {
+    withTemporaryDirectory((directory) => {
+      const fixture = createLockfileCheckFixture(directory, false);
+
+      const result = runLockfileCheckFixture(directory, fixture);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.executedGates).toEqual(fixture.expectedFollowingGates);
+      expectLockfileFixtureStateUnchanged(
+        directory,
+        fixture.lockfileBeforeCheck
+      );
+    });
+  });
+
+  // REQ-82-02 / REQ-106-01 / REQ-106-02 / TC-106-01C / TC-106-02A
   test("should leave the gate set undefined outside package.json", () => {
     const workflow = readRepositoryFile(".github/workflows/ci.yml");
 
-    expect(workflow).toContain("bun run check");
+    expect(workflow).toContain("nix develop --command bun run check");
+    expect(workflow).not.toMatch(/\bbun\s+install\b/);
+    expect(workflow).not.toContain("--frozen-lockfile");
     for (const command of enumeratedGateCommands) {
       expect(workflow).not.toMatch(command);
     }
   });
 
-  // REQ-82-03
+  // REQ-82-03 / REQ-106-01 / TC-106-01B
   test("should run the gates before push", () => {
     const configuration = readRepositoryFile("lefthook.yml");
 
