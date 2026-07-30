@@ -2,18 +2,18 @@ import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import {
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readdirSync,
   readFileSync,
-  rmSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
 import { parse } from "yaml";
 
-const packageRoot = resolve(import.meta.dirname, "..");
+import { packageRoot, withTemporaryDirectory } from "./helpers";
+
+// REQ-70-01 / REQ-70-03 / REQ-70-04 / REQ-70-05 / REQ-70-06
+// TC-70-01A / TC-70-01B / TC-70-03A / TC-70-03B / TC-70-04A / TC-70-04B / TC-70-05A / TC-70-05B / TC-70-06A
 const subprocessTimeoutMilliseconds = 20_000;
 const invalidCheckScriptMessage =
   "check script must contain only bun run commands joined by &&";
@@ -618,14 +618,8 @@ function validateFacetGate(
   }
 }
 
-function withTemporaryDirectory(run: (directory: string) => void): void {
-  const directory = mkdtempSync(join(tmpdir(), "tayk-check-"));
-
-  try {
-    run(directory);
-  } finally {
-    rmSync(directory, { force: true, recursive: true });
-  }
+function withCheckFixture(run: (directory: string) => void): void {
+  withTemporaryDirectory("tayk-check-", run);
 }
 
 function readRepositoryFile(relativePath: string): string {
@@ -1301,7 +1295,7 @@ describe("check command", () => {
 
     const expectedGates = deriveExpectedGateNames(checkScript);
 
-    withTemporaryDirectory((directory) => {
+    withCheckFixture((directory) => {
       createCheckFixture(directory, checkScript);
 
       const result = runCheck(directory, null);
@@ -1324,7 +1318,7 @@ describe("check command", () => {
     const derivedGates = deriveExpectedGateNames(checkScript);
 
     for (const failingIndex of derivedGates.keys()) {
-      withTemporaryDirectory((directory) => {
+      withCheckFixture((directory) => {
         createCheckFixture(directory, checkScript);
 
         const result = runCheck(directory, failingIndex);
@@ -1360,7 +1354,7 @@ describe("check command", () => {
   ])(
     "should follow the gates derived from %p without fixture changes",
     (checkScript, expectedGates) => {
-      withTemporaryDirectory((directory) => {
+      withCheckFixture((directory) => {
         const scripts = createCheckFixture(directory, checkScript);
 
         const result = runCheck(directory, null);
@@ -1427,7 +1421,7 @@ describe("check command", () => {
       .join(" && ");
 
     for (const failingIndex of repeatedGates.keys()) {
-      withTemporaryDirectory((directory) => {
+      withCheckFixture((directory) => {
         createCheckFixture(directory, checkScript);
 
         const result = runCheck(directory, failingIndex);
@@ -1444,7 +1438,7 @@ describe("check command", () => {
     const gates = ["alpha", "__proto__", "beta"];
     const checkScript = gates.map((gate) => `bun run ${gate}`).join(" && ");
 
-    withTemporaryDirectory((directory) => {
+    withCheckFixture((directory) => {
       createCheckFixture(directory, checkScript);
 
       const result = runCheck(directory, 1);
@@ -1460,7 +1454,7 @@ describe("check command", () => {
       expectedLockfileCheckCommand
     );
 
-    withTemporaryDirectory((directory) => {
+    withCheckFixture((directory) => {
       const fixture = createLockfileCheckFixture(directory, true);
 
       const result = runLockfileCheckFixture(directory, fixture);
@@ -1487,7 +1481,7 @@ describe("check command", () => {
 
   // REQ-106-03 / TC-106-03B
   test("should stop before every following gate when lockfile validation fails", () => {
-    withTemporaryDirectory((directory) => {
+    withCheckFixture((directory) => {
       const fixture = createLockfileCheckFixture(directory, true);
 
       const result = runLockfileCheckFixture(directory, fixture);
@@ -1503,7 +1497,7 @@ describe("check command", () => {
 
   // REQ-106-04 / TC-106-04A
   test("should continue through every following gate when the lockfile is current", () => {
-    withTemporaryDirectory((directory) => {
+    withCheckFixture((directory) => {
       const fixture = createLockfileCheckFixture(directory, false);
 
       const result = runLockfileCheckFixture(directory, fixture);
