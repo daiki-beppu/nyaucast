@@ -1,28 +1,17 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import {
-  cpSync,
-  mkdirSync,
-  mkdtempSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { cpSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
-const packageRoot = resolve(import.meta.dirname, "..");
+import { packageRoot, withTemporaryDirectory } from "./helpers";
+
+// REQ-70-01 / REQ-70-03 / REQ-70-05
+// TC-70-01A / TC-70-01B / TC-70-03A / TC-70-05A / TC-70-05B
 const subprocessTimeoutMilliseconds = 20_000;
 
 setDefaultTimeout(60_000);
 
-function withTemporaryDirectory(run: (directory: string) => void): void {
-  const directory = mkdtempSync(join(tmpdir(), "tayk-typecheck-"));
-
-  try {
-    run(directory);
-  } finally {
-    rmSync(directory, { force: true, recursive: true });
-  }
+function withTypecheckFixture(run: (directory: string) => void): void {
+  withTemporaryDirectory("tayk-typecheck-", run);
 }
 
 function runTypecheck(directory: string) {
@@ -45,7 +34,7 @@ function runTypecheck(directory: string) {
 
 describe("TypeScript configuration", () => {
   test("should accept valid source and reject a type mismatch", () => {
-    withTemporaryDirectory((directory) => {
+    withTypecheckFixture((directory) => {
       cpSync(
         join(packageRoot, "package.json"),
         join(directory, "package.json")

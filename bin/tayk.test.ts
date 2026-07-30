@@ -1,22 +1,20 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import type { SpawnSyncReturns } from "node:child_process";
-import {
-  chmodSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
-const packageRoot = resolve(import.meta.dirname, "..");
+import {
+  installationGuidePattern,
+  packageRoot,
+  requireCompletedSubprocess,
+  withTemporaryDirectory,
+} from "../test/helpers";
+
+// REQ-70-01 / REQ-70-02 / REQ-70-03 / REQ-70-05
+// TC-70-01A / TC-70-01B / TC-70-01C / TC-70-01D / TC-70-01E / TC-70-01F / TC-70-01G / TC-70-01H
+// TC-70-02A / TC-70-02B / TC-70-02C / TC-70-03A / TC-70-03B / TC-70-05A / TC-70-05B
 const launcherPath = join(packageRoot, "bin", "tayk.js");
 const entrypointPath = join(packageRoot, "src", "index.ts");
-const installationGuidePattern =
-  /Bun.*(?:install|required)|(?:install|required).*Bun/is;
 const installationUrlPattern = /https:\/\/bun\.sh/i;
 const subprocessTimeoutMilliseconds = 20_000;
 const nodePath = Bun.which("node");
@@ -35,14 +33,8 @@ if (bunPath === null) {
 const nodeExecutablePath = nodePath;
 const realBunDirectory = dirname(bunPath);
 
-function withTemporaryDirectory(run: (directory: string) => void): void {
-  const directory = mkdtempSync(join(tmpdir(), "tayk-launcher-"));
-
-  try {
-    run(directory);
-  } finally {
-    rmSync(directory, { force: true, recursive: true });
-  }
+function withLauncherFixture(run: (directory: string) => void): void {
+  withTemporaryDirectory("tayk-launcher-", run);
 }
 
 function createFakeBun(directory: string): {
@@ -84,18 +76,6 @@ process.exit(Number(exitCode));
   chmodSync(fakeBunPath, 0o755);
 
   return { binDirectory, recordPath };
-}
-
-function requireCompletedSubprocess(
-  label: string,
-  result: SpawnSyncReturns<string>
-): void {
-  if (result.error !== undefined) {
-    throw new Error(
-      `${label} failed to complete\nstatus: ${String(result.status)}\nsignal: ${String(result.signal)}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
-      { cause: result.error }
-    );
-  }
 }
 
 function runLauncher(options: {
@@ -158,7 +138,7 @@ function readInvocations(recordPath: string): unknown[] {
 
 describe("tayk launcher", () => {
   test("should delegate exactly once to Bun independently of cwd", () => {
-    withTemporaryDirectory((directory) => {
+    withLauncherFixture((directory) => {
       const fakeBun = createFakeBun(directory);
       const cwd = join(directory, "unrelated-cwd");
       mkdirSync(cwd);
@@ -179,7 +159,7 @@ describe("tayk launcher", () => {
   });
 
   test("should preserve arguments, stdio, and a non-zero Bun exit code", () => {
-    withTemporaryDirectory((directory) => {
+    withLauncherFixture((directory) => {
       const fakeBun = createFakeBun(directory);
       const args = ["collection.plan", "--name", "空 白", "--", "末尾"];
 
@@ -206,7 +186,7 @@ describe("tayk launcher", () => {
   });
 
   test("should propagate SIGTERM when Bun terminates by signal", () => {
-    withTemporaryDirectory((directory) => {
+    withLauncherFixture((directory) => {
       const fakeBun = createFakeBun(directory);
 
       const result = runLauncher({
@@ -227,7 +207,7 @@ describe("tayk launcher", () => {
   });
 
   test("should print installation guidance to stderr when Bun is absent", () => {
-    withTemporaryDirectory((directory) => {
+    withLauncherFixture((directory) => {
       const emptyPath = join(directory, "empty-path");
       mkdirSync(emptyPath);
       writeFileSync(join(emptyPath, ".keep"), "");
@@ -244,7 +224,7 @@ describe("tayk launcher", () => {
   });
 
   test("should report an execution error instead of installation guidance when Bun is not executable", () => {
-    withTemporaryDirectory((directory) => {
+    withLauncherFixture((directory) => {
       const binDirectory = join(directory, "bin");
       const fakeBunPath = join(binDirectory, "bun");
       mkdirSync(binDirectory);
@@ -266,7 +246,7 @@ describe("tayk launcher", () => {
   });
 
   test("should propagate the delegate failure without guidance when the entrypoint is missing", () => {
-    withTemporaryDirectory((directory) => {
+    withLauncherFixture((directory) => {
       // launcher だけを複製し src/index.ts を置かない。委譲自体は成功する
       // (Bun は起動する) が、委譲先が entrypoint 不在で落ちる経路になる。
       const isolatedBinDirectory = join(directory, "bin");
@@ -290,7 +270,7 @@ describe("tayk launcher", () => {
   });
 
   test("should execute the TypeScript entrypoint with the real Bun runtime", () => {
-    withTemporaryDirectory((directory) => {
+    withLauncherFixture((directory) => {
       const result = runLauncher({
         args: [],
         cwd: directory,

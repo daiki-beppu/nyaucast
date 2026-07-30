@@ -1,9 +1,9 @@
 {
   "$schema": "./node_modules/fallow/schema.json",
-  "entry": ["bin/tayk.js", "src/index.ts"],
+  "entry": ["bin/tayk.js", "src/index.ts", "test/helpers.ts"],
   "ignorePatterns": [
     "bin/**/*.test.ts",
-    "test/**",
+    "test/**/*.test.ts",
     "*.config.ts",
     "prototype/**",
     "scripts/**"
