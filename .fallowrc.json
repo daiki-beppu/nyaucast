@@ -8,7 +8,7 @@
     "prototype/**",
     "scripts/**"
   ],
-  "ignoreDependencies": ["ultracite"],
+  "ignoreDependencies": ["ultracite", "yaml"],
   "duplicates": {
     "enabled": true,
     "mode": "semantic",

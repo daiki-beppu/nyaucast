@@ -32,7 +32,8 @@
     "oxlint": "1.75.0",
     "oxlint-tsgolint": "7.0.2001",
     "typescript": "7.0.2",
-    "ultracite": "7.9.4"
+    "ultracite": "7.9.4",
+    "yaml": "2.9.0"
   },
   "engines": {
     "node": ">=22.14.0"
