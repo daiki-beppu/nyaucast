@@ -7,7 +7,7 @@
 # Project configuration
 !config.yaml
 
-# tayk 専用 takt 資産（ADR-0006 Consequences / #55）。
+# tayk 専用 takt 資産（ADR-0008 Consequences / #55）。
 # runs/ tasks/ worktree-sessions/ 等の実行時生成物は上の `*` で無視したまま、
 # レビュー対象の定義ファイルだけを追跡する。
 !workflows/

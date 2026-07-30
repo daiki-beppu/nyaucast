@@ -5,7 +5,6 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
-  mkdtempSync,
   readdirSync,
   readFileSync,
   readlinkSync,
@@ -14,10 +13,12 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 
-const packageRoot = resolve(import.meta.dirname, "..");
+import { packageRoot, withTemporaryDirectory } from "./helpers";
+
+// REQ-70-01 / REQ-70-03 / REQ-70-05
+// TC-70-01A / TC-70-01C / TC-70-01H / TC-70-03A / TC-70-05A / TC-70-05B
 // 実プロジェクトの pre-commit を検証するために要る資産。.gitignore は
 // node_modules を整形対象から外すためにも要る（oxfmt は gitignore を尊重する）。
 const realProjectFiles = [
@@ -81,6 +82,16 @@ const gitExecutablePath = gitPath;
 const direnvExecutablePath = direnvPath;
 const bunExecutablePath = bunPath;
 
+function withDevShellFixture(run: (directory: string) => void): void {
+  withTemporaryDirectory("tayk-devshell-", run, realpathSync);
+}
+
+function withSpaceContainingDevShellFixture(
+  run: (directory: string) => void
+): void {
+  withTemporaryDirectory("tayk devshell spaces ", run, realpathSync);
+}
+
 type SpawnResult = ReturnType<typeof Bun.spawnSync>;
 interface CommandResult {
   exitCode: number;
@@ -94,19 +105,6 @@ interface TreeEntry {
   path: string;
   target?: string;
   type: "directory" | "file" | "symlink";
-}
-
-function withTemporaryDirectory(
-  run: (directory: string) => void,
-  name = "tayk-devshell-"
-): void {
-  const directory = realpathSync(mkdtempSync(join(tmpdir(), name)));
-
-  try {
-    run(directory);
-  } finally {
-    rmSync(directory, { force: true, recursive: true });
-  }
 }
 
 function runCommand(
@@ -382,7 +380,7 @@ function expectRejectedWithoutMutation(
 
 describe.serial("devShell setup", () => {
   test("[REQ-105-01] does not create node_modules in an unrelated Git repository", () => {
-    withTemporaryDirectory((directory) => {
+    withDevShellFixture((directory) => {
       const flakeRoot = join(directory, "tayk");
       const unrelated = join(directory, "unrelated");
       createTaykFixture(flakeRoot);
@@ -399,7 +397,7 @@ describe.serial("devShell setup", () => {
   });
 
   test("[REQ-105-01] does not alter an unrelated repository's existing node_modules", () => {
-    withTemporaryDirectory((directory) => {
+    withDevShellFixture((directory) => {
       const flakeRoot = join(directory, "tayk");
       const unrelated = join(directory, "unrelated");
       createTaykFixture(flakeRoot);
@@ -416,7 +414,7 @@ describe.serial("devShell setup", () => {
   });
 
   test("[REQ-105-02] installs dependencies from a tayk subdirectory", () => {
-    withTemporaryDirectory((directory) => {
+    withDevShellFixture((directory) => {
       const flakeRoot = join(directory, "tayk");
       const subdirectory = join(flakeRoot, "src");
       createTaykFixture(flakeRoot);
@@ -433,7 +431,7 @@ describe.serial("devShell setup", () => {
   });
 
   test("[REQ-105-02] installs dependencies from a tayk subdirectory when its path contains spaces", () => {
-    withTemporaryDirectory((directory) => {
+    withSpaceContainingDevShellFixture((directory) => {
       const flakeRoot = join(directory, "tayk checkout");
       const subdirectory = join(flakeRoot, "src");
       createTaykFixture(flakeRoot);
@@ -445,11 +443,11 @@ describe.serial("devShell setup", () => {
       expect(
         existsSync(join(flakeRoot, "node_modules", ".bin", "fixture-tsc"))
       ).toBeTrue();
-    }, "tayk devshell spaces ");
+    });
   });
 
   test("[REQ-105-02][REQ-105-03] supplies Git without the host environment from root and subdirectory entries", () => {
-    withTemporaryDirectory((directory) => {
+    withDevShellFixture((directory) => {
       const flakeRoot = join(directory, "tayk");
       const subdirectory = join(flakeRoot, "src");
       createTaykFixture(flakeRoot);
@@ -473,7 +471,7 @@ describe.serial("devShell setup", () => {
   });
 
   test("[REQ-105-04] puts the resolved tayk root's binaries first on PATH", () => {
-    withTemporaryDirectory((directory) => {
+    withDevShellFixture((directory) => {
       const flakeRoot = join(directory, "tayk");
       const subdirectory = join(flakeRoot, "src");
       createTaykFixture(flakeRoot);
@@ -493,7 +491,7 @@ describe.serial("devShell setup", () => {
   });
 
   test("[REQ-105-04] keeps a space-containing tayk root intact in PATH", () => {
-    withTemporaryDirectory((directory) => {
+    withSpaceContainingDevShellFixture((directory) => {
       const flakeRoot = join(directory, "tayk checkout");
       const subdirectory = join(flakeRoot, "src");
       createTaykFixture(flakeRoot);
@@ -509,11 +507,11 @@ describe.serial("devShell setup", () => {
       expect(entered.stdout.toString()).toBe(
         join(flakeRoot, "node_modules", ".bin")
       );
-    }, "tayk devshell spaces ");
+    });
   });
 
   test("[REQ-105-05a] explains why an unrelated Git repository is rejected", () => {
-    withTemporaryDirectory((directory) => {
+    withDevShellFixture((directory) => {
       const flakeRoot = join(directory, "tayk");
       const unrelated = join(directory, "unrelated");
       createTaykFixture(flakeRoot);
@@ -524,7 +522,7 @@ describe.serial("devShell setup", () => {
   });
 
   test("[REQ-105-05a] rejects a package name that only starts with the tayk package name", () => {
-    withTemporaryDirectory((directory) => {
+    withDevShellFixture((directory) => {
       const flakeRoot = join(directory, "tayk");
       const unrelated = join(directory, "unrelated");
       createTaykFixture(flakeRoot);
@@ -535,7 +533,7 @@ describe.serial("devShell setup", () => {
   });
 
   test("[REQ-105-05b] rejects a non-Git directory without installing", () => {
-    withTemporaryDirectory((directory) => {
+    withDevShellFixture((directory) => {
       const flakeRoot = join(directory, "tayk");
       const unrelated = join(directory, "unrelated");
       createTaykFixture(flakeRoot);
@@ -550,7 +548,7 @@ describe.serial("devShell setup", () => {
   });
 
   test("[REQ-105-05a] explains why a Git repository without package.json is rejected", () => {
-    withTemporaryDirectory((directory) => {
+    withDevShellFixture((directory) => {
       const flakeRoot = join(directory, "tayk");
       const unrelated = join(directory, "unrelated");
       createTaykFixture(flakeRoot);
@@ -563,7 +561,7 @@ describe.serial("devShell setup", () => {
   });
 
   test("[REQ-105-05a] explains why a Git repository with invalid package.json is rejected", () => {
-    withTemporaryDirectory((directory) => {
+    withDevShellFixture((directory) => {
       const flakeRoot = join(directory, "tayk");
       const unrelated = join(directory, "unrelated");
       createTaykFixture(flakeRoot);
@@ -576,7 +574,7 @@ describe.serial("devShell setup", () => {
   });
 
   test("[REQ-105-05a] explains why a Git repository with a missing package name is rejected", () => {
-    withTemporaryDirectory((directory) => {
+    withDevShellFixture((directory) => {
       const flakeRoot = join(directory, "tayk");
       const unrelated = join(directory, "unrelated");
       createTaykFixture(flakeRoot);
@@ -589,7 +587,7 @@ describe.serial("devShell setup", () => {
   });
 
   test("[REQ-105-05a] explains why a Git repository with a non-string package name is rejected", () => {
-    withTemporaryDirectory((directory) => {
+    withDevShellFixture((directory) => {
       const flakeRoot = join(directory, "tayk");
       const unrelated = join(directory, "unrelated");
       createTaykFixture(flakeRoot);
@@ -605,7 +603,7 @@ describe.serial("devShell setup", () => {
   });
 
   test("[REQ-105-03] resolves dependencies through direnv from a fresh tayk root", () => {
-    withTemporaryDirectory((directory) => {
+    withDevShellFixture((directory) => {
       const flakeRoot = join(directory, "tayk");
       createTaykFixture(flakeRoot);
       const env = createIsolatedDirenvEnvironment(join(directory, "direnv"));
@@ -621,7 +619,7 @@ describe.serial("devShell setup", () => {
   });
 
   test("[REQ-105-03] repairs a missing dependency binary on direnv re-entry", () => {
-    withTemporaryDirectory((directory) => {
+    withDevShellFixture((directory) => {
       const flakeRoot = join(directory, "tayk");
       createTaykFixture(flakeRoot);
       const env = createIsolatedDirenvEnvironment(join(directory, "direnv"));
@@ -646,7 +644,7 @@ describe.serial("devShell setup", () => {
   });
 
   test("[REQ-105-03] keeps a frozen-lockfile failure non-fatal", () => {
-    withTemporaryDirectory((directory) => {
+    withDevShellFixture((directory) => {
       const flakeRoot = join(directory, "tayk");
       createTaykFixture(flakeRoot);
       const packageJsonPath = join(flakeRoot, "package.json");
@@ -671,7 +669,7 @@ describe.serial("devShell setup", () => {
   });
 
   test("[REQ-105-03] should install the actual project dependencies in a fresh checkout", () => {
-    withTemporaryDirectory((directory) => {
+    withDevShellFixture((directory) => {
       const checkout = join(directory, "checkout");
       createRealProjectCheckout(checkout);
 
@@ -692,7 +690,7 @@ describe.serial("devShell setup", () => {
   });
 
   test("[REQ-105-03] should run the actual pre-commit hook in a fresh worktree", () => {
-    withTemporaryDirectory((directory) => {
+    withDevShellFixture((directory) => {
       const checkout = join(directory, "checkout");
       const worktree = join(directory, "worktree");
       createRealProjectCheckout(checkout);

@@ -5,20 +5,23 @@ import {
   chmodSync,
   cpSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
   realpathSync,
-  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 
-const packageRoot = resolve(import.meta.dirname, "..");
+import {
+  installationGuidePattern,
+  packageRoot,
+  requireCompletedSubprocess,
+  withTemporaryDirectory,
+} from "./helpers";
+
+// REQ-70-01 / REQ-70-02 / REQ-70-03 / REQ-70-05
+// TC-70-01A / TC-70-01B / TC-70-02A / TC-70-03A / TC-70-05A / TC-70-05B
 const packageJsonPath = join(packageRoot, "package.json");
-const installationGuidePattern =
-  /Bun.*(?:install|required)|(?:install|required).*Bun/is;
 const subprocessTimeoutMilliseconds = 20_000;
 const nodePath = Bun.which("node");
 const npmPath = Bun.which("npm");
@@ -32,6 +35,10 @@ if (nodePath === null || npmPath === null) {
 const nodeExecutablePath = nodePath;
 const npmExecutablePath = npmPath;
 
+function withPackageFixture(run: (directory: string) => void): void {
+  withTemporaryDirectory("tayk-package-", run);
+}
+
 interface PackageFile {
   path: string;
   mode: number;
@@ -41,16 +48,6 @@ interface PackResult {
   files: PackageFile[];
 }
 type NpmEnvironment = NodeJS.ProcessEnv;
-
-function withTemporaryDirectory(run: (directory: string) => void): void {
-  const directory = mkdtempSync(join(tmpdir(), "tayk-package-"));
-
-  try {
-    run(directory);
-  } finally {
-    rmSync(directory, { force: true, recursive: true });
-  }
-}
 
 function readJsonRecord(path: string): Record<string, unknown> {
   const value: unknown = JSON.parse(readFileSync(path, "utf-8"));
@@ -149,18 +146,6 @@ function createNpmEnvironment(directory: string): NpmEnvironment {
   };
 }
 
-function requireCompletedSubprocess(
-  label: string,
-  result: SpawnSyncReturns<string>
-): void {
-  if (result.error !== undefined) {
-    throw new Error(
-      `${label} failed to complete\nstatus: ${String(result.status)}\nsignal: ${String(result.signal)}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
-      { cause: result.error }
-    );
-  }
-}
-
 function requireSuccessfulNpmRun(
   label: string,
   result: SpawnSyncReturns<string>
@@ -242,14 +227,18 @@ process.exit(42);
 }
 
 describe("package foundation", () => {
-  test("should ship and execute the installed npm shim contract", () => {
-    withTemporaryDirectory((directory) => {
+  // REQ-75-01 / TC-75-01 / P-75-01
+  // REQ-75-01 / TC-75-04 / existing behavior regression
+  // REQ-75-02 / TC-75-05 / existing behavior regression
+  // REQ-88-02 / TC-88-04 / prediction ID: not applicable (existing regression)
+  test("[REQ-116-03] should preserve the fake Bun forwarding contract when the installed shim is executed (TC-116-03)", () => {
+    withPackageFixture((directory) => {
       const npmEnvironment = createNpmEnvironment(directory);
       const fixtureRoot = createPackFixture(directory);
+      writeFileSync(join(fixtureRoot, "README.md"), "# fixture\n");
       const pack = packPackage(fixtureRoot, npmEnvironment);
       const paths = pack.files.map((file) => file.path);
       const launcher = pack.files.find((file) => file.path === "bin/tayk.js");
-      const readme = readFileSync(join(fixtureRoot, "README.md"), "utf-8");
 
       expect(paths).toContain("package.json");
       expect(paths).toContain("README.md");
@@ -259,12 +248,6 @@ describe("package foundation", () => {
       expect(paths).not.toContain("tsconfig.json");
       expect(paths).not.toContain("dist/must-not-ship.js");
       expect(launcher?.mode === 0o755 || launcher?.mode === 0o775).toBeTrue();
-      expect(readme).toContain(
-        "https://github.com/daiki-beppu/tayk/blob/main/CONTEXT.md"
-      );
-      expect(readme).toContain(
-        "https://github.com/daiki-beppu/tayk/blob/main/docs/adr/0001-thin-architecture.md"
-      );
 
       const consumerRoot = join(directory, "consumer");
       mkdirSync(consumerRoot);

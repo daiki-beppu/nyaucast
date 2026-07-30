@@ -10,10 +10,10 @@ tayk は YouTube チャンネル運営を自動化するツールキット。ski
 
 ## 中核用語
 
-**MCP tool**: tayk が expose する型付き操作。agent が直接呼ぶ第一級インターフェース。ドット表記 (`benchmark.collect`) が正書で、MCP wire 名はアンダースコア変換した `benchmark_collect`。2 層構成。
+**MCP tool**: tayk が expose する型付き操作。agent が直接呼ぶ第一級インターフェース。primitive tool 1 層と、local store への読み口で構成される。ドット表記 (`benchmark.collect`) が正書で、MCP wire 名はアンダースコア変換した `benchmark_collect`。
 
-- **workflow tool**: 人間の GO/NO-GO ゲートで区切られた粗粒度 tool。`collection.plan` / `collection.produce` / `collection.publish` の 3 本。内部で状態管理し resume 可能
 - **primitive tool**: 単一操作の細粒度 tool。`audio.master` / `thumbnail.generate` 等
+- **workflow tool**: 廃止された粗粒度の MCP tool。区間を歩くのは knowledge codec を読んだ agent であり、tool ではない
 
 **adapter**: core の MCP tool を各プロトコルへ橋渡しする薄いラッパ。MCP (primary) と CLI (`tayk <cmd>`) の 2 本。
 
@@ -29,7 +29,7 @@ tayk は YouTube チャンネル運営を自動化するツールキット。ski
 
 **read model**: local store が兼ねる読み取り専用クエリ面。① ④ のミラーを含むが **SSOT ではない**。
 
-**tracer**: ADR-0001 を確定させるために最初に end-to-end で通す垂直スライス = `collection.plan`。
+**tracer**: ADR-0001 を確定させるために最初に end-to-end で通す垂直スライス = plan 区間。
 
 **dogfood**: first-party 2 リポで collection フルライフサイクル 1 周を tayk だけで実走させる受け入れ検証。`v0.1.0` の唯一のリリースゲート。
 
@@ -39,15 +39,15 @@ tayk は YouTube チャンネル運営を自動化するツールキット。ski
 
 `CONTEXT.md` の各項が `_Avoid_` として退けた語を、コード識別子・description・レポートで使ってはならない。代表例:
 
-| 使ってはならない                                 | 正書          |
-| ------------------------------------------------ | ------------- |
-| orchestrator, pipeline（workflow tool を指して） | workflow tool |
-| thin client, thin wrapper                        | adapter       |
-| database, SQLite（local store を指して）         | local store   |
-| キャッシュ / SSOT（read model を指して）         | read model    |
-| アルバム, プレイリスト（collection を指して）    | collection    |
-| バズ動画, ヒット動画                             | 当たり動画    |
-| PoC（tracer を指して）                           | tracer        |
-| yt, yt-automation, youtube-channels-automation   | tayk          |
+| 使ってはならない                               | 正書           |
+| ---------------------------------------------- | -------------- |
+| workflow tool                                  | primitive tool |
+| thin client, thin wrapper                      | adapter        |
+| database, SQLite（local store を指して）       | local store    |
+| キャッシュ / SSOT（read model を指して）       | read model     |
+| アルバム, プレイリスト（collection を指して）  | collection     |
+| バズ動画, ヒット動画                           | 当たり動画     |
+| PoC（tracer を指して）                         | tracer         |
+| yt, yt-automation, youtube-channels-automation | tayk           |
 
 新しい概念を導入するときは、`CONTEXT.md` に既存の用語がないかを先に確認する。既存語で表せるものに別名を与えない。
