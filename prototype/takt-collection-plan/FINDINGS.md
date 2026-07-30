@@ -149,19 +149,19 @@ facets / workflow YAML の配布経路と整合させる必要がある** → #6
 
 1. **stdio transport の MCP server は workflow では既定で無効。**
    `Configure workflow_mcp_servers in project/global config to allow it.` —
-   下流チャンネルリポの `.takt/config.yaml` に `workflow_mcp_servers: { stdio: true }` が要る。
-   env なら `TAKT_WORKFLOW_MCP_SERVERS_STDIO=true`。
-   provider が Claude 系限定である制約（#58）に**加えて**この opt-in が必要。
+   試作検証では `workflow_mcp_servers: { stdio: true }` 相当の opt-in が必要だった。
+   これは provider が Claude 系限定である制約（#58）に加わる条件だった。
 
 2. **`structured_output` の schema は workflow の隣に置けない。**
    `schema_ref` の解決先は `.takt/schemas/` → `~/.takt/schemas/` → takt 同梱の 3 箇所のみ。
-   workflow YAML からの相対パス指定は不可。tayk の schema は下流リポの `.takt/schemas/` へ
-   インストールする必要がある。
+   workflow YAML からの相対パス指定は不可だったため、試作検証では schema を
+   `.takt/schemas/` へ一時配置した。
 
 3. **facet をキー名で引くと workflow の隣は見ない。**
    素のキー参照は `.takt/facets/<kind>/` → `~/.takt/facets/<kind>/` → repertoire → builtin の 4 層のみ。
-   自己完結したパッケージにするには workflow YAML のトップレベルにセクションマップ
-   （`personas:` / `policies:` / `knowledge:` / `instructions:` / `report_formats:`）を書いて相対パスを宣言する。
+   試作では workflow YAML のトップレベルにセクションマップ
+   （`personas:` / `policies:` / `knowledge:` / `instructions:` / `report_formats:`）を置き、
+   相対パスを宣言して解決した。
 
 4. **persona だけパスの許可リストが別。**
    persona は `<workflow ディレクトリ>/personas`、`<その親>/personas`、`agents` 等に限定される。
@@ -169,7 +169,7 @@ facets / workflow YAML の配布経路と整合させる必要がある** → #6
    試作では `personas/` を `facets/` の外に出して通した。
 
 5. **`loop_monitors.cycle` は 2 step 以上を要求する。**
-   単一 step の自己ループは監視できない。自己ループを入れるなら監視のためだけに step を増やす必要がある。
+   単一 step の自己ループは監視できず、監視を成立させるには 2 step 以上が必要だった。
 
 6. **`takt repertoire add <owner/repo>` という facet / workflow の配布機構が存在する。**
    GitHub から `~/.takt/repertoire/@owner/repo/` へ入り、そこでは `facets/<kind>/` 配置が有効になる。
@@ -177,17 +177,7 @@ facets / workflow YAML の配布経路と整合させる必要がある** → #6
 
 ---
 
-## 試作の検証手順
+## 試作の検証結果
 
-```bash
-# schema を解決先へ置く（workflow の隣には置けない）
-mkdir -p .takt/schemas && cp prototype/takt-collection-plan/schemas/plan-inputs.json .takt/schemas/
-
-TAKT_WORKFLOW_MCP_SERVERS_STDIO=true \
-  takt workflow doctor prototype/takt-collection-plan/workflows/collection-plan.yaml
-# → Workflow OK: .../collection-plan.yaml
-
-rm -rf .takt/schemas
-```
-
-対象: takt v0.52.0。
+takt v0.52.0 を対象に、stdio transport の opt-in と schema の一時配置を適用した状態で
+`takt workflow doctor` が `Workflow OK` を返すところまで確認した。試作は製品実装としては実行していない。
