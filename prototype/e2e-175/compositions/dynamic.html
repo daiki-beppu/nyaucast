@@ -1,0 +1,72 @@
+<!doctype html>
+<!-- issue #175 プロトタイプ: GSAP 動的シーン + window.__hf seek プロトコル（HyperFrames 互換の契約名）
+     決定論化: gsap.updateRoot(t) 外部駆動 + lagSmoothing(0)（research #174 §3）、CSS/WAAPI は currentTime seek（§2.4）
+     フレーム精度検証用に ease:"none" の線形マーカー（#marker）を持つ: x(t) = t / duration * 1820 -->
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<style>
+  * { margin: 0; padding: 0; }
+  html, body { width: 1920px; height: 1080px; overflow: hidden; }
+  body { background: #14101f; font-family: "Hiragino Sans", system-ui, sans-serif; color: #f2ecff; position: relative; }
+  /* マーカー帯: 上端 40px は黒地 + 純赤マーカーのみ（ピクセル走査で位置を特定する） */
+  .marker-lane { position: absolute; left: 0; top: 0; width: 1920px; height: 40px; background: #000; }
+  #marker { position: absolute; left: 0; top: 0; width: 100px; height: 40px; background: #f00; }
+  #box {
+    position: absolute; left: 860px; top: 400px; width: 200px; height: 200px; border-radius: 28px;
+    background: linear-gradient(135deg, #ffd166, #ef6351);
+  }
+  #readout { position: absolute; left: 80px; bottom: 80px; font-size: 72px; font-variant-numeric: tabular-nums; }
+  /* CSS keyframes アニメーション: WAAPI seek 経路の検証用 */
+  #css-pulse {
+    position: absolute; right: 160px; bottom: 120px; width: 160px; height: 160px; border-radius: 50%;
+    background: #b8a6ff; animation: pulse 4s linear infinite;
+  }
+  @keyframes pulse {
+    0% { transform: scale(0.5) rotate(0deg); opacity: 0.4; }
+    50% { transform: scale(1.4) rotate(180deg); opacity: 1; }
+    100% { transform: scale(0.5) rotate(360deg); opacity: 0.4; }
+  }
+</style>
+</head>
+<body>
+  <div class="marker-lane"><div id="marker"></div></div>
+  <div id="box"></div>
+  <div id="css-pulse"></div>
+  <div id="readout">0.000</div>
+  <script src="/gsap.min.js"></script>
+  <script>
+    const DURATION = 10;
+    const MARKER_TRAVEL = 1820; // 1920 - マーカー幅 100
+
+    // ticker から root 更新を外して完全外部駆動にする（GSAP 公式手順）
+    gsap.ticker.remove(gsap.updateRoot);
+    gsap.ticker.lagSmoothing(0);
+    gsap.updateRoot(0);
+
+    const tl = gsap.timeline();
+    tl.fromTo("#marker", { x: 0 }, { x: MARKER_TRAVEL, duration: DURATION, ease: "none" }, 0);
+    tl.fromTo(
+      "#box",
+      { rotation: 0, scale: 0.5, borderRadius: 28 },
+      { rotation: 720, scale: 1.6, borderRadius: 100, duration: DURATION, ease: "power2.inOut" },
+      0,
+    );
+    tl.startTime(0);
+
+    const readout = document.getElementById("readout");
+    window.__hf = {
+      duration: DURATION,
+      seek(t) {
+        gsap.updateRoot(t);
+        for (const a of document.getAnimations()) {
+          a.pause();
+          a.currentTime = t * 1000; // ms
+        }
+        readout.textContent = t.toFixed(3);
+      },
+    };
+    window.__ready = document.fonts.ready.then(() => true);
+  </script>
+</body>
+</html>

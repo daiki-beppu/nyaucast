@@ -10,7 +10,16 @@
     "prototype/**",
     "scripts/**"
   ],
-  "ignoreDependencies": ["ultracite", "yaml"],
+  "ignoreDependencies": [
+    "ultracite",
+    "yaml",
+    "@mediabunny/server",
+    "@puppeteer/browsers",
+    "devtools-protocol",
+    "gsap",
+    "mediabunny",
+    "pngjs"
+  ],
   "duplicates": {
     "enabled": true,
     "mode": "semantic",

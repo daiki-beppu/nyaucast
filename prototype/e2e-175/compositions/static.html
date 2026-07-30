@@ -1,0 +1,42 @@
+<!doctype html>
+<!-- issue #175 プロトタイプ: 静止画シーン（v0.1 の「静止画 1 枚 + 音声」動画の 1 フレーム） -->
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<style>
+  * { margin: 0; padding: 0; }
+  html, body { width: 1920px; height: 1080px; overflow: hidden; }
+  body {
+    background:
+      radial-gradient(1200px 800px at 25% 20%, #3b2f63 0%, transparent 60%),
+      radial-gradient(1000px 700px at 85% 80%, #16324a 0%, transparent 55%),
+      linear-gradient(160deg, #14101f 0%, #1d1830 45%, #0e1a24 100%);
+    font-family: "Hiragino Sans", system-ui, sans-serif;
+    color: #f2ecff;
+    position: relative;
+  }
+  .frame { position: absolute; inset: 60px; border: 2px solid rgba(255, 255, 255, 0.14); border-radius: 24px; }
+  .kicker { position: absolute; left: 140px; top: 300px; font-size: 44px; letter-spacing: 0.4em; color: #b8a6ff; }
+  h1 { position: absolute; left: 132px; top: 380px; font-size: 128px; font-weight: 800; line-height: 1.15; }
+  h1 em { font-style: normal; color: #ffd166; }
+  .meta { position: absolute; left: 140px; bottom: 180px; font-size: 40px; color: #9fb3c8; }
+  .badge {
+    position: absolute; right: 140px; top: 300px; width: 360px; height: 360px; border-radius: 50%;
+    background: conic-gradient(from 210deg, #ffd166, #ef6351, #b8a6ff, #ffd166);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .badge span { font-size: 150px; font-weight: 800; color: #14101f; }
+</style>
+</head>
+<body>
+  <div class="frame"></div>
+  <div class="kicker">TTP BENCHMARK</div>
+  <h1>作業用 BGM<br /><em>Deep Focus</em> Mix</h1>
+  <div class="meta">tayk prototype #175 — HTML composition → rasterize → mediabunny</div>
+  <div class="badge"><span>1h</span></div>
+  <script>
+    window.__hf = { duration: 0, seek() {} };
+    window.__ready = document.fonts.ready.then(() => true);
+  </script>
+</body>
+</html>
