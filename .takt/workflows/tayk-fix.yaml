@@ -403,7 +403,7 @@ steps:
     rules:
       - condition: COMPLETE
         next: final_gate
-      - condition: needs_replan
+      - condition: need_replan
         next: diagnose
       - condition: ABORT
         next: ABORT
