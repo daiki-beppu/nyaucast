@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import {
   chmodSync,
   copyFileSync,
@@ -41,6 +41,26 @@ if (inheritedPath === undefined) {
   throw new Error("PATH is required for the release integration test");
 }
 
+// #190: lefthook pre-push 配下では GIT_DIR / GIT_INDEX_FILE 等が子プロセスへ
+// 紛れ込み、fixture の git 操作が呼び出し元リポジトリへ向かう（linked worktree
+// からの push では git がフックへ絶対パスの GIT_DIR を渡すため必ず発火する）。
+// フック文脈の変数を落とし、グローバル / システム config も隔離した環境を組む。
+function hermeticGitEnvironment(
+  globalConfigPath: string,
+  baseEnvironment: Record<string, string | undefined> = process.env
+): Record<string, string> {
+  const environment: Record<string, string> = {};
+  for (const [name, value] of Object.entries(baseEnvironment)) {
+    if (value !== undefined && !/^(?:GIT_|LEFTHOOK)/.test(name)) {
+      environment[name] = value;
+    }
+  }
+  environment["GIT_CONFIG_GLOBAL"] = globalConfigPath;
+  environment["GIT_CONFIG_NOSYSTEM"] = "1";
+  environment["GIT_TERMINAL_PROMPT"] = "0";
+  return environment;
+}
+
 function runCommand(
   command: string[],
   cwd: string,
@@ -58,9 +78,15 @@ function runCommand(
   return result;
 }
 
-function runGit(cwd: string, ...arguments_: string[]): CommandResult {
-  const result = Bun.spawnSync(["git", ...arguments_], {
+function runGit(
+  environment: Record<string, string>,
+  cwd: string,
+  ...arguments_: string[]
+): CommandResult {
+  // 環境要因で repository 解決が揺れても対象が cwd から動かないよう -C を常置する（#190）
+  const result = Bun.spawnSync(["git", "-C", cwd, ...arguments_], {
     cwd,
+    env: environment,
     stderr: "pipe",
     stdout: "pipe",
   });
@@ -73,10 +99,43 @@ function runGit(cwd: string, ...arguments_: string[]): CommandResult {
   return result;
 }
 
-function gitOutput(cwd: string, ...arguments_: string[]): string {
-  return runGit(cwd, ...arguments_)
+function gitOutput(
+  environment: Record<string, string>,
+  cwd: string,
+  ...arguments_: string[]
+): string {
+  return runGit(environment, cwd, ...arguments_)
     .stdout.toString()
     .trim();
+}
+
+// #190: fixture の git 操作が呼び出し元リポジトリへ漏れていないことを実行前後で
+// 検査する。HEAD・作業ツリー・local config のいずれかの変化 = 漏れの検出。
+const callerRepositoryEnvironment = hermeticGitEnvironment("/dev/null");
+
+function callerRepositoryState(): Record<string, string> {
+  return {
+    configuration: gitOutput(
+      callerRepositoryEnvironment,
+      packageRoot,
+      "config",
+      "--local",
+      "--list"
+    ),
+    head: gitOutput(
+      callerRepositoryEnvironment,
+      packageRoot,
+      "rev-parse",
+      "HEAD"
+    ),
+    status: gitOutput(
+      callerRepositoryEnvironment,
+      packageRoot,
+      "--no-optional-locks",
+      "status",
+      "--porcelain"
+    ),
+  };
 }
 
 function requireRecord(value: unknown, label: string): Record<string, unknown> {
@@ -116,7 +175,10 @@ function findRunStep(pattern: RegExp): WorkflowStep | undefined {
   );
 }
 
-function initializeReleaseRepository(directory: string): {
+function initializeReleaseRepository(
+  environment: Record<string, string>,
+  directory: string
+): {
   candidate: string;
   main: string;
   remote: string;
@@ -124,10 +186,16 @@ function initializeReleaseRepository(directory: string): {
   const remote = join(directory, "remote.git");
   const source = join(directory, "source");
   mkdirSync(source);
-  runGit(directory, "init", "--bare", remote);
-  runGit(source, "init", "-b", "main");
-  runGit(source, "config", "user.email", "release-test@example.invalid");
-  runGit(source, "config", "user.name", "Release Test");
+  runGit(environment, directory, "init", "--bare", remote);
+  runGit(environment, source, "init", "-b", "main");
+  runGit(
+    environment,
+    source,
+    "config",
+    "user.email",
+    "release-test@example.invalid"
+  );
+  runGit(environment, source, "config", "user.name", "Release Test");
   writeFileSync(
     join(source, "package.json"),
     `${JSON.stringify({ version: packageVersion }, undefined, 2)}\n`
@@ -136,33 +204,35 @@ function initializeReleaseRepository(directory: string): {
   const scripts = join(source, ".github/scripts");
   mkdirSync(scripts, { recursive: true });
   copyFileSync(ancestorHelperPath, join(scripts, "check-release-ancestor.sh"));
-  runGit(source, "add", "package.json", ".gitignore", ".github");
-  runGit(source, "commit", "-m", "main release");
-  const main = gitOutput(source, "rev-parse", "HEAD");
-  runGit(source, "remote", "add", "origin", remote);
-  runGit(source, "push", "-u", "origin", "main");
-  runGit(source, "switch", "-c", "candidate");
+  runGit(environment, source, "add", "package.json", ".gitignore", ".github");
+  runGit(environment, source, "commit", "-m", "main release");
+  const main = gitOutput(environment, source, "rev-parse", "HEAD");
+  runGit(environment, source, "remote", "add", "origin", remote);
+  runGit(environment, source, "push", "-u", "origin", "main");
+  runGit(environment, source, "switch", "-c", "candidate");
   writeFileSync(join(source, "candidate.txt"), "not reviewed\n");
-  runGit(source, "add", "candidate.txt");
-  runGit(source, "commit", "-m", "unreviewed candidate");
-  const candidate = gitOutput(source, "rev-parse", "HEAD");
-  runGit(source, "tag", releaseTag);
-  runGit(source, "push", "origin", releaseTag);
+  runGit(environment, source, "add", "candidate.txt");
+  runGit(environment, source, "commit", "-m", "unreviewed candidate");
+  const candidate = gitOutput(environment, source, "rev-parse", "HEAD");
+  runGit(environment, source, "tag", releaseTag);
+  runGit(environment, source, "push", "origin", releaseTag);
   return { candidate, main, remote };
 }
 
 function cloneCandidate(
+  environment: Record<string, string>,
   directory: string,
   remote: string,
   candidate: string
 ): string {
   const runner = join(directory, "runner");
-  runGit(directory, "clone", remote, runner);
-  runGit(runner, "checkout", "--detach", candidate);
+  runGit(environment, directory, "clone", remote, runner);
+  runGit(environment, runner, "checkout", "--detach", candidate);
   return runner;
 }
 
 function runAncestorHelper(
+  environment: Record<string, string>,
   cwd: string,
   candidate: string,
   reference: string
@@ -170,7 +240,7 @@ function runAncestorHelper(
   return runCommand(
     ["bash", ancestorHelperPath, candidate, reference],
     cwd,
-    process.env
+    environment
   );
 }
 
@@ -203,13 +273,14 @@ function installNpmStub(directory: string): {
 }
 
 function runPublishDecision(
+  environment: Record<string, string>,
   cwd: string,
   tag: string,
   dryRun: boolean,
   stub: ReturnType<typeof installNpmStub>
 ): CommandResult {
   return runCommand(["bash", "-euc", extractPublishScript()], cwd, {
-    ...process.env,
+    ...environment,
     DRY_RUN: String(dryRun),
     GITHUB_REF_NAME: tag,
     NPM_CALL_LOG: stub.callsPath,
@@ -224,41 +295,61 @@ function npmCalls(path: string): string[] {
   return readFileSync(path, "utf-8").trim().split("\n");
 }
 
-function runReleaseGuard(cwd: string, candidate: string): CommandResult {
+function runReleaseGuard(
+  environment: Record<string, string>,
+  cwd: string,
+  candidate: string
+): CommandResult {
   const guardStep = findRunStep(/check-release-ancestor\.sh/);
   if (typeof guardStep?.run !== "string") {
     throw new TypeError("release workflow must invoke the ancestor helper");
   }
   return runCommand(["bash", "-euc", guardStep.run], cwd, {
-    ...process.env,
+    ...environment,
     GITHUB_SHA: candidate,
   });
 }
 
-function repositorySnapshot(cwd: string, sentinel: string): object {
+function repositorySnapshot(
+  environment: Record<string, string>,
+  cwd: string,
+  sentinel: string
+): object {
   return {
-    head: gitOutput(cwd, "rev-parse", "HEAD"),
-    refs: gitOutput(cwd, "show-ref"),
+    head: gitOutput(environment, cwd, "rev-parse", "HEAD"),
+    refs: gitOutput(environment, cwd, "show-ref"),
     sentinel: readFileSync(sentinel, "utf-8"),
-    status: gitOutput(cwd, "status", "--porcelain"),
+    status: gitOutput(environment, cwd, "status", "--porcelain"),
   };
 }
 
 describe("release ancestor guard", () => {
+  let callerStateBeforeTests: Record<string, string> = {};
+
+  beforeAll(() => {
+    callerStateBeforeTests = callerRepositoryState();
+  });
+
+  afterAll(() => {
+    expect(callerRepositoryState()).toEqual(callerStateBeforeTests);
+  });
+
   // REQ-77-01 / TC-77-01 / P-77-01
   test("should stop before npm publish when the tagged commit is outside main", () => {
     withTemporaryDirectory("tayk-release-ancestor-", (directory) => {
-      const repository = initializeReleaseRepository(directory);
+      const environment = hermeticGitEnvironment(join(directory, "gitconfig"));
+      const repository = initializeReleaseRepository(environment, directory);
       const runner = cloneCandidate(
+        environment,
         directory,
         repository.remote,
         repository.candidate
       );
       const stub = installNpmStub(directory);
 
-      const guard = runReleaseGuard(runner, repository.candidate);
+      const guard = runReleaseGuard(environment, runner, repository.candidate);
       if (guard.exitCode === 0) {
-        runPublishDecision(runner, releaseTag, false, stub);
+        runPublishDecision(environment, runner, releaseTag, false, stub);
       }
 
       expect(npmCalls(stub.callsPath)).toEqual([]);
@@ -298,14 +389,21 @@ describe("release ancestor guard", () => {
   test("should allow a candidate that is an ancestor of origin main", () => {
     expect(existsSync(ancestorHelperPath)).toBe(true);
     withTemporaryDirectory("tayk-release-ancestor-", (directory) => {
-      const repository = initializeReleaseRepository(directory);
+      const environment = hermeticGitEnvironment(join(directory, "gitconfig"));
+      const repository = initializeReleaseRepository(environment, directory);
       const runner = cloneCandidate(
+        environment,
         directory,
         repository.remote,
         repository.main
       );
 
-      const result = runAncestorHelper(runner, repository.main, "origin/main");
+      const result = runAncestorHelper(
+        environment,
+        runner,
+        repository.main,
+        "origin/main"
+      );
 
       expect(result.exitCode).toBe(0);
     });
@@ -315,8 +413,10 @@ describe("release ancestor guard", () => {
   test("should reject non-ancestor and unresolvable inputs with diagnostics", () => {
     expect(existsSync(ancestorHelperPath)).toBe(true);
     withTemporaryDirectory("tayk-release-ancestor-", (directory) => {
-      const repository = initializeReleaseRepository(directory);
+      const environment = hermeticGitEnvironment(join(directory, "gitconfig"));
+      const repository = initializeReleaseRepository(environment, directory);
       const runner = cloneCandidate(
+        environment,
         directory,
         repository.remote,
         repository.candidate
@@ -328,7 +428,12 @@ describe("release ancestor guard", () => {
       ] as const;
 
       for (const [candidate, reference] of cases) {
-        const result = runAncestorHelper(runner, candidate, reference);
+        const result = runAncestorHelper(
+          environment,
+          runner,
+          candidate,
+          reference
+        );
         expect(result.exitCode).not.toBe(0);
         expect(result.stderr.toString().trim()).not.toBe("");
       }
@@ -338,15 +443,23 @@ describe("release ancestor guard", () => {
   // REQ-77-04 / TC-77-04 / P-77-01
   test("should reject a tag and package version mismatch before npm publish", () => {
     withTemporaryDirectory("tayk-release-version-", (directory) => {
-      const repository = initializeReleaseRepository(directory);
+      const environment = hermeticGitEnvironment(join(directory, "gitconfig"));
+      const repository = initializeReleaseRepository(environment, directory);
       const runner = cloneCandidate(
+        environment,
         directory,
         repository.remote,
         repository.main
       );
       const stub = installNpmStub(directory);
 
-      const result = runPublishDecision(runner, "v9.9.9", false, stub);
+      const result = runPublishDecision(
+        environment,
+        runner,
+        "v9.9.9",
+        false,
+        stub
+      );
 
       expect(result.exitCode).not.toBe(0);
       expect(npmCalls(stub.callsPath)).toEqual([]);
@@ -356,17 +469,25 @@ describe("release ancestor guard", () => {
   // REQ-77-05 / TC-77-05 / P-77-02
   test("should run only npm publish dry-run for a manual main release", () => {
     withTemporaryDirectory("tayk-release-dry-run-", (directory) => {
-      const repository = initializeReleaseRepository(directory);
+      const environment = hermeticGitEnvironment(join(directory, "gitconfig"));
+      const repository = initializeReleaseRepository(environment, directory);
       const runner = cloneCandidate(
+        environment,
         directory,
         repository.remote,
         repository.main
       );
       const stub = installNpmStub(directory);
 
-      const guard = runReleaseGuard(runner, repository.main);
+      const guard = runReleaseGuard(environment, runner, repository.main);
       expect(guard.exitCode).toBe(0);
-      const result = runPublishDecision(runner, releaseTag, true, stub);
+      const result = runPublishDecision(
+        environment,
+        runner,
+        releaseTag,
+        true,
+        stub
+      );
 
       expect(result.exitCode).toBe(0);
       expect(npmCalls(stub.callsPath)).toEqual(["publish --dry-run"]);
@@ -386,8 +507,10 @@ describe("release ancestor guard", () => {
   // REQ-77-07 / TC-77-07 / P-77-02, P-77-03
   test("should leave repository state and ignored artifacts unchanged", () => {
     withTemporaryDirectory("tayk-release-read-only-", (directory) => {
-      const repository = initializeReleaseRepository(directory);
+      const environment = hermeticGitEnvironment(join(directory, "gitconfig"));
+      const repository = initializeReleaseRepository(environment, directory);
       const runner = cloneCandidate(
+        environment,
         directory,
         repository.remote,
         repository.candidate
@@ -399,9 +522,11 @@ describe("release ancestor guard", () => {
       const candidates = [repository.main, repository.candidate];
 
       for (const candidate of candidates) {
-        const before = repositorySnapshot(runner, sentinel);
-        runAncestorHelper(runner, candidate, "origin/main");
-        expect(repositorySnapshot(runner, sentinel)).toEqual(before);
+        const before = repositorySnapshot(environment, runner, sentinel);
+        runAncestorHelper(environment, runner, candidate, "origin/main");
+        expect(repositorySnapshot(environment, runner, sentinel)).toEqual(
+          before
+        );
       }
     });
   });
@@ -417,5 +542,25 @@ describe("release ancestor guard", () => {
     expect(job["needs"]).toBe("ci");
     expect(permissions["contents"]).toBe("read");
     expect(permissions["id-token"]).toBe("write");
+  });
+
+  // #190: pre-push フック環境（GIT_DIR 等）が漏れていても fixture の git 操作が
+  // 呼び出し元へ向かわないことの回帰テスト。密閉が外れると GIT_DIR の指す先に
+  // repository が作られ、fixture のコミットが temp の外へ漏れる
+  test("should shield fixture git operations from a leaked hook environment", () => {
+    withTemporaryDirectory("tayk-release-hermetic-", (directory) => {
+      const leakedGitDirectory = join(directory, "leaked-caller.git");
+      const environment = hermeticGitEnvironment(join(directory, "gitconfig"), {
+        ...process.env,
+        GIT_DIR: leakedGitDirectory,
+        GIT_INDEX_FILE: join(directory, "leaked-index"),
+        LEFTHOOK: "1",
+      });
+
+      const repository = initializeReleaseRepository(environment, directory);
+
+      expect(repository.candidate).not.toBe(repository.main);
+      expect(existsSync(leakedGitDirectory)).toBe(false);
+    });
   });
 });
