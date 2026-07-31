@@ -2,7 +2,7 @@
 
 ## Status
 
-accepted (2026-07-24)
+accepted (2026-07-24) / 改訂 2026-07-31（#178。動画生成工程を「agent が書く HTML composition → Chrome rasterize → mediabunny エンコード」のパイプラインへ載せ替え — 決定 6〜11 を追加。エンコード層の mediabunny + node-av 統一（決定 1）と ffmpeg CLI 不採用（決定 3）は不変。Chrome 依存は `video.render` / `video.preview` の 2 tool に限定して許容する）
 
 ## Context
 
@@ -16,6 +16,15 @@ accepted (2026-07-24)
 
 全チケットが「成立」で決着し、ffmpeg CLI 側の詳細検証が不要と判明したため、残る作業は本 ADR による最終確定のみだった。
 
+### 改訂の経緯（2026-07-31 / #178）
+
+マップ issue #172「動画生成 HTML パイプライン化マップ」の destination。動機は**基盤一本化** — v0.1 の動画要件は「静止画 1 枚 + 音声」のまま動かさず、v0.2 動的映像で動画パスを作り直す二重実装を避けるため、基盤だけ先に将来形（agent が書く HTML composition をブラウザで rasterize する形）へ載せ替える。エンコード層は本 ADR の mediabunny を維持し、Chrome（rasterize）依存のみ動画工程限定で許容するかが改訂の論点だった。4 件の調査・プロトタイプ・設計チケットを実施した:
+
+- issue #173（調査）: HyperFrames（HeyGen 製 OSS）の部分利用は成立するか → 成立。ただし capture engine の要求は `window.__hf` seek プロトコル（`duration` + `seek(t)`）だけで、模倣自体が不要になり得ると判明
+- issue #174（調査）: ブラウザ frame capture の決定論的手段 → 本命は seek 方式 + `Page.captureScreenshot`。ロックステップ（`HeadlessExperimental.beginFrame`）は macOS 非対応、screencast は wall-clock 従属で構造的に非決定論
+- issue #175（プロトタイプ）: HTML → rasterize → mediabunny の end-to-end → **成立・合格ライン PASS**。静止画 + 音声 1h がフルパイプライン 125.9 秒（実時間の 0.035 倍、合格ライン 2 倍以内に対し 57 倍の余裕）。決定論 sweep 300 フレーム全 PASS、単タブ 15.0 fps・4 タブ並列 59.8 fps で線形スケール。自前 CDP client 約 210 行で成立
+- issue #176 / #177（設計）: composition 記述規約（`window.__hf` 契約）・tool 役割分担・プレビュー工程を確定（本改訂の決定 9・10 に反映）
+
 ## Decision
 
 1. **音声（MIX/マスタリング）・動画生成・アップロード前検証（メタデータ読み）の全工程を mediabunny + `@mediabunny/server`（node-av 経由のネイティブ FFmpeg バインディング）に統一する。** 工程ごとの技術分岐は設けない。ffmpeg CLI 直接呼び出し、音声のみ WASM エンコーダ（`@mediabunny/mp3-encoder` 等）に逃がす構成のいずれも採用しない
@@ -23,6 +32,15 @@ accepted (2026-07-24)
 3. **ffmpeg CLI 直接呼び出しは採用しない。** Considered Options に撤退先として記録するに留め、実装はしない
 4. **node-av の GPLv3 ネイティブバイナリ依存を許容する。** 配布時の「結合著作物（実効 GPLv3）」論点は先送りし、tayk の公開/配布を具体的に検討する段階で本 ADR を改訂して再判断する
 5. **追加のエラーラッパーは設けない。** mediabunny/node-av の失敗は通常の throw / Promise reject で表面化し、ADR-0001「内部throw、境界で変換」にそのまま乗る
+
+（以下、改訂 2026-07-31 / #178 で追加）
+
+6. **動画生成工程は「HTML composition → Chrome rasterize → mediabunny エンコード」のパイプラインとする。** composition は `window.__hf` seek プロトコル（`duration` + `seek(t)`）を実装した自己完結 HTML 1 枚で、契約の正書は `docs/reference/composition-contract.md`。rasterize は pin 済み chrome-headless-shell への CDP 直結（seek 方式 + `Page.captureScreenshot`。seek 後の settle — double rAF・50ms timeout と race — は capturer 側の責務）。エンコード層は決定 1 の mediabunny + node-av を維持し、ffmpeg CLI 不採用（決定 3）は変えない。HyperFrames はエンジンとしては採用せず、`__hf` プロトコル互換のみ共有する
+7. **Chrome 依存を許容するのは `video.render` / `video.preview` の 2 tool のみ。** 用途や工程の言い換えではなく tool 名の列挙で限定する。他 tool への拡大（サムネ生成の同基盤化等）は本 ADR の改訂を要する
+8. **Chrome 供給は `@puppeteer/browsers`（純 JS・Bun 動作確認済み）による pin 済み chrome-headless-shell の初回実行時自動ダウンロードとする。** pin（バージョン）は `src/lib/` の chrome 供給インフラが持つ。システムへの手動インストール・Nix devShell 供給・明示 setup コマンドのいずれも採用しない
+9. **tool 構成は `video.render` + `video.preview` の 2 枚とし、鮮度付き冪等を共通規約とする。** 生成時に composition の内容ハッシュを記録し、一致すれば既存成果物を返し、不一致なら作り直す（明示的再生成の `force` も規約通り持つ）。ADR-0007 決定 4「実体があれば作らず返す」の実体を「**この** composition の成果物」と読む解釈の精緻化であり、ADR-0007 本体は改訂しない。プレビューは非ゲートの codec 主導ステップ（新ゲート・新 CLI コマンドは作らない。正式な GO/NO-GO はゲート②のまま）で、契約検証を内包するため validate 単体 tool は置かない
+10. **実装配置は tool 1 ファイル + プロトコル汎用インフラのみ `src/lib/` 許可。** ADR-0001「1 MCP tool = 実装 1 ファイル」の解釈を明文化する（ADR-0001 決定 7 に基づく改訂手続き）: CDP transport / chrome 供給・pin・起動のようなプロトコル汎用インフラに限り `src/lib/` に置いてよい。業務ロジック（契約検証規則・capture plan・サンプリング規則）の lib 化は禁止し、tool 実装ファイルに同居させる
+11. **撤退先は issue #46 の mediabunny 静止画パス（実証済み・1h 動画 78.7 秒）とし、撤退トリガを列挙・発動は都度判断とする。** トリガは 3 群 — (a) Chrome 供給不能（pin 版 chrome-headless-shell の配布消滅・プラットフォーム廃止）、(b) 上流の破壊的変更（`@puppeteer/browsers` の Bun 非互換化・CDP プロトコル変更で自前 client が修復不能）、(c) 決定論の破れ（Chrome 更新後に再 seek バイト比較が恒常的に失敗する）。いずれも修復不能と判断した時点で本 ADR を再改訂して発動する。数値基準（N 日等）は設けず、撤退先実装の常時保守もしない
 
 ## Why
 
@@ -32,12 +50,28 @@ accepted (2026-07-24)
 - **エラーモデルの整合**: プロトタイプ実コード（`decodeAudio` の `if (!track) throw new Error(...)`）で確認した通り、mediabunny の失敗は素直な throw/reject。ADR-0001 の境界変換モデルに追加の適合コストがない
 - **非対称な可逆性**: 今 node-av を必須依存として受け入れても、将来の optional 化・差し替えは（ADR-0001「1 MCP tool = 1 ファイル」規約により呼び出しが tool 実装内に自然に閉じているため）着手が容易。逆に今から抽象化境界を先回りで作るのは、v0.1 時点で受益者のいない投機的設計になる
 
+（以下、改訂 2026-07-31 / #178 で追加）
+
+- **実測で裏付けられたパイプライン成立**（決定 6）: #175 でフルパイプライン 125.9 秒 / 1h 動画 — 撤退先の静止画パス（78.7 秒）に対する browser 化の追加コストは capture 約 0.7 秒のみ。決定論も 300 フレーム sweep 全 PASS（マーカー誤差 max 1px・再 seek / 逆順 seek バイト一致）で、「同じ composition から同じ動画が出る」ことを機械検証できる
+- **基盤一本化による二重実装の回避**（決定 6）: v0.1 の動画要件（静止画 1 枚 + 音声）は動かさないまま、基盤だけ v0.2 動的映像と同じ形に載せ替える。静止画パスのまま v0.1 を作ると、v0.2 で動画パスの作り直しが確定する
+- **tool 列挙で限定する理由**（決定 7）: 「動画工程」「rasterize 用途」のような概念での限定は境界解釈に幅が出て、マップ #172 が out of scope と判断したサムネ同基盤化が黙って入り込める。tool 名の列挙は検証可能で、拡大を ADR 改訂という明示的な決定に強制できる
+- **初回実行時自動ダウンロードの理由**（決定 8）: 既存 Why の「セットアップ摩擦の低さ」と同じ価値基準。明示 setup コマンドは CLI が 1 本増えた上に実行忘れで tool が失敗するケースを生み、Nix devShell 供給は ADR-0003（Bun 必須配布）の外へ runtime 依存を出し #175 でも未検証
+- **トリガ列挙 + 都度判断の理由**（決定 11）: 性能面の撤退トリガは #175 で消え、残るのは環境・上流起因のみ。発動頻度の実データがない段階で数値基準を作るのは投機的で、決定 4（node-av GPL 論点の「検討段階で再判断」）と同じ時点判断 + ADR 改訂パターンに揃える。撤退先の常時グリーン保守は二重実装の保守コストを恒常化させ、基盤一本化の動機と矛盾する
+
 ## Considered Options
 
 - **ffmpeg CLI を subprocess spawn で本採用**: node-av の「リンク」ではなく「別プロセス起動」（mere aggregation）に倒せば結合著作物論点は弱まるが、(a) node-av 自身も同じ GPL ビルドの ffmpeg CLI バイナリを同梱しており配布物から GPL コードが消えるわけではない、(b) JSON パース・2 回実行等のグルーコードが ADR-0001 の throw モデルと噛み合わない、(c) 実測で純 TS + node-av 側に性能・工数上の弱点が見つからなかった。不採用
 - **音声のみ WASM エンコーダで node-av を回避**: `@mediabunny/mp3-encoder` / `@mediabunny/aac-encoder` で音声はネイティブバイナリなしにできるが、動画生成が destination のスコープに入っている以上 node-av は構造的に必須。GPL 回避効果がないままコードパスが二系統化するだけ。不採用
 - **LUFS 実装を vendor 化**: 保守断絶リスクを初期から回避できるが、v0.1 時点では投機的。「壊れたら直す」の方針（ADR-0001 の教訓）と整合しない。不採用（上流が壊れた場合のフォールバック選択肢として Consequences に残す）
 - **node-av 呼び出しを差し替え可能な抽象境界の裏に隔離**: ADR-0001「1 MCP tool = 1 ファイル」規約により、`audio.master` 等の tool 実装内に呼び出しは自然に閉じる。追加のレイヤーを今から作る理由がない。不採用
+
+（以下、改訂 2026-07-31 / #178 で追加）
+
+- **HyperFrames をエンジンごと採用**: `png-sequence` が第一級出力で FFmpeg 抜きのフレーム列出力を公式サポートし、capture 層も公開セッション API で改造ゼロの部分利用が可能（#173、Apache-2.0）。しかし engine が composition に要求するのは `window.__hf` seek プロトコルだけで、mediabunny 直結の自前 capturer（CDP client 約 210 行、#175 実証済み）で足りる。依存面を増やす必然がなく、プロトコル互換のみ共有する。不採用
+- **screencast / ロックステップ方式の capture**: screencast は wall-clock 従属で構造的に非決定論。正典のロックステップ（`HeadlessExperimental.beginFrame`）は macOS 非対応（#174）。seek 方式 + `Page.captureScreenshot` を採用。不採用
+- **静止画パス（#46 の形）のまま v0.1 を作る**: 実証済みで最速（78.7 秒 / 1h）だが、v0.2 動的映像で動画パスを作り直す二重実装が確定する。撤退先（決定 11）として記録に留める。不採用
+- **capture / encode の tool 分割**: 中間フレーム列を agent に見せる価値がなく、#175 は streaming 直結（フレーム列をディスクに置かない）で成立済み。`video.render` 1 tool に内包する。不採用（#176）
+- **validate 単体 tool**: `video.preview` が契約検証を内包し、需要は preview として確定した。不採用（#177）
 
 ## Consequences
 
@@ -49,9 +83,18 @@ accepted (2026-07-24)
 - Bun 実機での動作は issue #45 / #46 のプロトタイプ（PR #51 / #52、いずれも merge しない前提の draft）で検証済み。本採用時は同等のロジックを `src/` 配下の実装として書き起こす。Bun 固有の追加対応は `trustedDependencies: ["node-av"]` の明示のみ
 - サムネ生成・動的映像の実装本体・EQ/コンプレッション等の本格マスタリング加工は本 ADR のスコープ外（マップ issue #42 の Out of scope を参照）
 
-## Related
+（以下、改訂 2026-07-31 / #178 で追加）
 
-- ADR-0001（内部throw・境界で変換 / 1 tool = 1 file）/ ADR-0003（Bun 必須配布・ビルドレス出荷）
+- 旧 Consequences の「動画生成用 primitive tool」は `video.render` / `video.preview` と読む。両 tool は `@mediabunny/server`（node-av）に加えて `@puppeteer/browsers` と pin 済み chrome-headless-shell に依存し、初回実行はダウンロードのためネットワークを要する。供給失敗は通常の throw で表面化する（決定 5 のエラーモデルのまま）
+- 契約の正書は `docs/reference/composition-contract.md`。codec は執筆レシピの根拠として、`video.render` / `video.preview` は検証実装の根拠として、本 ADR は決定記録として参照する。決定論化の知識（GSAP `updateRoot(t)` 外部駆動・WAAPI `currentTime` seek 等のレシピ）は `collection-lifecycle` codec が持ち、執行は agent（composition に埋め込む）、検証は render（サンプルフレームの同一 t 再 seek バイト比較。不一致は非決定論として throw）が担う — tayk 本体にブラウザ内 runtime 資産を持たない
+- composition HTML・プレビュー PNG はデータ 4 分類 ③（生成成果物）として collection ディレクトリ配下に置く。プレビュー手順の WHEN/HOW（提示 → GO/NO → 修正ループ）は codec の動画生成節が持ち、tool description は WHAT のみ
+- 撤退トリガ（決定 11）に専用の監視機構は作らない — いずれも通常運用の失敗（ダウンロード失敗・起動失敗・決定論検証の throw）として表面化する
+- v0.2 動的映像はこの基盤の上に乗る。残る課題はブラウザ内アニメーション手段の codec レシピ拡充のみで、パイプライン側の作り直しは発生しない
+
+- ADR-0001（内部throw・境界で変換 / 1 tool = 1 file — 決定 10 はその解釈明文化）/ ADR-0003（Bun 必須配布・ビルドレス出荷）/ ADR-0007（決定 9 の鮮度付き冪等はその決定 4 の解釈精緻化。本体は改訂しない）
 - マップ issue #42「メディア処理基盤の技術選定マップ」とその子チケット #43 / #44 / #45 / #46 / #49
+- マップ issue #172「動画生成 HTML パイプライン化マップ」とその子チケット #173 / #174 / #175 / #176 / #177 / #178（改訂 2026-07-31 の出所）
 - `docs/research/mediabunny-bun-codec-support.md`（issue #43 / PR #48）/ `docs/research/lufs-pure-ts-normalization.md`（issue #44 / PR #50）/ `docs/research/node-av-ffmpeg-license.md`（issue #49 / PR #53）
-- プロトタイプ PR #51（音声パス）/ PR #52（動画パス）— いずれも merge しない前提の draft
+- `docs/research/hyperframes-internals-partial-use.md`（issue #173 / PR #179）/ `docs/research/browser-frame-capture-deterministic.md`（issue #174 / PR #180）
+- `docs/reference/composition-contract.md` — `window.__hf` 契約の正書
+- プロトタイプ PR #51（音声パス）/ PR #52（動画パス）/ PR #183（HTML パイプライン end-to-end、issue #175）— いずれも merge しない前提の draft
