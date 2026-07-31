@@ -15,7 +15,27 @@ run 監査の完全性と品質を判定してください。**あなたは判�
 6. Findings が Issue 直貼り可能な品質か確認する — 該当 run（定義監査は該当ファイル）の列挙、引用、問題、実害（再発条件）、対処案が揃っているか
 7. 「Loop Monitor 不発の疑い」節が存在するか確認する（該当なしの明記も可。**節自体が無ければ検査未実施として rework**）。「起票対象（高確度）」の行は、trace.md の Iteration 系列で反復と judge 不在を、現行 `.takt/workflows/` と instruction facet で `{step_iteration}` 自前上限の不在を、自分でも照合する。照合が取れない行があれば **rework**
 8. Token Usage 節を確認する — workflow 別（合計・run あたり中央値）と step 別（割合付き）の表が埋まっており、集計対象 / 集計対象外の内訳（件数と理由）が明示されているか。節が無い・表が空なら **rework**（blocking_issues に「Token Usage 節の欠落」と何が足りないかを書く）。費用の偏りが欠陥の根拠なしで Findings に紛れている場合も **rework**（費用の観測は Token Usage の所見に置く）
-9. ⏳ が残っている、または品質不足なら **rework**。全行 ✅ かつ品質十分なら **approve**
+9. **Recovery Coverage 節**を計画レポートの Recovery Inventory と run 単位で照合する。節が無い、または行の欠落・統合・重複があれば **table_broken**。走査数が対象数に満たないのに Status が「回収済み」になっている行、Failed Paths が埋まっているのに「回収済み」の行があれば **rework**（未回収を「発見なし」へ畳んでいる）
+10. ⏳ が残っている、Recovery Coverage に「未回収」「一部未回収」が残っている、または品質不足なら **rework**。全行 ✅ かつ回収が完了し品質十分なら **approve**
+
+## 通常 Finding の Evidence
+
+Findings の根拠として認めるのは `.takt/runs` の実トレース（`trace.md` / `meta.json` / `monitor.json`）の引用、定義監査（#1〜#3）では定義ファイルのパスと該当行の引用だけ。分析レポート自身や Report Directory 内のファイルを根拠にした通常 Finding は **rework**。
+
+## 回収 Finding の Evidence
+
+回収 Finding（Category `recovery`）だけは、監査対象 run のレポートが出典になる。高 Severity のものをいくつか選び、**元レポートを開いて**次の 6 つを自分でも照合する:
+
+| フィールド | 照合すること                                                |
+| ---------- | ----------------------------------------------------------- |
+| 元 run     | その run が計画レポートの Recovery Inventory に載っているか |
+| 元レポート | 相対パスが実在するか                                        |
+| 原記載位置 | その節に該当の記載があるか                                  |
+| 引用       | 原文と一致するか（要約に置き換わっていないか）              |
+| 実害       | どの workflow 実行で何が再発するかが 1 文で読めるか         |
+| 根拠       | 上の照合がすべて取れること                                  |
+
+照合できない回収 Finding があれば **rework**。**この出典の許可は回収 Finding に限る** — 通常 Finding が監査対象 run のレポートを根拠にしていたら、Evidence 制限の弱体化として **rework** とする。
 
 **structured output の記入:**
 

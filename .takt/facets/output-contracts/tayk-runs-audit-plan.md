@@ -28,6 +28,14 @@
 | 3   | drift: 工程説明と実配線         | workflow 冒頭コメント / .takt/config.yaml / docs/agents/issue-tracker.md | 工程説明と YAML 実配線の乖離                    | Medium              |
 | 4   | {同じ問いで束ねた run 群}       | {run ディレクトリ名列挙}                                                 | {ABORT 原因 / 差し戻し経路 / loop monitor 発火} | High / Medium / Low |
 
+## Recovery Inventory
+
+回収対象（abort / failed 終了かつ spillover 未実行の完了 run）を **1 run 1 行**で全件列挙する。Audit Targets の 24 件上限は適用しない（上限外）。代表 run を抽出しない。run 群へ集約しない。
+
+| Run      | Workflow      | Status           | Spillover Executed | Target Reports   |
+| -------- | ------------- | ---------------- | ------------------ | ---------------- |
+| {run 名} | {workflow 名} | aborted / failed | no                 | {対象レポート数} |
+
 ## Audit Order
 
 - {監査順。High Priority から}
@@ -47,3 +55,8 @@
 - 対象数は固定 3 対象を含めて **24 以下**（run 対象は 21 以下）。超える場合は優先度の低い run 対象同士を統合する（workflow 容量からの逆算値）
 - 1 対象 = アナリストが 1 回の再分析サイクルで対象 run のトレースを読み切れる粒度（束ねる run は概ね 10 件以内）
 - **# は以降の全レポートで不変**。分析レポートの Audit Scope はこの表と一対一（同じ #・同じ行数）で照合される
+
+**Recovery Inventory の契約（#163）:**
+
+- Audit Targets とは**独立した集合**。採番も上限も共有しない（同じ run が両方に現れてよい）
+- 分析レポート（02）の Recovery Coverage 表と run 単位で一対一に照合される
