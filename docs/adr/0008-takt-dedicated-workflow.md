@@ -6,6 +6,8 @@ accepted (2026-07-26) / 改訂 2026-07-27（`tayk-fix` の実装に伴い決定 
 
 改訂 2026-07-30（#119。doctor が検出しない issue 固有の workflow 配線契約を、Takt に依存しない読み取り専用の `bun test` で検査する例外を Consequences に追加。`spillover` の report 名・format の一致を機械検査へ戻した）
 
+改訂 2026-08-01（#163。決定 11 へ ABORT / failed 経路の受け皿を追記 — `spillover` は COMPLETE 経路にしか配線されていないため、abort で終わった run のスコープ外発見は `tayk-audit-runs` の回収走査が引き受ける。ABORT 遷移そのものは変えていない。決定 13 のレポート境界との関係も同項に記録した）
+
 改訂 2026-07-31 (2)（#189。#170 の Finding Contract 導入を一時撤回 — takt 0.53 では project 側 callable に FC を適用する手段がない。callable 内宣言は runtime の FC manager レポート公開先制限で必ず失敗し、親宣言 + `subworkflow.requires_finding_contract` 継承は `takt workflow doctor` の単体検証で必ずエラーになる。収束担保は決定 6 のプロンプト層契約（#171）へ戻す。詳細は Consequences を参照）
 改訂 2026-07-31（#170。決定 12 の実装レビューループ（`tayk-impl-review`）に takt の **Finding Contract** を段階導入 — finding の同一性追跡（ID 振り直しの無効化）・レビュア間矛盾の調停・ラウンド予算を、プロンプト層の契約から engine の finding ledger へ移した。決定 6 の収束契約（ブロッキング / 非ブロッキングの 2 分類）は維持し、ブロッキング指摘だけを台帳に載せる tayk 専用 FC 出力契約 4 本を facets に置いた。併せて `tayk-impl-review` の返り値を takt 正準の `need_replan` へ改名。詳細と拡大条件は Consequences を参照）
 
@@ -46,6 +48,12 @@ ADR-0001 の Consequences は takt 運用について 2 点を定めていた（
     `gh issue` の操作に失敗しても workflow は止めない（実装は完了しており、発見は手動起票用のコマンドとともにレポートに残る）が、成功と同じ rule に畳まない — 畳むと実行ログ上で区別がつかなくなる。
 
     （改訂 2026-07-29: 旧決定の「起票結果を `gh pr edit` で PR 本文へ転記する」は削除。決定 7 の反転により PR は workflow 完了後に auto_pr が作るため、`spillover` 実行時点で PR は存在しない。発見から issue への追跡は、spillover のレポートと、起票 issue 側の「発見の経緯」の記載で担保する）
+
+    **`spillover` が走るのは成功経路（`final_gate` の COMPLETE）だけである。ABORT / failed で終わった run の受け皿は `tayk-audit-runs` が持つ**（改訂 2026-08-01・#163）。上限打ち切り（`plan` / `diagnose`）・intake の blocked・`final_gate` の ABORT では `spillover` に到達せず、レポートに記録された発見はどこにも起票されない。実測では 2026-07-29 の 2 run（`…-tcej3x` / `…-yv81bb`）が独立に同一の knowledge ドリフトを記録したまま回収されなかった。`tayk-audit-runs` は、abort / failed で終わり `spillover` が未実行のまま完了した run を **Recovery Inventory** として棚卸しし（Audit Targets とは独立した集合。件数上限・代表抽出・run 群への集約を適用しない）、その Report Directory を `reports/**/*.md` で再帰走査して「スコープ外の発見」「非ブロッキング指摘」を回収し、同 workflow の既存 `file` step から通常の Finding と同じ 2 条件・同じ重複照合で起票する。
+
+    **ABORT 遷移そのものは変えない。** `next: ABORT` を仕分け専用 step 経由へ張り替える案は採らなかった — ABORT する step は `plan` / `diagnose` / `intake` / `final_gate` に散っており、それぞれに新しい遷移が生えることで決定 6 の「cycle の外から再入されない」前提と、上限打ち切りが打ち切りである意味の両方が揺らぐ。回収を後続の独立した run に置けば、遷移を 1 本も足さずに受け皿ができる。
+
+    **この分担は決定 13 のレポート境界に反しない。** `tayk-audit-runs` が読むのは**既に完了した別 run** のファイルツリーであり、実行中の callable から親のレポートを覗くわけではない。境界が禁じているのは実行中の親子間の参照であって、完了した run の成果物をあとから読むことではない（`spillover` を callable 化できないのと同じ理由で、回収も「親による走査」として成立する）。
 
 12. **レビュー ⇄ 修正のループは callable sub-workflow の内側に閉じる。** 実装レビュー（4 並列）と修正は `tayk-impl-review` に置き、`tayk-feature` / `tayk-fix` はこれを呼び出す。`final_gate` が `needs_fix` を返したときも、修正 step へ直接飛ばさず sub-workflow を呼び直す。**ループの外から修正 step へ飛び込む遷移を作らない。** これにより内側では `[impl_review, fix]` が必ず連続し、決定 6 の上限 3 が loop monitor だけで保証される。ループを内包したことで、レビュー契約が feature / fix で複製されていた状態も同時に解消する
 
@@ -100,6 +108,7 @@ ADR-0001 の Consequences は takt 運用について 2 点を定めていた（
 - **決定 12 の代償は、外側の往復が新しいループになること。** `final_gate` の差し戻しは修正 step ではなく `impl_gate` の呼び直しになるため、`[impl_gate, final_gate]` という親レベルの往復が生まれる。これは親の loop monitor で見る。ループの監視は内側と外側の 2 段構えになり、1 段だったころより読み手が追う対象は増えた。増えたぶん、どちらの段も「cycle の外から再入されない」ことを保てているかを、遷移を足すたびに確認すること
 - **決定 6 の収束契約の代償は、レビュアーの「無効化」誤判定で本物の欠陥が非ブロッキングへ落ちるリスクである。** 緩和は 2 つ — ブロッキング判定に根拠（反例・観測、または初出ラウンドと未解消の経緯）の明記を義務づけたこと、final_gate と pre-push フック（`bun run check`）が最終関門として残ること。すり抜けた欠陥も、非ブロッキング指摘として起票された issue に追跡が残る
 - **実装レビューループの Finding Contract（takt 内蔵の finding ledger）導入（#170）は #189 で一時撤回した。** 2026-07 のキュー監査で確認した 2 つの空転様式（finding ID 振り直しによる persists 追跡の無効化・レビュア間の相互排他な指摘の往復）を engine の台帳・conflict adjudication・ラウンド予算で塞ぐ計画だったが、takt 0.53 では project 側 callable に FC を適用する手段がない。callable 内宣言は FC manager のレポート公開先制限（`.takt/runs/<runId>/reports` 直下限定）により workflow_call 実行時に `reports/subworkflows/...` が正規領域外と判定されて必ず失敗する（2026-07-31 のキューで #106 / #185 が impl_gate で連鎖失敗。`takt workflow doctor` はこれを検出しない）。takt の意図された形である親宣言 + `subworkflow.requires_finding_contract` 継承は、doctor が callable を継承文脈なしで単体検証するため必ずエラーになり、pre-push ゲートを通せない。収束の担保は決定 6 のプロンプト層契約（#171 で入れた #167 の決定的受け皿・#168 のレビュア間矛盾エスカレーション policy を含む）が引き続き持つ。tayk 専用 FC 出力契約 4 本（`tayk-*-finding-contract`）は facets に残置し、takt が doctor で workflow_call の継承文脈を解決できるようになった時点で、親宣言 + 継承の形で再導入する。返り値の takt 正準名 `need_replan` への改名は維持する
+- **ABORT / failed 経路のスコープ外発見は `tayk-audit-runs` が回収する（#163）。** 決定 11 の `spillover` は COMPLETE 経路にしか配線されていないため、上限打ち切り・intake blocked・`final_gate` ABORT で終わった run の発見は起票されないまま実行ログに埋もれる。回収は監査側に置いた（計画の Recovery Inventory → 分析の Recovery Coverage → 既存 `file` step）。**代償は 2 つ。** (1) 回収は監査を実行しなければ起きない — 発見が起票されるのは次に `tayk-audit-runs` を回したときであり、実走行と同時ではない。(2) 回収 Finding は元レポートを出典とするため、通常 Finding の「Report Directory 内のファイルを根拠にしない」制限に例外が空く。後者は Category `recovery` に限定し、`review` / `supervise` の Evidence 判定と `file` の品質ゲートで通常 Finding との混同を弾く。走査の網羅性は Recovery Coverage 表（run 単位の対象数 / 走査数 / 抽出数 / 失敗パスと理由）が持ち、読めなかったレポートを「発見なし」へ畳むことを禁じる — 畳めば未回収が黙って消える
 - **診断のやり直し回数は `diagnose` step 自身が持つ。** `diagnose` は 3 方向から再訪される（診断レビューの `NEED_REDIAGNOSE` / `reproduce` の再現失敗 / `repair` の対症療法判定）ため、cycle パターンが安定せず loop monitor だけでは上限を保証できない。`{step_iteration}` による上限 3 を rules と instruction の両方に持たせる。`reproduce` も同様の理由で自前の上限を持つ
 - **`existing-system-respect`（takt 組み込み policy）を fix の実装・レビュー全 step に効かせる。** tayk はまだ v0.1.0 前で「リリース済み運用中の既存システム」ではないが、「変更ファイル内という理由だけの整理を混ぜない」「完了前に全差分を必須 / 関連 / 不要に分類する」は fix では常に正しい。UI や hook を前提とした記述が一部ノイズになるが、自作するより堅い
 - **takt のバージョンに依存する。** `loop_monitors` / `system_inputs` / `structured_output` / `promotion` / rule condition の構文は、いずれも takt の 0.x 系機能である。**ここに具体的なバージョン番号は書かない** —— 番号を書けば必ず古びるうえ、古びたこと自体は誰も検出できないため、記述が実態から離れても気づかれない。実際、この項が「0.52 時点の機能」と書いたまま dotfiles 側が 0.53 へ上がり、rule schema の変更で 5 workflow が全滅した（#97）。**追随できているかの判定は `takt workflow doctor` の実行結果に一本化する**。ADR が定めるのは検出手段であって、バージョンのスナップショットではない

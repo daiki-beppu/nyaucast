@@ -28,12 +28,28 @@ run とは別に、workflow 定義そのものを対象とする固定 3 対象�
 3. 分析価値の高い run を特定する — `status: aborted` の run、iterations が突出して多い run（差し戻しを繰り返した末の完走）、同一 workflow で失敗が連続している時期、loop monitor 発火が疑われる run（trace.md に judge step の Iteration が現れる）、同一 step の Iteration が judge を挟まず 4 回以上再出現する run（cycle の外からの再入による loop monitor 不発の疑い）
 4. 監査すべき対象を **Audit Targets 表**として採番する。**1 対象 = 1 run ではなく、同じ問いで束ねられる run 群**（例:「workflow X の aborted run 群」「日付 Y 前後の連続失敗」）を 1 対象とする
 5. 再発パターンの抽出に効く順（失敗の集中度・最近性・現行 workflow との関連）で監査順を作る
+6. 下の条件で回収対象の run を選び、**Recovery Inventory 表**を作る（#163）
 
 **Audit Targets の粒度と上限（後続の全工程がこの表を骨格として使う）:**
 
 - 1 対象 = アナリストが 1 回の再分析サイクルで対象 run の trace.md / meta.json / monitor.json を読み切れる範囲にする。束ねる run は 1 対象あたり概ね 10 件以内とし、超える場合は代表 run を明示して層化する
 - **対象数は定義監査の固定 3 対象を含めて 24 以下**（run 対象は 21 以下）にする。超える場合は優先度の低い run 対象同士を統合する。この上限は workflow の容量（max_steps 25、再分析 1 サイクル最低 4 対象）から逆算した値であり、超えると完走できない
 - 採番した **# は以降の全レポートで不変**。分析レポートの Audit Scope はこの表と一対一で照合される
+
+## Recovery Inventory
+
+ABORT / failed で終わった run では `spillover` が実行されない（`spillover` は `final_gate` の COMPLETE 経路にしか配線されていない）。そのレポートに記録されたスコープ外の発見・非ブロッキング指摘は、どこにも起票されないまま実行ログに埋もれる。この回収は後続の監査、つまりこの workflow が引き受ける（#163。ADR-0008 決定 11）。
+
+回収対象は、次の 2 条件をともに満たす**完了済みの run**:
+
+1. `meta.json` の `status` が `aborted` または `failed`
+2. `trace.md` の `## Iteration N: <step>` 見出しに `spillover` step が現れない（= spillover 未実行）
+
+`status: running` の run は完了していないため含めない（実行中の別 run のレポートを読むことになり、次回の監査で拾えばよい）。`completed` でも `spillover` の Iteration が無い run は条件 2 を満たすので含める。
+
+選んだ run は **1 run 1 行**で Recovery Inventory 表に全件列挙する。Audit Targets の 24 件上限は適用しない（上限外）。代表 run を抽出しない。run 群へ集約しない — Audit Targets が「同じ問いで束ねた run 群」を 1 対象とするのに対し、Recovery Inventory は 1 run ずつレポートを走査するための一覧であり、束ねると走査の網羅性を run 単位で照合できなくなる。
+
+Target Reports 列には、その run の Report Directory（`reports/`）以下に存在する `.md` の件数を入れる（`reports/subworkflows/**` を含む）。
 
 **run の読み方（後続の全パートに引き継ぐこと）:**
 
