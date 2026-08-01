@@ -7,9 +7,9 @@ Issues and PRDs for this repo live as GitHub issues. Use the `gh` CLI for all op
 開発は takt メイン。ただし用途ごとに使う workflow / skill が異なるので、文脈に合わせて選ぶ:
 
 - **新機能・機能拡張の実装** — tayk 専用の **`tayk-feature`** workflow（ADR-0008）。`takt -w tayk-feature "#<N>"`。
-  フロー: intake（着手可能性の判定 / wayfinder map・ticket 対応）→ 計画（要件 ID 採番）→ テスト設計 → 設計レビュー（設計 / ADR 整合性 / テスト設計の 3 並列）→ テスト先行実装 → 実装 → 実装レビュー（4 並列）→ 最終ゲート → spillover（スコープ外発見の起票）。commit / push / PR 作成は workflow 完了後に takt の **auto_pr** が行い（タスク投入時に `auto_pr: true` を設定）、push 時の pre-push フックが最終関門になる（ADR-0008 決定 7 改訂）。**マージは人間の判断。** PR 上の CI・レビュー指摘への対応も人間が判断し、必要なら fix issue を起票して再キューする。
+  フロー: intake（着手可能性の判定 / wayfinder map・ticket 対応）→ 計画（要件 ID 採番）→ テスト設計 → 設計レビュー（設計 / ADR 整合性 / テスト設計の 3 並列）→ テスト先行実装 → 実装 → 実装レビュー（7 並列・Finding Contract）→ 最終ゲート → spillover（スコープ外発見の起票）。commit / push / PR 作成は workflow 完了後に takt の **auto_pr** が行い（タスク投入時に `auto_pr: true` を設定）、push 時の pre-push フックが最終関門になる（ADR-0008 決定 7 改訂）。**マージは人間の判断。** PR 上の CI・レビュー指摘への対応も人間が判断し、必要なら fix issue を起票して再キューする。
 - **バグ修正の実装** — tayk 専用の **`tayk-fix`** workflow（ADR-0008）。`takt -w tayk-fix "#<N>"`。
-  フロー: intake → 診断（原因特定 / 検証可能な予測 / 修正方針 / 回帰テスト設計・要件 ID 採番）→ 診断レビュー（診断妥当性 / ADR 整合性 / 回帰テスト設計の 3 並列）→ 再現テスト（**red で診断を検証**）→ 修正 → 実装レビュー（4 並列）→ 最終ゲート → spillover。PR 化は feature と同じく auto_pr。intake / 実装レビューは feature と同じ sub-workflow を再利用する。
+  フロー: intake → 診断（原因特定 / 検証可能な予測 / 修正方針 / 回帰テスト設計・要件 ID 採番）→ 診断レビュー（診断妥当性 / ADR 整合性 / 回帰テスト設計の 3 並列）→ 再現テスト（**red で診断を検証**）→ 修正 → 実装レビュー（7 並列・Finding Contract）→ 最終ゲート → spillover。PR 化は feature と同じく auto_pr。intake は feature と同じ sub-workflow を再利用する。実装レビューは Finding Contract が project 側 callable に効かないため両 workflow へ展開されており、定義は複製されている（ADR-0008 決定 12 改訂）。
   **原因を特定してから直す。** 再現テストが red にならなければ、テストの問題ではなく診断の誤りとして差し戻される（ADR-0008 決定 9・10）。
 - **アーキテクチャ / 構成の全件監査** — tayk 専用の **`tayk-audit-architecture`** workflow（#108）。issue 起点なら `takt -w tayk-audit-architecture "#<N>"`、issue なしなら `takt add` で order.md に監査スコープを書く。
   フロー: 計画（監査対象表の採番。上限 28 対象）→ 分担監査（team leader 3 並列）→ 監督 ⇄ 再監査（structured 判定で決定的に収束）→ publish（`docs/audits/` へレポート配置）。**publish 以外は全 step read-only でコードを変更しない。** Issue の起票はレポートを見た人間の判断。builtin `audit-architecture` はメタレビュー上書きの悪循環と容量不足で完走できないため使わない（fork 理由は workflow 定義冒頭のコメント参照）。
