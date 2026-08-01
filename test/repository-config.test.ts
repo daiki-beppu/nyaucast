@@ -4,6 +4,8 @@ import { join, resolve } from "node:path";
 
 const packageRoot = resolve(import.meta.dirname, "..");
 const gitignorePath = join(packageRoot, ".gitignore");
+const packageJsonPath = join(packageRoot, "package.json");
+const expectedRepositoryUrl = "https://github.com/daiki-beppu/tayk.git";
 const expectedGitignoreLines = [
   "node_modules/",
   ".worktrees/",
@@ -22,6 +24,19 @@ function readGitignoreLines(): string[] {
 }
 
 describe("repository configuration", () => {
+  test("should declare the repository used by npm trusted publishing", () => {
+    const packageJson: unknown = JSON.parse(
+      readFileSync(packageJsonPath, "utf-8")
+    );
+
+    expect(packageJson).toMatchObject({
+      repository: {
+        type: "git",
+        url: expectedRepositoryUrl,
+      },
+    });
+  });
+
   // REQ-88-01 / TC-88-01 / P-88-01
   test("should not declare .worktreeinclude when no copied asset exists", () => {
     const entries = readdirSync(packageRoot);

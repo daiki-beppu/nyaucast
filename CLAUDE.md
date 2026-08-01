@@ -11,6 +11,7 @@ YouTube チャンネル運営を自動化するツールキット。skill に蓄
 - bun / node は Nix flake devShell が供給する。**direnv を通していないシェルには bun が存在しない**（グローバルには入っていない）
 - worktree を作ったら毎回 `direnv allow` — devShell 入場時に `bun install --frozen-lockfile` が走る（`node_modules` は worktree ごとに要る）。**lockfile が `package.json` と乖離していると install は失敗するが devShell には入れてしまう** — 警告だけ出て `node_modules` が無い状態になるので、`bun install` で lockfile を更新する
 - パッケージ操作・スクリプト実行は bun のみ。npm / pnpm / yarn とそのラッパを使わない
+- npm registry への公開境界に限り、ADR-0003 が定める `npm publish` / `npm publish --dry-run` の限定例外を適用する
 - **検査ゲートは `bun run check` の 1 コマンド**（最初に失敗したゲートで止まる）。CI・pre-push フックも同じ script を呼ぶため、ここで通れば CI でも通る。ただし workflow 定義の検査だけは check の外にある（開発フロー節の doctor）。ゲートが何本あり何を実行するかは `package.json` の `check` script だけが定義する — **このファイルを含め、どこにも書き写さない**
 
 ## アーキテクチャ（ADR-0001）
