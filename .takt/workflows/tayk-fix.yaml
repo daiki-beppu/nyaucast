@@ -35,9 +35,9 @@ loop_monitors:
   #
   # 重要: 照合は「履歴末尾でパターンが *連続して* threshold 回反復する」厳密一致である。
   # したがって cycle の外から再入される step は、cycle が途切れてカウントが 1 に戻る。
-  # diagnose は 3 方向から再訪される（診断レビューの NEED_REDIAGNOSE / reproduce の
-  # 再現失敗 / repair の対症療法判定）ため、cycle パターンが安定しない。診断のやり直し
-  # 回数の上限は diagnose step 自身が {step_iteration} で持つ（ADR-0008 決定 6）。
+  # diagnose は複数方向から再訪されるため cycle パターンが安定しない。原因再探索は
+  # rediagnose、診断全体の訪問は diagnose の {step_iteration} で別々に制限する
+  # （ADR-0008 決定 6）。
   #
   # ① 診断レビュー ⇄ 診断修正。実装前なので、打ち切りより再診断を優先する
   - cycle:
@@ -51,11 +51,12 @@ loop_monitors:
         - condition: 健全（指摘が減っている・記述の不足が埋まっている）
           next: diagnose_review
         - condition: 原因の特定そのものが誤っている（レポート修正では解消しない）
-          next: diagnose
+          next: rediagnose
         - condition: 調査材料が尽きている、または issue 側の情報不足に帰着する
           next: ABORT
   # ② 診断のやり直しが繰り返される。ここまで来たら原因の探索が行き詰まっている可能性が高い
   - cycle:
+      - rediagnose
       - diagnose
       - diagnose_review
     threshold: 3
@@ -64,7 +65,7 @@ loop_monitors:
       instruction: tayk-loop-monitor-rediagnose
       rules:
         - condition: 健全（仮説が実質的に更新され、棄却根拠が積み上がっている）
-          next: diagnose
+          next: rediagnose
         - condition: 同じ仮説の言い換えを繰り返している、または外部要因に帰着する
           next: ABORT
   # ③ 実装レビュー ⇄ 修正。決定 12 の撤回（Finding Contract 化）により、このループは
@@ -83,7 +84,7 @@ loop_monitors:
         - condition: 修正後レビューで進捗が確認され、次の修正が実行可能である
           next: fix
         - condition: 同じ指摘が繰り返されるが再診断で解消できる見込みがある
-          next: diagnose
+          next: rediagnose
         - condition: 試行済みの再診断を踏まえても要件を満たす実現可能な方針がない
           next: ABORT
   # ④ 最終ゲートの差し戻しが挟まる形。③ だけでは final_gate が 1 つ挟まった時点で
@@ -100,7 +101,7 @@ loop_monitors:
         - condition: 修正後レビューで進捗が確認され、次の修正が実行可能である
           next: fix
         - condition: 同じ指摘が繰り返されるが再診断で解消できる見込みがある
-          next: diagnose
+          next: rediagnose
         - condition: 試行済みの再診断を踏まえても要件を満たす実現可能な方針がない
           next: ABORT
   # ⑤ 実装レビューからの再診断。impl_review の provisional（判定不能な観測）が
@@ -110,7 +111,7 @@ loop_monitors:
   #    cycle[末尾] が差し戻し元・judge に ABORT 経路あり」（hasBoundedReplanMonitor）
   #    なので、diagnose から impl_review までの経路を並べる。実装後の再診断は診断段階の
   #    それより高くつくため threshold は 2 に絞る。diagnose_fix が挟まると連続一致が
-  #    崩れるが、そのときは diagnose 自身の {step_iteration} 上限が二重化として効く
+  #    崩れるが、そのときは diagnose の自前上限が二重化として効く
   - cycle:
       - diagnose
       - diagnose_review
@@ -123,7 +124,7 @@ loop_monitors:
       instruction: loop-monitor-fix-replan
       rules:
         - condition: 要件と受入条件を変えずに原因の特定と修正方針を再定義できる
-          next: diagnose
+          next: rediagnose
         - condition: 試行済みの再診断を踏まえても要件を満たす実現可能な方針がない
           next: ABORT
 steps:
@@ -143,6 +144,25 @@ steps:
 
   # ── Phase 1: 診断 ─────────────────────────────────────────────────
   # 直し方から考え始めない。原因が確定していない状態で書いた修正は対症療法になる
+  - name: rediagnose
+    description: 原因仮説の再探索予算を管理する入口
+    tags:
+      - plan
+      - diagnosis
+    edit: false
+    persona: planner
+    provider_options:
+      extends: review-readonly
+    instruction: tayk-rediagnose
+    rules:
+      - condition: これが 4 回目以降の原因再探索である（3 回再探索しても原因を確定できなかった）
+        next: ABORT
+        appendix: |
+          棄却された仮説と、決着に必要な情報:
+          - {何を試し、何が否定されたか}
+      - condition: これが 3 回目以内の原因再探索である
+        next: diagnose
+
   - name: diagnose
     description: 原因の特定・検証可能な予測・修正方針・回帰テスト設計
     tags:
@@ -178,9 +198,9 @@ steps:
       - 修正方針が因果の連鎖のどこを断つかを示しており、症状の出口を塞ぐだけでないこと
       - プロダクションコード・テストコードを書いていないこと
     rules:
-      # loop monitor ② は diagnose_fix / reproduce の挟み込みでカウントが崩れるため、
-      # やり直し回数の上限をこの step 自身にも持たせる（ADR-0008 決定 6）
-      - condition: これが 4 回目以降の診断である（3 回やり直しても原因を確定できなかった）
+      # 原因再探索の上限は rediagnose が持つ。ここでは非再探索の再訪を含む診断全体を
+      # 有限に止める（ADR-0008 決定 6）
+      - condition: これが 11 回目以降の診断である（診断全体の訪問上限に達した）
         next: ABORT
         appendix: |
           棄却された仮説と、決着に必要な情報:
@@ -289,16 +309,15 @@ steps:
       - condition: all("APPROVE")
         next: reproduce
       - condition: any("NEED_REDIAGNOSE")
-        next: diagnose
+        next: rediagnose
       - condition: any("REJECT", "NEEDS_ADR_REVISION")
         next: diagnose_fix
       # sub-step の verdict がどの宣言条件にも分類されないと（分類器の失敗・空応答）、
       # all() は false・any() は skip になり全 rule が外れ、rule 不一致で run 全体が
-      # ABORT する（#167）。決定的な受け皿で再レビューへ戻す。連続自己再入は
-      # diagnose_fix への外部再入ではないため ADR-0008 決定 12 に反しない。
-      # 上限は max_steps が持つ
+      # ABORT する（#167）。決定的な受け皿で共通診断入口へ戻し、
+      # 分類失敗の再試行も診断全体の訪問上限に算入する（ADR-0008 決定 6）
       - condition: when(true)
-        next: diagnose_review
+        next: diagnose
 
   - name: diagnose_fix
     description: 診断レビュー指摘の解消（レポートのみを直す。コードは書かない）
@@ -345,7 +364,7 @@ steps:
       - condition: 全 finding に対応した
         next: diagnose_review
       - condition: 指摘が原因の特定そのものを否定している
-        next: diagnose
+        next: rediagnose
 
   # ── Phase 2: 再現と修正 ───────────────────────────────────────────
   # 再現テストが red になることが、診断した原因が正しいことの証拠になる
@@ -389,11 +408,11 @@ steps:
       # 成功条件を先頭に置くと予測不一致がそこへ吸われ、診断の検証機構が働かなくなる
       # （spillover の rule 順と同じ理由）
       - condition: 再現テストが green である（症状を再現できない）
-        next: diagnose
+        next: rediagnose
       - condition: 再現テストは red だが、失敗の内容が診断の予測と違う
-        next: diagnose
+        next: rediagnose
       - condition: 既存挙動の回帰テストが修正前から red である
-        next: diagnose
+        next: rediagnose
       - condition: 再現に環境依存があり決定的なテストにできない
         next: diagnose_fix
       # 症状を再現しないテストを抱えたまま修正へ進む出口は置かない。
@@ -438,11 +457,11 @@ steps:
       - condition: 原因を除き、再現テストと既存挙動の回帰が green になった
         next: impl_review
       - condition: 修正が対症療法にしかならない（原因を除くには診断の範囲を超える）
-        next: diagnose
+        next: rediagnose
       - condition: 修正方針が ADR と衝突する
-        next: diagnose
+        next: rediagnose
       - condition: 修正しても再現テストが red のまま
-        next: diagnose
+        next: rediagnose
     output_contracts:
       report:
         - name: maintenance-scope.md
@@ -627,7 +646,8 @@ steps:
         next: finding-conflict-adjudication
       - condition: when(findings.conflicts.count > 0)
         next: ABORT
-      # provisional（判定不能な観測）はゲートを塞ぐ。fix では解けないため診断へ戻す
+      # provisional（判定不能な観測）はゲートを塞ぐ。原因仮説の無効化は
+      # 確定していないため、原因再探索予算を消費しない共通診断入口へ戻す
       - condition: when(findings.provisional.fixpoint == true && findings.conflicts.count == 0)
         next: diagnose
       - condition: when(findings.rounds.budgetExhausted == true && findings.provisional.count > 0 && findings.conflicts.count == 0)
