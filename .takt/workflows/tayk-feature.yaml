@@ -2,9 +2,22 @@ name: tayk-feature
 description: >
   tayk の新機能開発ワークフロー。intake（wayfinder map / ticket 対応）→ 計画 → テスト設計 →
   設計レビュー（設計 / ADR 整合性 / テスト設計の 3 並列）→ テスト先行実装 → 実装 →
-  実装レビュー（4 並列）→ 最終ゲート → スコープ外発見の起票。commit / push / PR 作成は
+  実装レビュー（7 並列・Finding Contract）→ 最終ゲート → スコープ外発見の起票。commit / push / PR 作成は
   workflow 完了後に takt の auto_pr が行う（ADR-0008 決定 7 改訂）。実装に入る前に設計を
   止められること、ADR からの逸脱を黙って通さないことが default との差分。
+# 実装レビューの finding を engine の台帳で追跡する（ADR-0008 決定 12 改訂）。
+# reviewer は raw finding を報告するだけで最終 ID を採番しないため、ID 振り直しによる
+# persists 追跡の無効化が起こらない。レビュア間の相互排他な指摘は
+# finding-conflict-adjudication（engine 注入の synthetic step）が調停し、
+# ラウンド予算は findings.rounds が持つ。
+# ledger / raw の置き場は .takt/.gitignore の `*` が無視する実行時生成物である。
+finding_contract:
+  ledger_path: .takt/findings/tayk-feature.json
+  raw_findings_path: .takt/findings/tayk-feature/raw
+  manager:
+    persona: findings-manager
+    instruction: findings-manager
+    output_contract: findings-manager
 workflow_config:
   provider_options:
     codex:
@@ -44,24 +57,68 @@ loop_monitors:
           next: plan
         - condition: 非生産的（issue の未決事項 / ADR との衝突に帰着する）
           next: ABORT
-  # ── 実装ゲート ⇄ 最終ゲートの往復 ──
-  # 実装レビュー ⇄ 修正のループ自体は tayk-impl-review の内側にあり、その上限は
-  # sub-workflow 側の loop monitor が持つ。ここで見るのは「最終ゲートが差し戻し、
-  # 実装ゲートを回り直す」外側の往復である。非生産的と判定されたときに前進させない
-  # （未解消の指摘を抱えたまま完了 → auto_pr の PR 化まで到達させない）
+  # ── 実装レビュー ⇄ 修正 ──
+  # 決定 12 の撤回（Finding Contract 化）により、このループは callable の内側から
+  # 親へ展開された。閉じていたころは [impl_review, fix] が必ず連続したが、いまは
+  # final_gate の needs_fix が fix へ再入するため cycle が途切れうる。途切れる形を
+  # 列挙して塞ぐ（builtin takt-default-high と同じ方式）。判定基準は FC 版 —
+  # 台帳の open / provisional / conflicts を根拠にする。
+  # 未解消のブロッキング指摘を抱えたまま前進させない（決定 6）。
   - cycle:
-      - impl_gate
+      - fix
+      - impl_review
+    threshold: 3
+    judge:
+      persona: supervisor
+      instruction: loop-monitor-reviewers-fix-fc
+      rules:
+        - condition: 修正後レビューで進捗が確認され、次の修正が実行可能である
+          next: fix
+        - condition: 同じ指摘が繰り返されるが再計画で解消できる見込みがある
+          next: plan
+        - condition: 試行済みの再計画を踏まえても要件を満たす実現可能な方針がない
+          next: ABORT
+  # 最終ゲートの差し戻しが挟まる形。上の cycle だけでは final_gate が 1 つ挟まった
+  # 時点でカウントが 1 に戻り、上限 3 が実効化しない
+  - cycle:
+      - fix
+      - impl_review
       - final_gate
     threshold: 3
     judge:
       persona: supervisor
-      instruction: loop-monitor-reviewers-fix
+      instruction: loop-monitor-reviewers-fix-fc
       rules:
-        - condition: 健全（指摘数が減少、修正が反映されている）
-          next: impl_gate
-        - condition: 再計画または異議申告で打開できる（指摘が計画・要件の誤りを観測で実証している）
+        - condition: 修正後レビューで進捗が確認され、次の修正が実行可能である
+          next: fix
+        - condition: 同じ指摘が繰り返されるが再計画で解消できる見込みがある
           next: plan
-        - condition: 修正・再計画・異議申告のいずれでも打開できない
+        - condition: 試行済みの再計画を踏まえても要件を満たす実現可能な方針がない
+          next: ABORT
+  # ── 実装レビューからの再計画 ──
+  # impl_review の provisional（判定不能な観測）が fixpoint に達する、または台帳の
+  # ラウンド予算が尽きたとき、fix では解けないため計画へ戻る。この差し戻しには
+  # 上限が要る（doctor の warnOnUnsafeFindingBudgetRouting）。doctor が認識する形は
+  # 「cycle[0] が差し戻し先・cycle[末尾] が差し戻し元・judge に ABORT 経路あり」
+  # （hasBoundedReplanMonitor）なので、plan から impl_review までの経路を並べる。
+  # 実装後の再計画は設計段階のそれより高くつくため threshold は 2 に絞る。
+  # design_fix が挟まると連続一致が崩れるが、そのときは plan 自身の
+  # {step_iteration} 上限が二重化として効く（ADR-0008 決定 6）
+  - cycle:
+      - plan
+      - test_design
+      - design_review
+      - write_tests
+      - draft
+      - impl_review
+    threshold: 2
+    judge:
+      persona: supervisor
+      instruction: loop-monitor-fix-replan
+      rules:
+        - condition: 要件と受入条件を変えずに実装方針を再定義できる
+          next: plan
+        - condition: 試行済みの再計画を踏まえても要件を満たす実現可能な方針がない
           next: ABORT
 steps:
   # ── Phase 0: intake ───────────────────────────────────────────────
@@ -100,10 +157,10 @@ steps:
       - ADR 整合性の事前申告が全 ADR に対して行われていること
       - v0.1.0 のゲート外の拡張を方針に含めていないこと
     rules:
-      # plan は 8 方向から再訪される（intake / test_design / design_review の NEED_REPLAN /
-      # design_fix / draft の need_replan / impl_gate の need_replan / final_gate /
-      # spillover、加えて loop monitor 2 本）。cycle パターンが安定しないため、
-      # やり直し回数の上限をこの step 自身が持つ（ADR-0008 決定 6）
+      # plan は 9 方向から再訪される（intake / test_design / design_review の NEED_REPLAN /
+      # design_fix / draft の need_replan / impl_review の provisional 3 経路 / fix の
+      # 情報不足 / final_gate / spillover、加えて loop monitor 4 本）。cycle パターンが
+      # 安定しないため、やり直し回数の上限をこの step 自身が持つ（ADR-0008 決定 6）
       - condition: これが 4 回目以降の計画である（3 回作り直しても方針が定まらなかった）
         next: ABORT
         appendix: |
@@ -359,34 +416,268 @@ steps:
       impl_instruction: tayk-implement
     rules:
       - condition: COMPLETE
-        next: impl_gate
+        next: impl_review
       - condition: need_replan
         next: plan
       - condition: ABORT
         next: ABORT
 
   # ── Phase 3: 実装レビュー ─────────────────────────────────────────
-  # feature / fix 共通の callable sub-workflow。4 並列レビュー ⇄ 修正のループごと
-  # 内側に閉じてある。呼び出し元が fix へ直接飛び込まないため、内側では
-  # [impl_review, fix] が必ず連続し、loop monitor の上限 3 が実効化する
-  # （ADR-0008 決定 12）
-  - name: impl_gate
-    kind: workflow_call
-    call: tayk-impl-review
+  # 7 並列レビュー ⇄ 修正。かつては tayk-impl-review という callable の内側に閉じて
+  # いた（旧決定 12）が、takt の Finding Contract は project 側 callable に適用できない
+  # ため親へ展開した — 子だけの宣言は runtime のレポート公開先制限で必ず失敗し、
+  # 親宣言 + `subworkflow.requires_finding_contract` 継承は doctor の単体検証で必ず
+  # エラーになる（実測の記録は ADR-0008 Consequences）。ループの歯止めは
+  # loop monitor 2 本が持つ。
+  #
+  # feature / fix で定義が重複する。spillover と同じく目視で一致を保つこと
+  # （ADR-0008 Consequences の検査 E）。
+  - name: impl_review
+    description: アーキテクチャ / AI アンチパターン / コーディング / 実装意味論 / 契約ライフサイクル / 堅牢性 / ADR 整合性の 7 並列レビュー
+    tags:
+      - review
+    parallel:
+      - name: arch-review
+        tags:
+          - review
+        edit: false
+        persona: architecture-reviewer
+        policy:
+          - review
+          - existing-system-respect
+          - tayk-review-convergence
+        knowledge:
+          - architecture
+          - tayk-domain
+        provider_options:
+          extends: review-readonly
+        instruction: review-arch
+        rules:
+          - condition: approved
+          - condition: needs_fix
+        output_contracts:
+          report:
+            - name: architect-review.md
+              format: tayk-architecture-review-finding-contract
+      - name: ai-antipattern-review-2nd
+        tags:
+          - review
+        edit: false
+        persona: ai-antipattern-reviewer
+        policy:
+          - review
+          - ai-antipattern
+          - existing-system-respect
+          - tayk-review-convergence
+        provider_options:
+          extends: review-readonly
+        instruction: ai-antipattern-review
+        rules:
+          - condition: AI特有の問題なし
+          - condition: AI特有の問題あり
+        output_contracts:
+          report:
+            - name: ai-antipattern-review.md
+              format: tayk-ai-antipattern-review-finding-contract
+      - name: coding-review
+        tags:
+          - review
+        edit: false
+        persona: coding-reviewer
+        policy:
+          - review
+          - coding
+          - tayk-traceability
+          - existing-system-respect
+          - tayk-review-convergence
+        pass_previous_response: false
+        provider_options:
+          extends: review-readonly
+        instruction: review-coding
+        rules:
+          - condition: approved
+          - condition: needs_fix
+        output_contracts:
+          report:
+            - name: coding-review.md
+              format: tayk-coding-review-finding-contract
+      - name: implementation-semantics-review
+        tags:
+          - review
+        edit: false
+        persona: implementation-semantics-reviewer
+        policy:
+          - review
+          - existing-system-respect
+          - tayk-review-convergence
+        knowledge:
+          - implementation-semantics
+        pass_previous_response: false
+        provider_options:
+          extends: review-readonly
+        instruction: review-implementation-semantics
+        rules:
+          - condition: approved
+          - condition: needs_fix
+        output_contracts:
+          report:
+            - name: implementation-semantics-review.md
+              format: tayk-implementation-semantics-review-finding-contract
+      - name: contract-lifecycle-review
+        tags:
+          - review
+        edit: false
+        persona: contract-lifecycle-reviewer
+        policy:
+          - review
+          - tayk-traceability
+          - tayk-review-convergence
+        knowledge:
+          - contract-lifecycle
+        pass_previous_response: false
+        provider_options:
+          extends: review-readonly
+        instruction: contract-lifecycle-review
+        rules:
+          - condition: approved
+          - condition: needs_fix
+        output_contracts:
+          report:
+            - name: contract-lifecycle-review.md
+              format: tayk-contract-lifecycle-review-finding-contract
+      - name: robustness-review
+        tags:
+          - review
+        edit: false
+        persona: robustness-reviewer
+        policy:
+          - review
+          - existing-system-respect
+          - tayk-review-convergence
+        knowledge:
+          - robustness
+        pass_previous_response: false
+        provider_options:
+          extends: review-readonly
+        instruction: robustness-review
+        rules:
+          - condition: approved
+          - condition: needs_fix
+        output_contracts:
+          report:
+            - name: robustness-review.md
+              format: tayk-robustness-review-finding-contract
+      - name: adr-conformance-impl
+        tags:
+          - review
+          - adr
+        edit: false
+        persona: tayk-adr-conformance-reviewer
+        policy:
+          - review
+          - tayk-review-rescan
+          - tayk-review-convergence
+        knowledge:
+          - tayk-adr
+          - tayk-domain
+        pass_previous_response: false
+        provider_options:
+          extends: review-readonly
+        instruction: tayk-review-adr-conformance-impl
+        rules:
+          - condition: APPROVE
+          - condition: REJECT
+          - condition: NEEDS_ADR_REVISION
+        output_contracts:
+          report:
+            - name: adr-conformance-impl.md
+              format: tayk-adr-conformance-review-finding-contract
     rules:
-      - condition: COMPLETE
-        next: final_gate
-      - condition: need_replan
-        next: plan
-      - condition: ABORT
+      # 台帳の状態を先に見る。conflicts（レビュア間の相互排他な指摘）が未調停なら
+      # engine 注入の synthetic step へ回し、調停後も残るなら人間の判断が要る
+      - condition: when(findings.conflicts.count > 0 && findings.conflicts.unadjudicated.count > 0)
+        next: finding-conflict-adjudication
+      - condition: when(findings.conflicts.count > 0)
         next: ABORT
+      # provisional（判定不能な観測）はゲートを塞ぐ。fix では解けないため計画へ戻す
+      - condition: when(findings.provisional.fixpoint == true && findings.conflicts.count == 0)
+        next: plan
+      - condition: when(findings.rounds.budgetExhausted == true && findings.provisional.count > 0 && findings.conflicts.count == 0)
+        next: plan
+      - condition: when(findings.provisional.count > 0 && findings.conflicts.count == 0)
+        next: plan
+      # all() の複数引数は並列 sub-step と位置対応で照合され、個数が一致しないと
+      # ルールごとスキップされる（= 前進不能）。sub-step の宣言順に 7 個並べる
+      - condition: all("approved", "AI特有の問題なし", "approved", "approved", "approved", "approved", "APPROVE") && when(findings.open.count == 0 && findings.provisional.count == 0 && findings.conflicts.count == 0)
+        next: final_gate
+      # reviewer の応答自体に異常があっても、台帳が空なら最終ゲートの supervise で拾う
+      - condition: any("approved", "needs_fix", "AI特有の問題なし", "AI特有の問題あり", "APPROVE", "REJECT", "NEEDS_ADR_REVISION") && when(findings.open.count == 0 && findings.provisional.count == 0 && findings.conflicts.count == 0 && findings.reviewerAnomalies.count > 0)
+        next: final_gate
+      - condition: any("needs_fix", "AI特有の問題あり", "REJECT", "NEEDS_ADR_REVISION") && when(findings.conflicts.count == 0)
+        next: fix
+      - condition: when(findings.conflicts.count == 0 && findings.open.count > 0)
+        next: fix
+      # sub-step の verdict がどの宣言条件にも分類されないと（分類器の失敗・空応答）、
+      # all() は false・any() は skip になり全 rule が外れ、rule 不一致で run 全体が
+      # ABORT していた（#167。全レビュー APPROVE でも落ちる）。決定的な受け皿で
+      # 再レビューへ戻す。連続自己再入は fix への外部再入ではないため
+      # loop monitor の cycle を壊さない。上限は max_steps が持つ
+      - condition: when(true)
+        next: impl_review
+
+  - name: fix
+    description: 実装レビュー指摘の修正
+    tags:
+      - coding
+    edit: true
+    persona: coder
+    policy:
+      - coding
+      - testing
+      - tayk-traceability
+      - existing-system-respect
+      - tayk-scope-spillover
+      - tayk-conflict-escalation
+    knowledge:
+      - architecture
+      - tayk-adr
+    required_permission_mode: edit
+    session: refresh
+    provider_options:
+      extends: edit
+    promotion:
+      - at: 2
+        provider_options:
+          codex:
+            reasoning_effort: high
+          claude:
+            effort: high
+    instruction: fix
+    pass_previous_response: false
+    quality_gates:
+      - テストの削除・skip・アサーション緩和で指摘を消していないこと
+      - テスト先行で書いたテストが green のままであること
+      - ADR 逸脱の指摘に対し、該当 ADR の改訂を差分に含めたか、逸脱を解消したかのいずれかであること
+      - 計画の要件 ID にない機能を追加していないこと
+    rules:
+      # 上限は loop monitor が持つ。この step は「このループでは解けない」と分かった
+      # ときだけ計画へ戻す
+      - condition: 修正完了
+        next: impl_review
+      - condition: 判断できない、情報不足
+        next: plan
 
   # ── Phase 4: 最終ゲート ───────────────────────────────────────────
-  # builtin の merge-readiness + supervise 並列ゲート。
-  # supervise 側の knowledge に tayk の ADR を足して、規約観点の最終確認を効かせる。
+  # builtin の merge-readiness + supervise ゲートの Finding Contract 版。台帳の
+  # open / provisional / conflicts を見て差し戻し先を決めるため、レビュー側と同じ
+  # 判断基準で最終確認が走る。supervise 側の knowledge に tayk の ADR を足して、
+  # 規約観点の最終確認を効かせる。
+  #
+  # builtin callable なので FC が効く（project 側 callable では効かない）。この
+  # 非対称が、実装レビューを親へ展開してこの step は callable のまま残した理由である。
   - name: final_gate
     kind: workflow_call
-    call: merge-readiness-final-gate
+    call: merge-readiness-finding-contract-final-gate
     args:
       supervise_knowledge:
         - architecture
@@ -394,12 +685,14 @@ steps:
     rules:
       - condition: COMPLETE
         next: spillover
-      # fix へ直接戻さず実装ゲートを回り直す。そうしないと sub-workflow の内側にある
-      # [impl_review, fix] の cycle が外から破られ、上限 3 が失われる（ADR-0008 決定 12）
+      - condition: needs_review
+        next: impl_review
       - condition: needs_fix
-        next: impl_gate
+        next: fix
       - condition: need_replan
         next: plan
+      - condition: needs_conflict_adjudication
+        next: finding-conflict-adjudication
       - condition: ABORT
         next: ABORT
 
