@@ -316,9 +316,10 @@ function expectAbortWiringContract(): void {
     },
     {
       abortConditions: {
-        diagnose: /4 回目以降|再現条件を確定できない|原因が複数/,
+        diagnose: /11 回目以降|再現条件を確定できない|原因が複数/,
         final_gate: /^ABORT$/,
         intake: /^(?:blocked|ABORT)$/,
+        rediagnose: /4 回目以降/,
       },
       path: paths.fix,
     },
@@ -375,6 +376,11 @@ function expectRecoveryLaneContract(): void {
 }
 
 describe("tayk-audit-runs recovery contract", () => {
+  // REQ-199-05 / TC-08 / P-5
+  test("tayk-fix keeps direct diagnosis ABORT reports recoverable while its overall limit changes", () => {
+    expectAbortWiringContract();
+  });
+
   test("[REQ-163-01 / TC-163-01A] should keep a run-level Recovery Inventory separate from Audit Targets when planning recovery", () => {
     const planContract = readRepositoryFile(paths.planContract);
     const auditTargetHeaders = extractTableHeaders(
