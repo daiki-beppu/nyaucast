@@ -3,6 +3,8 @@
 > 対象 run: `d5mf79`, `nfs7mb`, `r48c02`, `vsdd6j`, `lj9wnf`, `kv9x6l`, `vc7mrz`, `j4ojef`
 > 診断対象の takt: 0.54.1（`/nix/store/w9zw7bf2f7wgp4sg3vxwbnd7cvv7ij70-takt-0.54.1`）
 > 実施日: 2026-08-01
+> 注記: 診断の直後に #212 が実装レビューの構造を変えた。原因の判定は変わらないが、
+> 対象の所在と規模が動いている — 末尾「#212 による前提の変化」を参照
 
 # impl_review verdict 完了伝播の診断
 
@@ -62,10 +64,9 @@ verdict 確定 → 並列集約 → callable return のうち、**verdict 確定
 | verdict を 3 つから 2 つに減らす                    | 判定器の曖昧さは下がるが確定的にはならない。加えて `NEEDS_ADR_REVISION` は ADR-0001 決定 7（逸脱するなら同一差分で ADR を改訂する）の受け口なので、潰すと ADR ゲートが弱くなる                   |
 
 親 step 側の受け皿（#167）は現行定義に残っており、**sub-step がすべて分類された場合**には
-`all()` / `any()` のどちらかが必ず成立する。この網羅性は
-`test/workflow/impl-review-verdict-contract.test.ts` が 4 sub-step の verdict 全 24 通りを
-列挙して検査する（issue #197 要件 4）。今回の ABORT はこの網羅性の穴ではなく、
-sub-step が**分類されないまま例外になる**経路によるものである。
+`all()` / `any()` のどちらかが必ず成立する。今回の ABORT はこの網羅性の穴ではなく、
+sub-step が**分類されないまま例外になる**経路によるものである。この網羅性を機械検査で
+固定する作業（issue #197 要件 4）は未了 — 理由は末尾「#212 による前提の変化」にある。
 
 ## takt 本体への要望（切り出し内容）
 
@@ -75,3 +76,23 @@ sub-step が**分類されないまま例外になる**経路によるもので�
   `when(structured.…)` による判定器を経ない verdict 分岐を定義側で書けるようにする。
 
 いずれか一方があれば、tayk 側は定義の変更だけで完了伝播を確定的にできる。
+
+## #212 による前提の変化（2026-08-01 追記）
+
+本診断の直後、#212（PR #213 / `72bf4a6`）が ADR-0008 決定 12 を反転し、実装レビューの構造を変えた。
+
+| 項目                 | 診断時点                                            | #212 以降                                                           |
+| -------------------- | --------------------------------------------------- | ------------------------------------------------------------------- |
+| 定義の所在           | `.takt/workflows/tayk-impl-review.yaml`（callable） | `tayk-feature.yaml` / `tayk-fix.yaml` へインライン展開（複製 2 本） |
+| sub-step 数          | 4                                                   | 7                                                                   |
+| verdict の組み合わせ | 24 通り                                             | 192 通り（2⁶ × 3）                                                  |
+| 親 step の rules     | semantic のみ                                       | `when(findings.*)`（Finding Contract）と `all()` / `any()` の併用   |
+
+**原因の判定は変わらない。** `ParallelRunner` の再 throw は callable かどうかに依存せず、並列
+sub-step がある限り同じ経路で起きる。sub-step が 4 から 7 に増えた分、分類が外れる機会はむしろ増える。
+
+要件 4 の網羅性検査は当初 `test/workflow/impl-review-verdict-contract.test.ts` として
+`tayk-impl-review.yaml` を対象に書かれたが、対象ファイルの削除により `readFileSync` が ENOENT で
+落ちるため本 PR から取り下げた。書き直しは feature / fix の 2 ファイル × 192 通りを対象とする
+（#197 の残件）。複製が 2 本に戻ったことで、この検査は ADR-0008 Consequences が目視に委ねた
+「複製の一致」の一部を機械検査へ移す役割も持つ。
