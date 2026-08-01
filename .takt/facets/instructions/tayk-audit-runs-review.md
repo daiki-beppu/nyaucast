@@ -5,7 +5,7 @@
 - 計画レポート: {report:01-runs-audit-plan.md}
 - 分析レポート: {report:02-runs-audit.md}
 
-証拠は本体リポの絶対パス `/Users/mba/02-yt/tayk/.takt/runs` にある（タスクの隔離クローンには無い）。
+本体 run と clone run の証拠は、計画レポートに記録された実パスから読む。実パスは本体リポの `/Users/mba/02-yt/tayk/.takt/runs` と、本体リポの `/Users/mba/02-yt/tayk/.takt/clone-meta/*.json` の `clonePath` 配下にある `.takt/runs` の 2 系統である。
 
 前段の supervise が差し戻し理由（blocking_issues）を出している場合は、それを最優先で解消してください。
 
@@ -45,10 +45,10 @@
 **出力の原則（違反したら出力は無効）:**
 
 - 前回レポートの分析済み行・Findings をすべて保持し、今回の結果を統合した完全版を出力する
-- Audit Scope 表は計画の Audit Targets と一対一（同じ #・同じ行数）を維持する。行の削除・統合は禁止
+- Audit Scope 表は計画の Audit Targets と一対一（同じ #・同じ行数・同じ run と絶対パスの対応）を維持する。行の削除・統合は禁止
 - 今回分析した行だけ ⏳ → ✅ に更新する。✅ を ⏳ に戻さない
 - 未分析対象が残る場合は Follow-up Notes にその理由を明記する
-- Recovery Coverage 表は計画の Recovery Inventory と run 単位で一対一を維持する。今回走査した run の行だけを更新し、既に「回収済み」の行を未回収へ戻さない
+- Recovery Coverage 表は計画の Recovery Inventory と run および絶対パスが一対一になるよう維持する。今回走査した run の行だけを更新し、既に「回収済み」の行を未回収へ戻さない
 - Token Usage 節はそのまま保持する（再集計しない）。節が欠けている・表が空の場合のみ、analyze の集計手順（`logs/*-usage-events.phase.jsonl` の機械集計。`usage_missing` 行を除外し、集計対象外 run は件数と理由を明示）を実行して補う
 
 **厳禁:**

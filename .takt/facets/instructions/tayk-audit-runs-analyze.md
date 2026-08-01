@@ -2,7 +2,7 @@ run 監査を分解し、対象ごとに担当を割り当てて並列分析し�
 
 **重要:** 計画レポートを参照してください: {report:01-runs-audit-plan.md}
 
-証拠は本体リポの絶対パス `/Users/mba/02-yt/tayk/.takt/runs` にある（タスクの隔離クローンには無い）。**各パートの instruction にもこの絶対パスを必ず書き込む。**
+証拠は本体リポの絶対パス `/Users/mba/02-yt/tayk/.takt/runs` と、計画が本体リポの `/Users/mba/02-yt/tayk/.takt/clone-meta/*.json` の `clonePath` から列挙した各 `.takt/runs` の 2 系統にある。**各パートの instruction には、担当 run について計画レポートに記録された絶対パスを必ず書き込む。** 存在しない `clonePath` は ABORTしない。本体と実在する clone の監査を継続する。欠落を静かに無視しないでカバレッジの欠落として記録し、監査レポート冒頭の対象範囲宣言に、辿れない meta の件数と各 `branch` 名を列挙する。
 
 **やること:**
 
@@ -28,7 +28,7 @@ run 監査を分解し、対象ごとに担当を割り当てて並列分析し�
 
 **定義監査の分析手順（#1〜#3。担当パートの instruction に転記する）:**
 
-定義ファイルは隔離クローン内に git 追跡で存在するため、リポジトリルートからの相対パスで読む（runs の絶対パスは使わない）。
+定義ファイルは隔離クローン内に git 追跡で存在するため、リポジトリルートからの相対パスで読む（run の証拠に記録した絶対パスは使わない）。
 
 - **#1 検査 E（spillover 複製の一致）**: `tayk-feature.yaml` と `tayk-fix.yaml` の `spillover` step 定義（直前のコメントブロックを含む）を突き合わせる。意図された差分は「因果あり発見の戻し先」（feature は `plan`、fix は `diagnose`。ADR-0008 決定 11）とそのコメント中の宛先表記だけ。それ以外の差分（quality_gates・rules・policy・コメントの文言）はすべて乖離であり、両ファイルの該当行を引用して Finding にする
 - **#2 検査 F（callable のレポート境界）**: 親側（`tayk-feature.yaml` / `tayk-fix.yaml`）の output_contracts からレポート名を集める。callable（`tayk-intake.yaml` / `tayk-impl-review.yaml`）の各 step が参照する instruction facet のうちリポ内（`.takt/facets/instructions/`）に実在するものを走査し、親のレポート名への参照（report プレースホルダ記法経由を含む）や、自分の Report Directory の外を探索させる指示を検出する。検出したら ADR-0008 決定 13 違反として、facet 名と該当行の引用を根拠に Finding にする。リポ外の builtin facet は対象外とし、その旨を Key Observations に書く
@@ -58,8 +58,8 @@ run 監査を分解し、対象ごとに担当を割り当てて並列分析し�
 
 **統合時の必須事項:**
 
-- 全パートの結果を統合し、Audit Scope 表を計画レポートの Audit Targets と一対一（同じ #・同じ行数）で作成する
-- 対象単体の観測に加えて、**複数 run にまたがる再発パターン**を Findings として抽出する（Finding ごとに該当 run をすべて列挙する）
+- 全パートの結果を統合し、Audit Scope 表を計画レポートの Audit Targets と一対一（同じ #・同じ行数・同じ run と絶対パスの対応）で作成する
+- 対象単体の観測に加えて、**複数 run にまたがる再発パターン**を Findings として抽出する（Finding ごとに該当 run と各 run の絶対パスをすべて列挙する）
 - 各パートの loop monitor 不発の検査結果を (workflow, step) 単位で 1 行に統合し、「Loop Monitor 不発の疑い」節を作る（該当なしでも節は残す）。高確度（自前上限なし）の行は Findings にも Category: loop-monitor で載せる
 - パートが時間内に完了できなかった対象も ⏳ として行を残し、Follow-up Notes に理由を書く
 - 下記のトークン消費集計を実行し、レポートの Token Usage 節を作る
@@ -68,7 +68,7 @@ run 監査を分解し、対象ごとに担当を割り当てて並列分析し�
 
 パートに任せず、統合時にあなたが**コマンドで機械的に集計する**（jsonl を 1 件ずつ精読しない）。対象は計画レポートの Run Inventory と同じスコープの全 run（Audit Targets に選ばれなかった run も含む）。
 
-1. 各 run の `/Users/mba/02-yt/tayk/.takt/runs/<run>/logs/*-usage-events.phase.jsonl` を読む。`usage_missing` が true の行は除外し、`usage.total_tokens` を run ごとに合算する（セッションが複数あればすべて合算）
+1. 各 run について計画レポートに記録された実パスの `logs/*-usage-events.phase.jsonl` を読む。`usage_missing` が true の行は除外し、`usage.total_tokens` を run ごとに合算する（セッションが複数あればすべて合算）
 2. 有効な usage を 1 行も持たない run は**集計対象外**とし、件数と理由（phase.jsonl が無い / 全行 usage_missing）を内訳で明示する。集計対象外があっても集計を壊さず、残りの run で集計を完遂する
 3. workflow 別（run の `meta.json` の workflow で束ねる）に、集計対象 run 数・total_tokens 合計・run あたり中央値を出す
 4. step 別（jsonl の `step` フィールド）に消費を集計し、workflow ごとに消費上位の step と workflow 合計に占める割合を出す

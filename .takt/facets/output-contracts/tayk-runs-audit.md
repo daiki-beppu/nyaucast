@@ -1,6 +1,8 @@
 ```markdown
 # Runs Audit Report
 
+監査レポート冒頭の対象範囲宣言: {本体リポと実在する clone の監査範囲。カバレッジの欠落として、辿れない meta の件数と各 `branch` 名を列挙する。欠落が無ければ 0 件と明記する}
+
 ## Result: APPROVE / IMPROVE / REJECT
 
 ## Enumeration Evidence
@@ -12,21 +14,21 @@
 
 ## Audit Scope
 
-| #   | Audit Target                                | Audited | Runs                     | Key Observations                              |
-| --- | ------------------------------------------- | ------- | ------------------------ | --------------------------------------------- |
-| 1   | {計画レポート Audit Targets の #1 と同一名} | ✅ / ⏳ | {run ディレクトリ名列挙} | {ABORT 原因・差し戻し経路の要約。⏳ なら空欄} |
+| #   | Audit Target                                | Audited | Runs                     | Evidence Paths                         | Key Observations                              |
+| --- | ------------------------------------------- | ------- | ------------------------ | -------------------------------------- | --------------------------------------------- |
+| 1   | {計画レポート Audit Targets の #1 と同一名} | ✅ / ⏳ | {run ディレクトリ名列挙} | {各 run と一対一の run 絶対パスを列挙} | {ABORT 原因・差し戻し経路の要約。⏳ なら空欄} |
 
 ## Recovery Coverage
 
-| Run      | Target Reports | Scanned Reports | Extracted Findings | Failed Paths                                                    | Failure Reasons              | Status                         |
-| -------- | -------------- | --------------- | ------------------ | --------------------------------------------------------------- | ---------------------------- | ------------------------------ |
-| {run 名} | {対象数}       | {走査できた数}  | {抽出した発見数}   | {読めなかった / 解釈できなかったレポートの相対パス。無ければ -} | {パスごとの理由。無ければ -} | 回収済み / 一部未回収 / 未回収 |
+| Run      | Evidence Path  | Target Reports | Scanned Reports | Extracted Findings | Failed Paths                                                    | Failure Reasons              | Status                         |
+| -------- | -------------- | -------------- | --------------- | ------------------ | --------------------------------------------------------------- | ---------------------------- | ------------------------------ |
+| {run 名} | {run 絶対パス} | {対象数}       | {走査できた数}  | {抽出した発見数}   | {読めなかった / 解釈できなかったレポートの相対パス。無ければ -} | {パスごとの理由。無ければ -} | 回収済み / 一部未回収 / 未回収 |
 
 ## Findings
 
-| #   | Severity            | Category                                                                                                  | Runs                                   | Evidence                                           | Source Run          | Source Report       | Source Location     | Quote               | Impact               | Issue      | Recommended Fix |
-| --- | ------------------- | --------------------------------------------------------------------------------------------------------- | -------------------------------------- | -------------------------------------------------- | ------------------- | ------------------- | ------------------- | ------------------- | -------------------- | ---------- | --------------- |
-| 1   | High / Medium / Low | abort-cause / rework-path / loop-monitor / capacity / def-spillover / def-boundary / def-drift / recovery | {該当 run 全部。def-\* は該当ファイル} | {trace.md / meta.json の引用。def-\* は定義の引用} | {回収 Finding のみ} | {回収 Finding のみ} | {回収 Finding のみ} | {回収 Finding のみ} | {放置した場合の再発} | {問題説明} | {対処案}        |
+| #   | Severity            | Category                                                                                                  | Runs                                   | Evidence Paths                           | Evidence                                           | Source Run          | Source Report       | Source Location     | Quote               | Impact               | Issue      | Recommended Fix |
+| --- | ------------------- | --------------------------------------------------------------------------------------------------------- | -------------------------------------- | ---------------------------------------- | -------------------------------------------------- | ------------------- | ------------------- | ------------------- | ------------------- | -------------------- | ---------- | --------------- |
+| 1   | High / Medium / Low | abort-cause / rework-path / loop-monitor / capacity / def-spillover / def-boundary / def-drift / recovery | {該当 run 全部。def-\* は該当ファイル} | {各 run と一対一の絶対パス。def-\* は -} | {trace.md / meta.json の引用。def-\* は定義の引用} | {回収 Finding のみ} | {回収 Finding のみ} | {回収 Finding のみ} | {回収 Finding のみ} | {放置した場合の再発} | {問題説明} | {対処案}        |
 
 ## Loop Monitor 不発の疑い
 
@@ -72,12 +74,12 @@
 
 **表の維持ルール（最重要 — 違反したレポートは無効）:**
 
-- Audit Scope 表は計画レポート（01）の Audit Targets と**一対一**（同じ #・同じ行数・同じ対象名）を常に保つ。行の削除・統合・要約は禁止
+- Audit Scope 表は計画レポート（01）の Audit Targets と**一対一**（同じ #・同じ行数・同じ対象名・同じ run と絶対パスの対応）を常に保つ。行の削除・統合・要約は禁止
 - 未着手の対象も ⏳ で行を残す。✅ を ⏳ に戻さない
 - Result が REJECT でも Audit Scope 表・既存の Findings・Targets with No Findings は全行維持する。REJECT はブロッキング指摘を**追加**する状態であって、蓄積した分析結果を削ってよい状態ではない
 - **複数 run にまたがる再発パターンは 1 Finding にまとめ、Runs 列に該当 run をすべて列挙する**（run ごとに Finding を割らない — 起票単位が壊れる）
 - Evidence は `.takt/runs` の実トレース（trace.md / meta.json / monitor.json）の引用、定義監査（#1〜#3。Category `def-*`）では定義ファイルのパス + 該当行の引用（検査 E は両ファイルの差分）だけ。このレポート自身や Report Directory 内のファイルを根拠とする Finding を書かない
-- **Recovery Coverage 表は計画レポート（01）の Recovery Inventory と run 単位で一対一**（同じ run・同じ行数）を保つ。行の削除・統合・要約は禁止。読めなかった / 解釈できなかったレポートは Failed Paths と Failure Reasons に残し、「発見なし」（Extracted Findings 0 かつ Status 回収済み）へ畳まない — 畳むと未回収と発見なしが区別できなくなる
+- **Recovery Coverage 表は計画レポート（01）の Recovery Inventory と run および絶対パスで一対一**（同じ run・同じ絶対パス・同じ行数）を保つ。行の削除・統合・要約は禁止。読めなかった / 解釈できなかったレポートは Failed Paths と Failure Reasons に残し、「発見なし」（Extracted Findings 0 かつ Status 回収済み）へ畳まない — 畳むと未回収と発見なしが区別できなくなる
 - **回収 Finding（Category `recovery`）は Source Run / Source Report / Source Location / Quote / Impact を必ず埋める。** 元レポートの原文へ戻れることが回収の条件であり、要約に置き換えると起票時に出典を示せない。**通常 Finding ではこの 5 列を空欄（`-`）にし、Evidence 列の実トレース引用を根拠とする** — 回収 Finding を通すために通常 Finding の Evidence 制限を緩めない（監査対象 run のレポートは、回収 Finding の出典としてのみ根拠になる）
 - 「Loop Monitor 不発の疑い」節は**該当が 1 件も無くても残し、「該当なし」と明記する**（検査を実行した証明。節が無いレポートは検査未実施として差し戻される）。行は (workflow, step) 単位でまとめ、run ごとに割らない
 - 同節で**判定が「起票対象（高確度）」の行**（現行定義に step が存在し `{step_iteration}` 自前上限が無い）は、同じ内容を Findings にも Category: loop-monitor で載せて起票経路に乗せる。「記録のみ」の行（自前上限あり = 二重化が機能 / 現行定義に無い）は Findings に載せない
