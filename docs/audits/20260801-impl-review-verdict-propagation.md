@@ -65,8 +65,9 @@ verdict 確定 → 並列集約 → callable return のうち、**verdict 確定
 
 親 step 側の受け皿（#167）は現行定義に残っており、**sub-step がすべて分類された場合**には
 `all()` / `any()` のどちらかが必ず成立する。今回の ABORT はこの網羅性の穴ではなく、
-sub-step が**分類されないまま例外になる**経路によるものである。この網羅性を機械検査で
-固定する作業（issue #197 要件 4）は未了 — 理由は末尾「#212 による前提の変化」にある。
+sub-step が**分類されないまま例外になる**経路によるものである。この網羅性は
+`test/workflow/impl-review-verdict-contract.test.ts`（issue #197 要件 4）が機械検査で固定した
+— 検査対象の移動については末尾「#212 による前提の変化」を参照。
 
 ## takt 本体への要望（切り出し内容）
 
@@ -91,8 +92,13 @@ sub-step が**分類されないまま例外になる**経路によるもので�
 **原因の判定は変わらない。** `ParallelRunner` の再 throw は callable かどうかに依存せず、並列
 sub-step がある限り同じ経路で起きる。sub-step が 4 から 7 に増えた分、分類が外れる機会はむしろ増える。
 
-要件 4 の網羅性検査は当初 `test/workflow/impl-review-verdict-contract.test.ts` として
-`tayk-impl-review.yaml` を対象に書かれたが、対象ファイルの削除により `readFileSync` が ENOENT で
-落ちるため本 PR から取り下げた。書き直しは feature / fix の 2 ファイル × 192 通りを対象とする
-（#197 の残件）。複製が 2 本に戻ったことで、この検査は ADR-0008 Consequences が目視に委ねた
-「複製の一致」の一部を機械検査へ移す役割も持つ。
+要件 4 の網羅性検査は当初 `tayk-impl-review.yaml` を対象に書かれたが、対象ファイルの削除により
+`readFileSync` が ENOENT で落ちるため一度取り下げ（`3971722`）、feature / fix の 2 ファイル
+× 192 通りを対象に書き直した。#212 で親 rules が `all(...) && when(findings.*)` の複合条件に
+なったため、検査は takt の条件文法（`&&` のトップレベル分割 → 左を `AggregateEvaluator`・
+右を `when` として個別評価）を再現する。台帳がクリーンなときと未解消の指摘が残るときの
+2 状態で掃き、`when(true)` 受け皿へ落ちる組み合わせが 1 つも無いことを固定する。
+
+複製が 2 本に戻ったことで、この検査は ADR-0008 Consequences が目視に委ねた「複製の一致」の
+一部も機械検査へ移した — `impl_review` step を差し戻し先（`plan` / `diagnose`）だけ伏せて
+構造比較する。
