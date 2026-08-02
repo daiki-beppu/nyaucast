@@ -28,11 +28,11 @@ bun run check
 
 **例外は、実装前に red を観測する step（`write_tests` / `reproduce`）である。** あそこでの `bun test` はゲートの再現ではなく、テストが要件を検証していることの証拠（ADR-0008 決定 5 / 9 / 10）を得る手順そのものだ。実装がまだ無い時点で `check` が通ることは設計上ありえないため、**red を「壊れている」と読み替えて直しにいってはならない**。`check` を通す責任は、実装を持つ後段の step（`implement` / `repair`）にある。
 
-workflow 定義の検査は `check` に**含まれない** — `takt workflow doctor` の 1 本である（pre-push で自動実行されるが、takt が CI 環境に無いため CI では走らない。ADR-0008）。`.takt/workflows/` または `.takt/facets/` を変更したなら、`bun run check` に加えて `takt workflow doctor` も通す。
+takt workflow 定義の検査は `check` に**含まれない** — `takt workflow doctor` の 1 本である（pre-push で自動実行されるが、takt が CI 環境に無いため CI では走らない。ADR-0008）。GitHub Actions の workflow 定義は例外で、`actions:check`（actionlint）として `check` の中にある。`.takt/workflows/` または `.takt/facets/` を変更したなら、`bun run check` に加えて `takt workflow doctor` も通す。
 
 ## 禁止
 
-- bun 以外のパッケージマネージャの実行（`npm install` / `pnpm add` / `yarn` 等）
+- bun 以外のパッケージマネージャの実行（`npm install` / `pnpm add` / `yarn` 等）。**唯一の例外は ADR-0003 決定 5 の配布互換境界** — release の `npm publish` / `npm publish --dry-run` と、package 統合テストの `npm pack` / 隔離した一時 consumer への `npm install` だけは許可される。既存のこれらを規約違反として報告・除去してはならない
 - `package.json` の `scripts` に実在しないコマンドを手順・例示として書くこと
 - 検査ゲートの集合を `package.json` の外に書き写すこと（CI・フック・手順書はいずれも `bun run check` を呼ぶ）
 - ビルドステップの追加（ADR-0003 決定 3。`build` script は存在せず、`dist/` も作らない）

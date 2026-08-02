@@ -357,13 +357,10 @@ describe("release ancestor guard", () => {
   });
 
   // REQ-77-02 / TC-77-02 / P-77-01
-  test("should run an unmasked main fetch and ancestor guard before publishing", () => {
+  test("should run an unmasked ancestor guard against origin main before publishing", () => {
     const steps = releaseSteps();
     const checkoutIndex = steps.findIndex(
       (step) => step.uses?.startsWith("actions/checkout@") === true
-    );
-    const fetchIndex = steps.findIndex((step) =>
-      /\bgit fetch origin main\b/.test(step.run ?? "")
     );
     const guardIndex = steps.findIndex(
       (step) => step.run?.includes("check-release-ancestor.sh") === true
@@ -373,11 +370,16 @@ describe("release ancestor guard", () => {
     );
     const checkout = steps[checkoutIndex];
 
+    // origin/main は fetch-depth: 0 の checkout が供給する。persist-credentials:
+    // false で認証ヘッダが無いため、ここで追加の network fetch を挟んではならない。
     expect(checkout?.with?.["fetch-depth"]).toBe(0);
-    expect(fetchIndex).toBeGreaterThan(checkoutIndex);
-    expect(guardIndex).toBeGreaterThanOrEqual(fetchIndex);
+    expect(
+      steps.some((step) => /\bgit fetch\b/.test(step.run ?? ""))
+    ).toBeFalse();
+    expect(steps[guardIndex]?.run).toContain("origin/main");
+    expect(guardIndex).toBeGreaterThan(checkoutIndex);
     expect(publishIndex).toBeGreaterThan(guardIndex);
-    for (const step of steps.slice(fetchIndex, guardIndex + 1)) {
+    for (const step of steps.slice(checkoutIndex + 1, guardIndex + 1)) {
       expect(typeof step.if).not.toBe("string");
       expect(step.if).not.toBe(false);
       expect([undefined, false]).toContain(step["continue-on-error"]);

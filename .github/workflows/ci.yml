@@ -5,14 +5,18 @@ on:
   push: { branches: [main] }
   workflow_call: {}
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 jobs:
   quality:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    # concurrency は job 側に置く。workflow レベルに置くと workflow_call 経由の
+    # 呼び出しでも評価され、release の group を掴んだまま待っている呼び出し元と
+    # 同じ group を要求して deadlock する。group 名に ${{ github.workflow }} を
+    # 使わないのも同じ理由で、called workflow では呼び出し元の workflow 名
+    # （Release）へ解決され、group 名は大文字小文字を区別しない。
+    concurrency:
+      group: ci-quality-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     permissions:
       contents: read
     steps:
