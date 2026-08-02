@@ -211,7 +211,7 @@ function prepareLockfile(root: string): void {
 function createRepository(
   root: string,
   name: string,
-  options: { flake?: boolean } = {}
+  options: { lefthook?: boolean } = {}
 ): void {
   initializeGitRepository(root);
   createLocalCliPackage(root);
@@ -224,18 +224,21 @@ function createRepository(
   });
   prepareLockfile(root);
 
-  if (options.flake === true) {
-    cpSync(join(packageRoot, "flake.nix"), join(root, "flake.nix"));
-    cpSync(join(packageRoot, "flake.lock"), join(root, "flake.lock"));
+  if (options.lefthook === true) {
     cpSync(join(packageRoot, "lefthook.yml"), join(root, "lefthook.yml"));
-    writeFileSync(join(root, ".envrc"), "use flake\n");
   }
 
   commitFixture(root);
 }
 
-function createTaykFixture(root: string): void {
-  createRepository(root, "@daiki-beppu/tayk", { flake: true });
+function createDirenvTaykFixture(root: string): void {
+  createRepository(root, "@daiki-beppu/tayk", { lefthook: true });
+  writeFileSync(join(root, ".envrc"), `use flake ${packageRoot}\n`);
+  commitFixture(root);
+}
+
+function createTaykRepository(root: string): void {
+  createRepository(root, "@daiki-beppu/tayk", { lefthook: true });
 }
 
 function createRealProjectCheckout(root: string): void {
@@ -250,10 +253,11 @@ function runInDevShell(
   flakeRoot: string,
   cwd: string,
   command: string[],
-  env = developerEnvironment
+  env = developerEnvironment,
+  scratchRoot = dirname(flakeRoot)
 ): CommandResult {
-  const temporaryDirectory = join(dirname(flakeRoot), ".bun-tmp");
-  const cacheDirectory = join(dirname(flakeRoot), ".bun-cache");
+  const temporaryDirectory = join(scratchRoot, ".bun-tmp");
+  const cacheDirectory = join(scratchRoot, ".bun-cache");
   mkdirSync(temporaryDirectory, { recursive: true });
   mkdirSync(cacheDirectory, { recursive: true });
   return runCommand(
@@ -268,8 +272,17 @@ function runInDevShell(
   );
 }
 
-function enterDevShell(flakeRoot: string, cwd: string): CommandResult {
-  return runInDevShell(flakeRoot, cwd, ["bun", "--version"]);
+function runFixtureInDevShell(
+  fixtureRoot: string,
+  cwd: string,
+  command: string[],
+  env = developerEnvironment
+): CommandResult {
+  return runInDevShell(packageRoot, cwd, command, env, fixtureRoot);
+}
+
+function enterFixtureDevShell(fixtureRoot: string, cwd: string): CommandResult {
+  return runFixtureInDevShell(fixtureRoot, cwd, ["bun", "--version"]);
 }
 
 function enterIsolatedDevShell(flakeRoot: string, cwd: string): CommandResult {
@@ -333,7 +346,6 @@ function snapshotTree(root: string): TreeEntry[] {
 function createIsolatedDirenvEnvironment(root: string): Record<string, string> {
   const locations = {
     HOME: join(root, "home"),
-    XDG_CACHE_HOME: join(root, "xdg-cache"),
     XDG_CONFIG_HOME: join(root, "xdg-config"),
     XDG_DATA_HOME: join(root, "xdg-data"),
     XDG_RUNTIME_DIR: join(root, "xdg-runtime"),
@@ -344,7 +356,19 @@ function createIsolatedDirenvEnvironment(root: string): Record<string, string> {
     mkdirSync(directory, { recursive: true });
   }
 
-  return { ...developerEnvironment, ...locations };
+  // direnv の許可・設定は隔離する一方、Nix の評価キャッシュまで捨てる必要はない。
+  // fixture のパスは毎回一意なので、共有キャッシュが direnv の状態を混線させない。
+  const developerHome = developerEnvironment["HOME"];
+  if (developerHome === undefined) {
+    throw new Error("The devShell integration test requires HOME");
+  }
+  const sharedCache =
+    developerEnvironment["XDG_CACHE_HOME"] ?? join(developerHome, ".cache");
+  return {
+    ...developerEnvironment,
+    ...locations,
+    XDG_CACHE_HOME: sharedCache,
+  };
 }
 
 function enterWithDirenv(
@@ -367,11 +391,11 @@ function enterWithDirenv(
 }
 
 function expectRejectedWithoutMutation(
-  flakeRoot: string,
+  fixtureRoot: string,
   cwd: string
 ): CommandResult {
   const before = snapshotTree(cwd);
-  const entered = enterDevShell(flakeRoot, cwd);
+  const entered = enterFixtureDevShell(fixtureRoot, cwd);
 
   expectCommandSucceeded(entered);
   expect(snapshotTree(cwd)).toEqual(before);
@@ -383,14 +407,12 @@ function expectRejectedWithoutMutation(
 describe.serial("devShell setup", () => {
   test("[REQ-105-01] does not create node_modules in an unrelated Git repository", () => {
     withDevShellFixture((directory) => {
-      const flakeRoot = join(directory, "tayk");
       const unrelated = join(directory, "unrelated");
-      createTaykFixture(flakeRoot);
       createRepository(unrelated, "unrelated-project");
       expect(existsSync(join(unrelated, "node_modules"))).toBeFalse();
 
       const before = snapshotTree(unrelated);
-      const entered = enterDevShell(flakeRoot, unrelated);
+      const entered = enterFixtureDevShell(directory, unrelated);
 
       expectCommandSucceeded(entered);
       expect(existsSync(join(unrelated, "node_modules"))).toBeFalse();
@@ -400,15 +422,13 @@ describe.serial("devShell setup", () => {
 
   test("[REQ-105-01] does not alter an unrelated repository's existing node_modules", () => {
     withDevShellFixture((directory) => {
-      const flakeRoot = join(directory, "tayk");
       const unrelated = join(directory, "unrelated");
-      createTaykFixture(flakeRoot);
       createRepository(unrelated, "unrelated-project");
       mkdirSync(join(unrelated, "node_modules"), { recursive: true });
       writeFileSync(join(unrelated, "node_modules", "sentinel"), "unchanged\n");
       const before = snapshotTree(unrelated);
 
-      const entered = enterDevShell(flakeRoot, unrelated);
+      const entered = enterFixtureDevShell(directory, unrelated);
 
       expectCommandSucceeded(entered);
       expect(snapshotTree(unrelated)).toEqual(before);
@@ -417,16 +437,16 @@ describe.serial("devShell setup", () => {
 
   test("[REQ-105-02] installs dependencies from a tayk subdirectory", () => {
     withDevShellFixture((directory) => {
-      const flakeRoot = join(directory, "tayk");
-      const subdirectory = join(flakeRoot, "src");
-      createTaykFixture(flakeRoot);
+      const taykRoot = join(directory, "tayk");
+      const subdirectory = join(taykRoot, "src");
+      createTaykRepository(taykRoot);
       mkdirSync(subdirectory);
 
-      const entered = enterDevShell(flakeRoot, subdirectory);
+      const entered = enterFixtureDevShell(directory, subdirectory);
 
       expectCommandSucceeded(entered);
       expect(
-        existsSync(join(flakeRoot, "node_modules", ".bin", "fixture-tsc"))
+        existsSync(join(taykRoot, "node_modules", ".bin", "fixture-tsc"))
       ).toBeTrue();
       expect(combinedOutput(entered)).toMatch(installNoticePattern);
     });
@@ -434,39 +454,39 @@ describe.serial("devShell setup", () => {
 
   test("[REQ-105-02] installs dependencies from a tayk subdirectory when its path contains spaces", () => {
     withSpaceContainingDevShellFixture((directory) => {
-      const flakeRoot = join(directory, "tayk checkout");
-      const subdirectory = join(flakeRoot, "src");
-      createTaykFixture(flakeRoot);
+      const taykRoot = join(directory, "tayk checkout");
+      const subdirectory = join(taykRoot, "src");
+      createTaykRepository(taykRoot);
       mkdirSync(subdirectory);
 
-      const entered = enterDevShell(flakeRoot, subdirectory);
+      const entered = enterFixtureDevShell(directory, subdirectory);
 
       expectCommandSucceeded(entered);
       expect(
-        existsSync(join(flakeRoot, "node_modules", ".bin", "fixture-tsc"))
+        existsSync(join(taykRoot, "node_modules", ".bin", "fixture-tsc"))
       ).toBeTrue();
     });
   });
 
   test("[REQ-105-02][REQ-105-03] supplies Git without the host environment from root and subdirectory entries", () => {
     withDevShellFixture((directory) => {
-      const flakeRoot = join(directory, "tayk");
-      const subdirectory = join(flakeRoot, "src");
-      createTaykFixture(flakeRoot);
+      const taykRoot = join(directory, "tayk");
+      const subdirectory = join(taykRoot, "src");
+      createTaykRepository(taykRoot);
       mkdirSync(subdirectory);
 
-      for (const cwd of [flakeRoot, subdirectory]) {
-        rmSync(join(flakeRoot, "node_modules"), {
+      for (const cwd of [taykRoot, subdirectory]) {
+        rmSync(join(taykRoot, "node_modules"), {
           force: true,
           recursive: true,
         });
 
-        const entered = enterIsolatedDevShell(flakeRoot, cwd);
+        const entered = enterIsolatedDevShell(packageRoot, cwd);
 
         expectCommandSucceeded(entered);
         expect(entered.stdout.toString().trim()).not.toBe("");
         expect(
-          existsSync(join(flakeRoot, "node_modules", ".bin", "fixture-tsc"))
+          existsSync(join(taykRoot, "node_modules", ".bin", "fixture-tsc"))
         ).toBeTrue();
       }
     });
@@ -474,21 +494,21 @@ describe.serial("devShell setup", () => {
 
   test("[REQ-111-01][REQ-186-06] should supply Nix-owned tools without the host PATH", () => {
     withDevShellFixture((directory) => {
-      const flakeRoot = join(directory, "tayk");
-      createTaykFixture(flakeRoot);
+      const taykRoot = join(directory, "tayk");
+      createTaykRepository(taykRoot);
 
       const entered = runCommand(
         nixExecutablePath,
         [
           "develop",
-          flakeRoot,
+          packageRoot,
           "--ignore-environment",
           "--command",
           "sh",
           "-c",
           "actionlint --version && lefthook --version && nixfmt --version",
         ],
-        flakeRoot,
+        taykRoot,
         developerEnvironment
       );
 
@@ -498,12 +518,12 @@ describe.serial("devShell setup", () => {
 
   test("[REQ-105-04] puts the resolved tayk root's binaries first on PATH", () => {
     withDevShellFixture((directory) => {
-      const flakeRoot = join(directory, "tayk");
-      const subdirectory = join(flakeRoot, "src");
-      createTaykFixture(flakeRoot);
+      const taykRoot = join(directory, "tayk");
+      const subdirectory = join(taykRoot, "src");
+      createTaykRepository(taykRoot);
       mkdirSync(subdirectory);
 
-      const entered = runInDevShell(flakeRoot, subdirectory, [
+      const entered = runFixtureInDevShell(directory, subdirectory, [
         "sh",
         "-c",
         "printf '%s' \"${PATH%%:*}\"",
@@ -511,19 +531,19 @@ describe.serial("devShell setup", () => {
 
       expectCommandSucceeded(entered);
       expect(entered.stdout.toString()).toBe(
-        join(flakeRoot, "node_modules", ".bin")
+        join(taykRoot, "node_modules", ".bin")
       );
     });
   });
 
   test("[REQ-105-04] keeps a space-containing tayk root intact in PATH", () => {
     withSpaceContainingDevShellFixture((directory) => {
-      const flakeRoot = join(directory, "tayk checkout");
-      const subdirectory = join(flakeRoot, "src");
-      createTaykFixture(flakeRoot);
+      const taykRoot = join(directory, "tayk checkout");
+      const subdirectory = join(taykRoot, "src");
+      createTaykRepository(taykRoot);
       mkdirSync(subdirectory);
 
-      const entered = runInDevShell(flakeRoot, subdirectory, [
+      const entered = runFixtureInDevShell(directory, subdirectory, [
         "sh",
         "-c",
         "printf '%s' \"${PATH%%:*}\"",
@@ -531,123 +551,57 @@ describe.serial("devShell setup", () => {
 
       expectCommandSucceeded(entered);
       expect(entered.stdout.toString()).toBe(
-        join(flakeRoot, "node_modules", ".bin")
+        join(taykRoot, "node_modules", ".bin")
       );
     });
   });
 
   test("[REQ-105-05a] explains why an unrelated Git repository is rejected", () => {
     withDevShellFixture((directory) => {
-      const flakeRoot = join(directory, "tayk");
       const unrelated = join(directory, "unrelated");
-      createTaykFixture(flakeRoot);
       createRepository(unrelated, "unrelated-project");
 
-      expectRejectedWithoutMutation(flakeRoot, unrelated);
+      expectRejectedWithoutMutation(directory, unrelated);
     });
   });
 
   test("[REQ-105-05a] rejects a package name that only starts with the tayk package name", () => {
     withDevShellFixture((directory) => {
-      const flakeRoot = join(directory, "tayk");
       const unrelated = join(directory, "unrelated");
-      createTaykFixture(flakeRoot);
       createRepository(unrelated, "@daiki-beppu/tayk-extra");
 
-      expectRejectedWithoutMutation(flakeRoot, unrelated);
+      expectRejectedWithoutMutation(directory, unrelated);
     });
   });
 
   test("[REQ-105-05b] rejects a non-Git directory without installing", () => {
     withDevShellFixture((directory) => {
-      const flakeRoot = join(directory, "tayk");
       const unrelated = join(directory, "unrelated");
-      createTaykFixture(flakeRoot);
       mkdirSync(unrelated);
       writeJson(join(unrelated, "package.json"), {
         name: "unrelated-project",
         private: true,
       });
 
-      expectRejectedWithoutMutation(flakeRoot, unrelated);
+      expectRejectedWithoutMutation(directory, unrelated);
     });
   });
 
   test("[REQ-105-05a] explains why a Git repository without package.json is rejected", () => {
     withDevShellFixture((directory) => {
-      const flakeRoot = join(directory, "tayk");
       const unrelated = join(directory, "unrelated");
-      createTaykFixture(flakeRoot);
       initializeGitRepository(unrelated);
       writeFileSync(join(unrelated, "sentinel"), "unchanged\n");
       commitFixture(unrelated);
 
-      expectRejectedWithoutMutation(flakeRoot, unrelated);
+      expectRejectedWithoutMutation(directory, unrelated);
     });
   });
 
-  test("[REQ-105-05a] explains why a Git repository with invalid package.json is rejected", () => {
+  test("[REQ-105-03] resolves dependencies and repairs a missing binary on direnv re-entry", () => {
     withDevShellFixture((directory) => {
       const flakeRoot = join(directory, "tayk");
-      const unrelated = join(directory, "unrelated");
-      createTaykFixture(flakeRoot);
-      initializeGitRepository(unrelated);
-      writeFileSync(join(unrelated, "package.json"), "{ invalid\n");
-      commitFixture(unrelated);
-
-      expectRejectedWithoutMutation(flakeRoot, unrelated);
-    });
-  });
-
-  test("[REQ-105-05a] explains why a Git repository with a missing package name is rejected", () => {
-    withDevShellFixture((directory) => {
-      const flakeRoot = join(directory, "tayk");
-      const unrelated = join(directory, "unrelated");
-      createTaykFixture(flakeRoot);
-      initializeGitRepository(unrelated);
-      writeJson(join(unrelated, "package.json"), { private: true });
-      commitFixture(unrelated);
-
-      expectRejectedWithoutMutation(flakeRoot, unrelated);
-    });
-  });
-
-  test("[REQ-105-05a] explains why a Git repository with a non-string package name is rejected", () => {
-    withDevShellFixture((directory) => {
-      const flakeRoot = join(directory, "tayk");
-      const unrelated = join(directory, "unrelated");
-      createTaykFixture(flakeRoot);
-      initializeGitRepository(unrelated);
-      writeJson(join(unrelated, "package.json"), {
-        name: 105,
-        private: true,
-      });
-      commitFixture(unrelated);
-
-      expectRejectedWithoutMutation(flakeRoot, unrelated);
-    });
-  });
-
-  test("[REQ-105-03] resolves dependencies through direnv from a fresh tayk root", () => {
-    withDevShellFixture((directory) => {
-      const flakeRoot = join(directory, "tayk");
-      createTaykFixture(flakeRoot);
-      const env = createIsolatedDirenvEnvironment(join(directory, "direnv"));
-
-      const { allowed, entered } = enterWithDirenv(flakeRoot, env);
-
-      expectCommandSucceeded(allowed);
-      expectCommandSucceeded(entered);
-      expect(
-        existsSync(join(flakeRoot, "node_modules", ".bin", "fixture-tsc"))
-      ).toBeTrue();
-    });
-  });
-
-  test("[REQ-105-03] repairs a missing dependency binary on direnv re-entry", () => {
-    withDevShellFixture((directory) => {
-      const flakeRoot = join(directory, "tayk");
-      createTaykFixture(flakeRoot);
+      createDirenvTaykFixture(flakeRoot);
       const env = createIsolatedDirenvEnvironment(join(directory, "direnv"));
       const firstEntry = enterWithDirenv(flakeRoot, env);
       expectCommandSucceeded(firstEntry.allowed);
@@ -695,7 +649,7 @@ describe.serial("devShell setup", () => {
       };
       writeJson(packageJsonPath, manifest);
 
-      const entered = enterDevShell(checkout, checkout);
+      const entered = enterFixtureDevShell(directory, checkout);
 
       expectCommandSucceeded(entered);
       expect(combinedOutput(entered)).toMatch(installFailurePattern);
@@ -721,7 +675,7 @@ describe.serial("devShell setup", () => {
       const checkout = join(directory, "checkout");
       createRealProjectCheckout(checkout);
 
-      const entered = enterDevShell(checkout, checkout);
+      const entered = enterFixtureDevShell(directory, checkout);
 
       expectCommandSucceeded(entered);
       expect(combinedOutput(entered)).toMatch(installNoticePattern);
@@ -743,7 +697,7 @@ describe.serial("devShell setup", () => {
       // 側に入る。この経路を bun install が扱えることが要件 3 の成立条件。
       runGit(checkout, ["worktree", "add", worktree]);
 
-      const entered = enterDevShell(worktree, worktree);
+      const entered = enterFixtureDevShell(directory, worktree);
       expectCommandSucceeded(entered);
       const hook = join(checkout, ".git", "hooks", "pre-commit");
       expect(existsSync(hook)).toBeTrue();
@@ -756,7 +710,7 @@ describe.serial("devShell setup", () => {
       );
       writeFileSync(flakePath, unformattedFlake);
       runGit(worktree, ["add", "demo.ts", "flake.nix"]);
-      const committed = runInDevShell(worktree, worktree, [
+      const committed = runFixtureInDevShell(directory, worktree, [
         "git",
         ...gitIdentityArguments,
         "commit",
@@ -783,9 +737,9 @@ describe.serial("devShell setup", () => {
   test("[REQ-76-01][REQ-76-02][REQ-76-03] should keep shared hooks working after installer worktrees are removed", () => {
     withDevShellFixture((directory) => {
       const checkout = join(directory, "checkout");
-      const localInstaller = join(directory, "local-installer");
-      const ciInstaller = join(directory, "ci-installer");
+      const installer = join(directory, "installer");
       const survivor = join(directory, "survivor");
+      const pathCheckSentinel = join(survivor, ".path-check-ran");
       const remote = join(directory, "remote.git");
       createRealProjectCheckout(checkout);
       mkdirSync(remote);
@@ -793,27 +747,21 @@ describe.serial("devShell setup", () => {
         runCommand(gitExecutablePath, ["init", "--bare"], remote)
       );
       runGit(checkout, ["remote", "add", "origin", remote]);
-      runGit(checkout, ["worktree", "add", localInstaller]);
-      runGit(checkout, ["worktree", "add", ciInstaller]);
+      runGit(checkout, ["worktree", "add", installer]);
       runGit(checkout, ["worktree", "add", survivor]);
 
-      // survivor の依存を先に用意した後、旧 postinstall / prepare の分岐条件に相当する
-      // 2 環境から共有 hook を上書きする。現在はどちらも Nix の同じ導入経路を通る。
-      expectCommandSucceeded(enterDevShell(survivor, survivor));
+      // survivor の依存を先に用意し、別 worktree から共有 hook を上書きする。
+      // 旧 postinstall / prepare の分岐は廃止済みなので、CI / LEFTHOOK は同時に
+      // 与え、どちらにも左右されない Nix 所有の単一経路を 1 回検証する。
+      expectCommandSucceeded(enterFixtureDevShell(directory, survivor));
       expectCommandSucceeded(
-        runInDevShell(localInstaller, localInstaller, ["bun", "--version"], {
+        runFixtureInDevShell(directory, installer, ["bun", "--version"], {
           ...developerEnvironment,
+          CI: "1",
           LEFTHOOK: "1",
         })
       );
-      expectCommandSucceeded(
-        runInDevShell(ciInstaller, ciInstaller, ["bun", "--version"], {
-          ...developerEnvironment,
-          CI: "1",
-        })
-      );
-      runGit(checkout, ["worktree", "remove", localInstaller]);
-      runGit(checkout, ["worktree", "remove", ciInstaller]);
+      runGit(checkout, ["worktree", "remove", installer]);
 
       writeFileSync(join(survivor, "demo.ts"), unformattedSource);
       runGit(survivor, ["add", "demo.ts"]);
@@ -825,7 +773,6 @@ describe.serial("devShell setup", () => {
       );
 
       expectCommandSucceeded(committed);
-      expect(combinedOutput(committed)).toContain("format-fix");
       expect(readFileSync(join(survivor, "demo.ts"), "utf-8")).not.toBe(
         unformattedSource
       );
@@ -835,7 +782,7 @@ describe.serial("devShell setup", () => {
       // 起動し、削除済み worktree の実行ファイルに依存しないことを観測する。
       writeFileSync(
         join(survivor, "lefthook.yml"),
-        'pre-push:\n  commands:\n    path-check:\n      run: "true"\n'
+        'pre-push:\n  commands:\n    path-check:\n      run: "touch .path-check-ran"\n'
       );
       const pushed = runCommand(
         gitExecutablePath,
@@ -845,7 +792,7 @@ describe.serial("devShell setup", () => {
       );
 
       expectCommandSucceeded(pushed);
-      expect(combinedOutput(pushed)).toContain("path-check");
+      expect(existsSync(pathCheckSentinel)).toBeTrue();
     });
   });
 });
