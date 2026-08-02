@@ -249,7 +249,8 @@ function createRealProjectCheckout(root: string): void {
 function runInDevShell(
   flakeRoot: string,
   cwd: string,
-  command: string[]
+  command: string[],
+  env = developerEnvironment
 ): CommandResult {
   const temporaryDirectory = join(dirname(flakeRoot), ".bun-tmp");
   const cacheDirectory = join(dirname(flakeRoot), ".bun-cache");
@@ -260,7 +261,7 @@ function runInDevShell(
     ["develop", flakeRoot, "--command", ...command],
     cwd,
     {
-      ...developerEnvironment,
+      ...env,
       BUN_INSTALL_CACHE_DIR: cacheDirectory,
       TMPDIR: temporaryDirectory,
     }
@@ -776,6 +777,75 @@ describe.serial("devShell setup", () => {
         "demo.ts",
         "flake.nix",
       ]);
+    });
+  });
+
+  test("[REQ-76-01][REQ-76-02][REQ-76-03] should keep shared hooks working after installer worktrees are removed", () => {
+    withDevShellFixture((directory) => {
+      const checkout = join(directory, "checkout");
+      const localInstaller = join(directory, "local-installer");
+      const ciInstaller = join(directory, "ci-installer");
+      const survivor = join(directory, "survivor");
+      const remote = join(directory, "remote.git");
+      createRealProjectCheckout(checkout);
+      mkdirSync(remote);
+      expectCommandSucceeded(
+        runCommand(gitExecutablePath, ["init", "--bare"], remote)
+      );
+      runGit(checkout, ["remote", "add", "origin", remote]);
+      runGit(checkout, ["worktree", "add", localInstaller]);
+      runGit(checkout, ["worktree", "add", ciInstaller]);
+      runGit(checkout, ["worktree", "add", survivor]);
+
+      // survivor の依存を先に用意した後、旧 postinstall / prepare の分岐条件に相当する
+      // 2 環境から共有 hook を上書きする。現在はどちらも Nix の同じ導入経路を通る。
+      expectCommandSucceeded(enterDevShell(survivor, survivor));
+      expectCommandSucceeded(
+        runInDevShell(localInstaller, localInstaller, ["bun", "--version"], {
+          ...developerEnvironment,
+          LEFTHOOK: "1",
+        })
+      );
+      expectCommandSucceeded(
+        runInDevShell(ciInstaller, ciInstaller, ["bun", "--version"], {
+          ...developerEnvironment,
+          CI: "1",
+        })
+      );
+      runGit(checkout, ["worktree", "remove", localInstaller]);
+      runGit(checkout, ["worktree", "remove", ciInstaller]);
+
+      writeFileSync(join(survivor, "demo.ts"), unformattedSource);
+      runGit(survivor, ["add", "demo.ts"]);
+      const committed = runCommand(
+        gitExecutablePath,
+        [...gitIdentityArguments, "commit", "-m", "demo"],
+        survivor,
+        developerEnvironment
+      );
+
+      expectCommandSucceeded(committed);
+      expect(combinedOutput(committed)).toContain("format-fix");
+      expect(readFileSync(join(survivor, "demo.ts"), "utf-8")).not.toBe(
+        unformattedSource
+      );
+      runGit(survivor, ["diff", "--exit-code", "HEAD", "--", "demo.ts"]);
+
+      // pre-push の業務コマンド自体は別テスト群の責務。ここでは Git から共有 hook を
+      // 起動し、削除済み worktree の実行ファイルに依存しないことを観測する。
+      writeFileSync(
+        join(survivor, "lefthook.yml"),
+        'pre-push:\n  commands:\n    path-check:\n      run: "true"\n'
+      );
+      const pushed = runCommand(
+        gitExecutablePath,
+        ["push", "--set-upstream", "origin", "HEAD"],
+        survivor,
+        developerEnvironment
+      );
+
+      expectCommandSucceeded(pushed);
+      expect(combinedOutput(pushed)).toContain("path-check");
     });
   });
 });
