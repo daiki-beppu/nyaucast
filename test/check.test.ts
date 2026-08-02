@@ -172,6 +172,31 @@ function extractJobs(
   );
 }
 
+function readWorkflowJob(
+  workflow: Record<string, unknown>,
+  jobName: string
+): { record: Record<string, unknown>; steps: Record<string, unknown>[] } {
+  const jobs = extractJobs(requireRecordProperty(workflow, "jobs", "jobs"));
+  const job = jobs.get(jobName);
+  if (job === undefined) {
+    throw new Error(`jobs.${jobName} must exist`);
+  }
+  return job;
+}
+
+function readCheckoutSteps(
+  workflow: Record<string, unknown>
+): Record<string, unknown>[] {
+  const jobs = extractJobs(requireRecordProperty(workflow, "jobs", "jobs"));
+  return [...jobs.values()].flatMap(({ steps }) =>
+    steps.filter(
+      (step) =>
+        typeof step["uses"] === "string" &&
+        step["uses"].startsWith("actions/checkout@")
+    )
+  );
+}
+
 function validateCiWorkflow(source: string): void {
   const workflow = parseYamlRecord(source, "workflow");
   const jobs = requireRecordProperty(workflow, "jobs", "jobs");
@@ -2652,4 +2677,105 @@ describe("check entry structure", () => {
       }).toThrow();
     }
   );
+});
+
+describe("GitHub Actions execution constraints", () => {
+  // REQ-187-01 / TC-187-01A
+  test("should cancel superseded pull request CI runs within the same workflow target", () => {
+    const workflow = parseYamlRecord(
+      readRepositoryFile(".github/workflows/ci.yml"),
+      "CI workflow"
+    );
+    const concurrency = requireRecordProperty(
+      workflow,
+      "concurrency",
+      "concurrency"
+    );
+
+    expect(concurrency).toEqual({
+      "cancel-in-progress": "${{ github.event_name == 'pull_request' }}",
+      group:
+        "${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}",
+    });
+  });
+
+  // REQ-187-01 / TC-187-01B
+  test("should limit CI quality execution to fifteen minutes", () => {
+    const workflow = parseYamlRecord(
+      readRepositoryFile(".github/workflows/ci.yml"),
+      "CI workflow"
+    );
+
+    expect(readWorkflowJob(workflow, "quality").record["timeout-minutes"]).toBe(
+      15
+    );
+  });
+
+  // REQ-187-01 / TC-187-01C
+  test("should prevent every CI checkout from persisting credentials", () => {
+    const workflow = parseYamlRecord(
+      readRepositoryFile(".github/workflows/ci.yml"),
+      "CI workflow"
+    );
+    const checkoutSteps = readCheckoutSteps(workflow);
+
+    expect(checkoutSteps).not.toHaveLength(0);
+    for (const checkout of checkoutSteps) {
+      const checkoutOptions = requireRecordProperty(
+        checkout,
+        "with",
+        "checkout.with"
+      );
+      expect(checkoutOptions["persist-credentials"]).toBe(false);
+    }
+  });
+
+  // REQ-187-02 / TC-187-02A
+  test("should serialize release runs for the same ref without cancellation", () => {
+    const workflow = parseYamlRecord(
+      readRepositoryFile(".github/workflows/release.yml"),
+      "release workflow"
+    );
+    const concurrency = requireRecordProperty(
+      workflow,
+      "concurrency",
+      "concurrency"
+    );
+
+    expect(concurrency).toEqual({
+      "cancel-in-progress": false,
+      group: "release-${{ github.ref }}",
+    });
+  });
+
+  // REQ-187-02 / TC-187-02B
+  test("should limit release publishing to fifteen minutes", () => {
+    const workflow = parseYamlRecord(
+      readRepositoryFile(".github/workflows/release.yml"),
+      "release workflow"
+    );
+
+    expect(readWorkflowJob(workflow, "publish").record["timeout-minutes"]).toBe(
+      15
+    );
+  });
+
+  // REQ-187-02 / TC-187-02C
+  test("should prevent every release checkout from persisting credentials", () => {
+    const workflow = parseYamlRecord(
+      readRepositoryFile(".github/workflows/release.yml"),
+      "release workflow"
+    );
+    const checkoutSteps = readCheckoutSteps(workflow);
+
+    expect(checkoutSteps).not.toHaveLength(0);
+    for (const checkout of checkoutSteps) {
+      const checkoutOptions = requireRecordProperty(
+        checkout,
+        "with",
+        "checkout.with"
+      );
+      expect(checkoutOptions["persist-credentials"]).toBe(false);
+    }
+  });
 });
