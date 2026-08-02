@@ -668,34 +668,10 @@ describe.serial("devShell setup", () => {
     });
   });
 
-  test("[REQ-105-03] keeps a frozen-lockfile failure non-fatal", () => {
-    withDevShellFixture((directory) => {
-      const flakeRoot = join(directory, "tayk");
-      createTaykFixture(flakeRoot);
-      const packageJsonPath = join(flakeRoot, "package.json");
-      const manifest = JSON.parse(
-        readFileSync(packageJsonPath, "utf-8")
-      ) as Record<string, unknown>;
-      manifest["dependencies"] = {
-        ...(manifest["dependencies"] as Record<string, string>),
-        missing: "file:./fixtures/missing",
-      };
-      writeJson(packageJsonPath, manifest);
-
-      const entered = enterDevShell(flakeRoot, flakeRoot);
-
-      // install 失敗は非致命なので devShell への入場自体は成功する。
-      expectCommandSucceeded(entered);
-      expect(combinedOutput(entered)).toMatch(installFailurePattern);
-      expect(
-        existsSync(join(flakeRoot, "node_modules", ".bin", "fixture-tsc"))
-      ).toBeFalse();
-    });
-  });
-
-  test("[REQ-111-01] should keep pre-push blocking when frozen install fails", () => {
+  test("[REQ-105-03][REQ-111-01] should keep pre-push blocking when frozen install fails", () => {
     withDevShellFixture((directory) => {
       const checkout = join(directory, "checkout");
+      const checkSentinel = join(checkout, ".check-ran");
       const remote = join(directory, "remote.git");
       createRealProjectCheckout(checkout);
       mkdirSync(remote);
@@ -711,6 +687,11 @@ describe.serial("devShell setup", () => {
       manifest["dependencies"] = {
         missing: "file:./fixtures/missing",
       };
+      manifest["scripts"] = {
+        ...(manifest["scripts"] as Record<string, string>),
+        check:
+          'bun --eval \'await Bun.write(".check-ran", "")\' && bun run lockfile:check',
+      };
       writeJson(packageJsonPath, manifest);
 
       const entered = enterDevShell(checkout, checkout);
@@ -720,17 +701,17 @@ describe.serial("devShell setup", () => {
       expect(
         existsSync(join(checkout, ".git", "hooks", "pre-push"))
       ).toBeTrue();
+      expect(existsSync(join(checkout, "node_modules"))).toBeFalse();
 
-      const pushed = runInDevShell(checkout, checkout, [
-        "git",
-        "push",
-        "--set-upstream",
-        "origin",
-        "main",
-      ]);
+      const pushed = runCommand(
+        gitExecutablePath,
+        ["push", "--set-upstream", "origin", "main"],
+        checkout,
+        developerEnvironment
+      );
 
       expect(pushed.exitCode).not.toBe(0);
-      expect(combinedOutput(pushed)).toContain("check");
+      expect(existsSync(checkSentinel)).toBeTrue();
     });
   });
 
