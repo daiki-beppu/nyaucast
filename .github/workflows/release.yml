@@ -33,6 +33,7 @@ jobs:
         env:
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
+          # shellcheck disable=SC2016
           nix develop --command bash -euc '
             if [ "$DRY_RUN" = "true" ]; then
               npm publish --dry-run

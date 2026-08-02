@@ -13,6 +13,10 @@ pre-commit:
       glob: "*.{js,jsx,ts,tsx,json,jsonc,md,yml,yaml}"
       run: bun run format:fix
       stage_fixed: true
+    format-nix-fix:
+      glob: "*.nix"
+      run: bun run format:nix:fix
+      stage_fixed: true
 
 # push 前に CI のゲート（check）とローカル専用の workflow-doctor を通す。
 # ゲート集合は package.json の check script が持つ。

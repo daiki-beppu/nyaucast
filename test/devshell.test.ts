@@ -470,6 +470,31 @@ describe.serial("devShell setup", () => {
     });
   });
 
+  test("[REQ-186-06] should supply actionlint and nixfmt without the host PATH", () => {
+    withDevShellFixture((directory) => {
+      const flakeRoot = join(directory, "tayk");
+      createTaykFixture(flakeRoot);
+
+      for (const executable of ["actionlint", "nixfmt"]) {
+        const entered = runCommand(
+          nixExecutablePath,
+          [
+            "develop",
+            flakeRoot,
+            "--ignore-environment",
+            "--command",
+            executable,
+            "--version",
+          ],
+          flakeRoot,
+          developerEnvironment
+        );
+
+        expectCommandSucceeded(entered);
+      }
+    });
+  });
+
   test("[REQ-105-04] puts the resolved tayk root's binaries first on PATH", () => {
     withDevShellFixture((directory) => {
       const flakeRoot = join(directory, "tayk");
@@ -720,6 +745,36 @@ describe.serial("devShell setup", () => {
         unformattedSource
       );
       runGit(worktree, ["diff", "--exit-code", "HEAD", "--", "demo.ts"]);
+    });
+  });
+
+  test("[REQ-186-02] should format a staged Nix file in the actual pre-commit hook", () => {
+    withDevShellFixture((directory) => {
+      const checkout = join(directory, "checkout");
+      createRealProjectCheckout(checkout);
+      const entered = enterDevShell(checkout, checkout);
+      expectCommandSucceeded(entered);
+
+      const flakePath = join(checkout, "flake.nix");
+      const unformattedFlake = readFileSync(flakePath, "utf-8").replace(
+        'description = "tayk development environment";',
+        'description    =    "tayk development environment";'
+      );
+      writeFileSync(flakePath, unformattedFlake);
+      runGit(checkout, ["add", "flake.nix"]);
+
+      const committed = runInDevShell(checkout, checkout, [
+        "git",
+        ...gitIdentityArguments,
+        "commit",
+        "-m",
+        "format nix",
+      ]);
+
+      expectCommandSucceeded(committed);
+      expect(combinedOutput(committed)).toContain("format-nix-fix");
+      expect(readFileSync(flakePath, "utf-8")).not.toBe(unformattedFlake);
+      runGit(checkout, ["diff", "--exit-code", "HEAD", "--", "flake.nix"]);
     });
   });
 });
