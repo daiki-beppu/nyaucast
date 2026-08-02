@@ -61,12 +61,9 @@ describe("repository configuration", () => {
     );
 
     // Then: Bun, GitHub Actions, and Nix each use the shared update policy
-    expect([...updatesByEcosystem.keys()]).toEqual([
-      "bun",
-      "github-actions",
-      "nix",
-    ]);
-    for (const ecosystem of ["bun", "github-actions", "nix"]) {
+    const supportedEcosystems = ["bun", "github-actions", "nix"] as const;
+    expect(updatesByEcosystem.size).toBe(supportedEcosystems.length);
+    for (const ecosystem of supportedEcosystems) {
       const ecosystemUpdates = updatesByEcosystem.get(ecosystem);
       expect(ecosystemUpdates).toHaveLength(1);
       expect(ecosystemUpdates?.[0]).toMatchObject({
