@@ -18,7 +18,6 @@
     "access": "public"
   },
   "scripts": {
-    "prepare": "if [ -e .git ]; then lefthook install; fi",
     "check": "bun run lockfile:check && bun run typecheck && bun run lint && bun run actions:check && bun run format:check && bun run format:nix:check && bun run test && bun run fallow",
     "lockfile:check": "bun install --frozen-lockfile --dry-run --ignore-scripts",
     "typecheck": "tsc --noEmit",
@@ -35,7 +34,6 @@
   "devDependencies": {
     "@types/bun": "1.3.14",
     "fallow": "3.9.1",
-    "lefthook": "2.1.10",
     "oxfmt": "0.60.0",
     "oxlint": "1.75.0",
     "oxlint-tsgolint": "7.0.2001",
