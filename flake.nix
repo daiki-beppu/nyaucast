@@ -11,12 +11,15 @@
         "x86_64-linux"
       ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
+      # devShell と formatter が同じ nixpkgs 実体を共有する。分けて import すると
+      # `nix fmt` と `bun run format:nix:*` が別の nixfmt を掴み得る。
+      pkgsFor = system: import nixpkgs { inherit system; };
     in
     {
       devShells = forAllSystems (
         system:
         let
-          pkgs = import nixpkgs { inherit system; };
+          pkgs = pkgsFor system;
         in
         {
           default = pkgs.mkShell {
@@ -65,12 +68,6 @@
           };
         }
       );
-      formatter = forAllSystems (
-        system:
-        let
-          pkgs = import nixpkgs { inherit system; };
-        in
-        pkgs.nixfmt
-      );
+      formatter = forAllSystems (system: (pkgsFor system).nixfmt);
     };
 }

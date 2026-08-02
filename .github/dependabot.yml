@@ -18,8 +18,13 @@ updates:
         patterns: ["*"]
         update-types: [minor, patch]
 
+  # `directory: /` は .github/workflows とリポジトリ直下の action.yml しか見ない。
+  # composite action (.github/actions/*/action.yml) の pin を拾うには、その
+  # ディレクトリを明示する必要がある（dependabot-core#6704）。
   - package-ecosystem: github-actions
-    directory: /
+    directories:
+      - /
+      - /.github/actions/*
     schedule:
       interval: weekly
       day: monday

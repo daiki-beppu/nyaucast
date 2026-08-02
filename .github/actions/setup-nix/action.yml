@@ -12,3 +12,8 @@ runs:
         determinate: false
     - name: Enable Nix cache
       uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+      with:
+        # 既定の null は「OIDC token を取れたら FlakeHub を使う」。id-token: write を
+        # 持つ release の publish job ではこれが成功してしまい、未契約の FlakeHub へ
+        # 問い合わせて毎 run エラー注釈が出る。GitHub Actions cache だけを使う。
+        use-flakehub: disabled

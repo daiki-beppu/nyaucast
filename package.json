@@ -27,8 +27,8 @@
     "actions:check": "actionlint",
     "format:check": "oxfmt --check .",
     "format:fix": "oxfmt --write .",
-    "format:nix:check": "nixfmt --check flake.nix",
-    "format:nix:fix": "nixfmt flake.nix",
+    "format:nix:check": "nixfmt --check $(git ls-files '*.nix')",
+    "format:nix:fix": "nixfmt $(git ls-files '*.nix')",
     "test": "bun test",
     "fallow": "fallow --no-cache --fail-on-issues"
   },

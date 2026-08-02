@@ -96,5 +96,27 @@ describe("Nix workflow setup", () => {
       requireRecord(installer?.["with"], "installer.with")["determinate"]
     ).toBeFalse();
     expect(caches).toHaveLength(1);
+    // installer 側の determinate: false は installer のログインしか止めない。cache
+    // action は既定で OIDC token が取れれば FlakeHub を使うため、id-token: write を
+    // 持つ release の publish job では別途これが要る。
+    expect(
+      requireRecord(caches[0]?.["with"], "cache.with")["use-flakehub"]
+    ).toBe("disabled");
+  });
+
+  test("should pin every third-party action in the shared setup to a commit SHA", () => {
+    // Given: the shared Nix setup action, which actionlint does not lint
+    const action = readYaml(".github/actions/setup-nix/action.yml");
+
+    // When: its third-party step references are resolved
+    const references = readSteps(action, ["runs", "steps"])
+      .map((step) => step["uses"])
+      .filter((reference) => typeof reference === "string");
+
+    // Then: each is pinned to a full SHA rather than a floating tag
+    expect(references).not.toHaveLength(0);
+    for (const reference of references) {
+      expect(reference).toMatch(/^[\w.-]+\/[\w.-]+@[0-9a-f]{40}$/);
+    }
   });
 });

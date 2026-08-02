@@ -67,12 +67,38 @@ describe("repository configuration", () => {
       const ecosystemUpdates = updatesByEcosystem.get(ecosystem);
       expect(ecosystemUpdates).toHaveLength(1);
       expect(ecosystemUpdates?.[0]).toMatchObject({
+        "commit-message": { prefix: "chore(deps)" },
         cooldown: { "default-days": 3 },
-        directory: "/",
+        labels: ["dependencies"],
         "open-pull-requests-limit": 5,
-        schedule: { interval: "weekly" },
+        schedule: {
+          day: "monday",
+          interval: "weekly",
+          timezone: "Asia/Tokyo",
+        },
       });
+      expect(ecosystemUpdates?.[0]?.["schedule"]).toHaveProperty("time");
     }
+  });
+
+  test("should let Dependabot reach the pins inside composite actions", () => {
+    // Given: the GitHub Actions updater
+    const actionsUpdate = readDependabotUpdates().find(
+      (update) => update["package-ecosystem"] === "github-actions"
+    );
+
+    // When: the paths it scans are resolved
+    const directories = actionsUpdate?.["directories"];
+
+    // Then: .github/actions/*/action.yml is covered, which `directory: /` is not
+    expect(actionsUpdate?.["directory"]).toBeUndefined();
+    expect(directories).toEqual(["/", "/.github/actions/*"]);
+  });
+
+  test("should declare exactly one dependency update bot", () => {
+    // Renovate と Dependabot が同じ ecosystem を二重に見ると、同じ更新で PR が
+    // 2 本立ち、片方（Renovate）は automerge で無レビューのまま入る。
+    expect(readdirSync(packageRoot)).not.toContain("renovate.json");
   });
 
   test("should declare the repository used by npm trusted publishing", () => {

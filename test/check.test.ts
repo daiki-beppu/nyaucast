@@ -83,7 +83,9 @@ const planContractPath = ".takt/facets/output-contracts/tayk-plan.md";
 const enumeratedGateCommands = [
   /bun run typecheck/,
   /bun run lint(?![\w:-])/,
+  /bun run actions:check/,
   /bun run format:check/,
+  /bun run format:nix:check/,
   /bun run fallow/,
 ] as const;
 
@@ -184,17 +186,34 @@ function readWorkflowJob(
   return job;
 }
 
+function readRepositoryFile(relativePath: string): string {
+  return readFileSync(join(packageRoot, relativePath), "utf-8");
+}
+
 function readCheckoutSteps(
   workflow: Record<string, unknown>
 ): Record<string, unknown>[] {
   const jobs = extractJobs(requireRecordProperty(workflow, "jobs", "jobs"));
-  return [...jobs.values()].flatMap(({ steps }) =>
-    steps.filter(
+  return [...jobs.values()].flatMap(({ record, steps }) => {
+    // reusable workflow を呼ぶ job は steps を持たない。ここで呼び出し先へ降りないと
+    // 「すべての checkout」を名乗る検査が委譲先の checkout を素通りする。
+    const delegated = record["uses"];
+    if (typeof delegated === "string") {
+      if (!delegated.startsWith("./")) {
+        throw new Error(
+          `jobs.*.uses must reference a workflow inside this repository: ${delegated}`
+        );
+      }
+      return readCheckoutSteps(
+        parseYamlRecord(readRepositoryFile(delegated.slice(2)), delegated)
+      );
+    }
+    return steps.filter(
       (step) =>
         typeof step["uses"] === "string" &&
         step["uses"].startsWith("actions/checkout@")
-    )
-  );
+    );
+  });
 }
 
 function validateCiWorkflow(source: string): void {
@@ -645,10 +664,6 @@ function validateFacetGate(
 
 function withCheckFixture(run: (directory: string) => void): void {
   withTemporaryDirectory("tayk-check-", run);
-}
-
-function readRepositoryFile(relativePath: string): string {
-  return readFileSync(join(packageRoot, relativePath), "utf-8");
 }
 
 function readSection(markdown: string, heading: string): string {
@@ -1544,10 +1559,18 @@ describe("check command", () => {
       validateCiWorkflow(workflow);
     }).not.toThrow();
     expect(workflow).toContain(ciCheckCommand);
-    expect(workflow).not.toMatch(/\bbun\s+install\b/);
-    expect(workflow).not.toContain("--frozen-lockfile");
-    for (const command of enumeratedGateCommands) {
-      expect(workflow).not.toMatch(command);
+
+    // ci.yml が呼ぶ composite action も同じ job の中で走る。ここを見ないと、
+    // step を action へ移すだけでゲート列挙と bun install が復活できてしまう。
+    for (const source of [
+      workflow,
+      readRepositoryFile(".github/actions/setup-nix/action.yml"),
+    ]) {
+      expect(source).not.toMatch(/\bbun\s+install\b/);
+      expect(source).not.toContain("--frozen-lockfile");
+      for (const command of enumeratedGateCommands) {
+        expect(source).not.toMatch(command);
+      }
     }
   });
 
@@ -2681,22 +2704,49 @@ describe("check entry structure", () => {
 
 describe("GitHub Actions execution constraints", () => {
   // REQ-187-01 / TC-187-01A
-  test("should cancel superseded pull request CI runs within the same workflow target", () => {
+  test("should cancel superseded pull request CI runs without colliding with the release group", () => {
     const workflow = parseYamlRecord(
       readRepositoryFile(".github/workflows/ci.yml"),
       "CI workflow"
     );
-    const concurrency = requireRecordProperty(
-      workflow,
+
+    // workflow レベルに置くと workflow_call 経由でも評価され、release の group と
+    // 衝突して deadlock する。job レベルであることが要件そのもの。
+    expect(workflow["concurrency"]).toBeUndefined();
+    expect(readWorkflowJob(workflow, "quality").record["concurrency"]).toEqual({
+      "cancel-in-progress": "${{ github.event_name == 'pull_request' }}",
+      group: "ci-quality-${{ github.event.pull_request.number || github.ref }}",
+    });
+  });
+
+  // REQ-187-01 / TC-187-01D
+  test("should keep the CI concurrency group distinct from the release group", () => {
+    const ciGroup = requireRecordProperty(
+      readWorkflowJob(
+        parseYamlRecord(
+          readRepositoryFile(".github/workflows/ci.yml"),
+          "CI workflow"
+        ),
+        "quality"
+      ).record,
+      "concurrency",
+      "jobs.quality.concurrency"
+    )["group"];
+    const releaseGroup = requireRecordProperty(
+      parseYamlRecord(
+        readRepositoryFile(".github/workflows/release.yml"),
+        "release workflow"
+      ),
       "concurrency",
       "concurrency"
-    );
+    )["group"];
 
-    expect(concurrency).toEqual({
-      "cancel-in-progress": "${{ github.event_name == 'pull_request' }}",
-      group:
-        "${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}",
-    });
+    // called workflow では ${{ github.workflow }} が呼び出し元名へ解決され、group 名は
+    // 大文字小文字を区別しない。どちらの経路でも release の group と一致しないこと。
+    expect(ciGroup).not.toContain("github.workflow");
+    expect(String(ciGroup).toLowerCase()).not.toStartWith(
+      String(releaseGroup).toLowerCase().split("${{")[0] ?? ""
+    );
   });
 
   // REQ-187-01 / TC-187-01B
