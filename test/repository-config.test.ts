@@ -2,9 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
+import { parse } from "yaml";
+
 const packageRoot = resolve(import.meta.dirname, "..");
 const gitignorePath = join(packageRoot, ".gitignore");
 const packageJsonPath = join(packageRoot, "package.json");
+const dependabotPath = join(packageRoot, ".github", "dependabot.yml");
 const expectedRepositoryUrl = "https://github.com/daiki-beppu/tayk.git";
 const expectedGitignoreLines = [
   "node_modules/",
@@ -23,7 +26,58 @@ function readGitignoreLines(): string[] {
   return contents.slice(0, -1).split("\n");
 }
 
+function requireRecord(
+  value: unknown,
+  description: string
+): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new TypeError(`${description} must be an object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function readDependabotUpdates(): Record<string, unknown>[] {
+  const config = requireRecord(
+    parse(readFileSync(dependabotPath, "utf-8")),
+    "Dependabot config"
+  );
+  if (!Array.isArray(config["updates"])) {
+    throw new TypeError("Dependabot updates must be an array");
+  }
+  return config["updates"].map((update, index) =>
+    requireRecord(update, `Dependabot updates[${index}]`)
+  );
+}
+
 describe("repository configuration", () => {
+  test("should schedule each supported dependency ecosystem weekly", () => {
+    // Given: the repository Dependabot configuration
+    const updates = readDependabotUpdates();
+
+    // When: updates are grouped by package ecosystem
+    const updatesByEcosystem = Map.groupBy(
+      updates,
+      (update) => update["package-ecosystem"]
+    );
+
+    // Then: Bun, GitHub Actions, and Nix each use the shared update policy
+    expect([...updatesByEcosystem.keys()]).toEqual([
+      "bun",
+      "github-actions",
+      "nix",
+    ]);
+    for (const ecosystem of ["bun", "github-actions", "nix"]) {
+      const ecosystemUpdates = updatesByEcosystem.get(ecosystem);
+      expect(ecosystemUpdates).toHaveLength(1);
+      expect(ecosystemUpdates?.[0]).toMatchObject({
+        cooldown: { "default-days": 3 },
+        directory: "/",
+        "open-pull-requests-limit": 5,
+        schedule: { interval: "weekly" },
+      });
+    }
+  });
+
   test("should declare the repository used by npm trusted publishing", () => {
     const packageJson: unknown = JSON.parse(
       readFileSync(packageJsonPath, "utf-8")
