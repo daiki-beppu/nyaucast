@@ -19,13 +19,16 @@
   },
   "scripts": {
     "prepare": "if [ -e .git ]; then lefthook install; fi",
-    "check": "bun run lockfile:check && bun run typecheck && bun run lint && bun run format:check && bun run test && bun run fallow",
+    "check": "bun run lockfile:check && bun run typecheck && bun run lint && bun run actions:check && bun run format:check && bun run format:nix:check && bun run test && bun run fallow",
     "lockfile:check": "bun install --frozen-lockfile --dry-run --ignore-scripts",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint --config oxlint.config.ts --type-aware --no-error-on-unmatched-pattern .",
     "lint:fix": "oxlint --config oxlint.config.ts --type-aware --no-error-on-unmatched-pattern --fix .",
+    "actions:check": "actionlint",
     "format:check": "oxfmt --check .",
     "format:fix": "oxfmt --write .",
+    "format:nix:check": "nixfmt --check flake.nix",
+    "format:nix:fix": "nixfmt flake.nix",
     "test": "bun test",
     "fallow": "fallow --no-cache --fail-on-issues"
   },
