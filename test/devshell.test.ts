@@ -47,8 +47,8 @@ const gitIdentityArguments = [
 // 素の開発者シェルを再現した環境。継承したままだと検証内容が実行文脈で変わる:
 // - GIT_DIR / GIT_INDEX_FILE 等は pre-push フック経由で bun test が走ったときに
 //   紛れ込み、fixture の git 操作が呼び出し元のリポジトリを向いてしまう
-// - lefthook の postinstall は CI が立っていると hook 導入を自分でスキップし、
-//   代わりに package.json の prepare が入れるため、経路が CI とローカルで割れる
+// - LEFTHOOK は hook 導入・実行を無効化できるため、Nix が所有する導入経路だけを
+//   検証できるよう継承しない
 // - DIRENV_* は隔離した direnv の許可・状態ディレクトリを上書きし得る
 const developerEnvironment: Record<string, string> = Object.fromEntries(
   Object.entries(process.env).filter(
@@ -227,6 +227,7 @@ function createRepository(
   if (options.flake === true) {
     cpSync(join(packageRoot, "flake.nix"), join(root, "flake.nix"));
     cpSync(join(packageRoot, "flake.lock"), join(root, "flake.lock"));
+    cpSync(join(packageRoot, "lefthook.yml"), join(root, "lefthook.yml"));
     writeFileSync(join(root, ".envrc"), "use flake\n");
   }
 
@@ -470,7 +471,7 @@ describe.serial("devShell setup", () => {
     });
   });
 
-  test("[REQ-186-06] should supply actionlint and nixfmt without the host PATH", () => {
+  test("[REQ-111-01][REQ-186-06] should supply Nix-owned tools without the host PATH", () => {
     withDevShellFixture((directory) => {
       const flakeRoot = join(directory, "tayk");
       createTaykFixture(flakeRoot);
@@ -484,7 +485,7 @@ describe.serial("devShell setup", () => {
           "--command",
           "sh",
           "-c",
-          "actionlint --version && nixfmt --version",
+          "actionlint --version && lefthook --version && nixfmt --version",
         ],
         flakeRoot,
         developerEnvironment
@@ -667,28 +668,50 @@ describe.serial("devShell setup", () => {
     });
   });
 
-  test("[REQ-105-03] keeps a frozen-lockfile failure non-fatal", () => {
+  test("[REQ-105-03][REQ-111-01] should keep pre-push blocking when frozen install fails", () => {
     withDevShellFixture((directory) => {
-      const flakeRoot = join(directory, "tayk");
-      createTaykFixture(flakeRoot);
-      const packageJsonPath = join(flakeRoot, "package.json");
+      const checkout = join(directory, "checkout");
+      const checkSentinel = join(checkout, ".check-ran");
+      const remote = join(directory, "remote.git");
+      createRealProjectCheckout(checkout);
+      mkdirSync(remote);
+      expectCommandSucceeded(
+        runCommand(gitExecutablePath, ["init", "--bare"], remote)
+      );
+      runGit(checkout, ["remote", "add", "origin", remote]);
+
+      const packageJsonPath = join(checkout, "package.json");
       const manifest = JSON.parse(
         readFileSync(packageJsonPath, "utf-8")
       ) as Record<string, unknown>;
       manifest["dependencies"] = {
-        ...(manifest["dependencies"] as Record<string, string>),
         missing: "file:./fixtures/missing",
+      };
+      manifest["scripts"] = {
+        ...(manifest["scripts"] as Record<string, string>),
+        check:
+          'bun --eval \'await Bun.write(".check-ran", "")\' && bun run lockfile:check',
       };
       writeJson(packageJsonPath, manifest);
 
-      const entered = enterDevShell(flakeRoot, flakeRoot);
+      const entered = enterDevShell(checkout, checkout);
 
-      // install 失敗は非致命なので devShell への入場自体は成功する。
       expectCommandSucceeded(entered);
       expect(combinedOutput(entered)).toMatch(installFailurePattern);
       expect(
-        existsSync(join(flakeRoot, "node_modules", ".bin", "fixture-tsc"))
-      ).toBeFalse();
+        existsSync(join(checkout, ".git", "hooks", "pre-push"))
+      ).toBeTrue();
+      expect(existsSync(join(checkout, "node_modules"))).toBeFalse();
+
+      const pushed = runCommand(
+        gitExecutablePath,
+        ["push", "--set-upstream", "origin", "main"],
+        checkout,
+        developerEnvironment
+      );
+
+      expect(pushed.exitCode).not.toBe(0);
+      expect(existsSync(checkSentinel)).toBeTrue();
     });
   });
 
@@ -706,9 +729,6 @@ describe.serial("devShell setup", () => {
       ).toBeTrue();
       expect(
         existsSync(join(checkout, "node_modules", ".bin", "oxfmt"))
-      ).toBeTrue();
-      expect(
-        existsSync(join(checkout, "node_modules", ".bin", "lefthook"))
       ).toBeTrue();
     });
   });

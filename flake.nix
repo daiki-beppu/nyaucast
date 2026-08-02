@@ -30,6 +30,7 @@
               bun
               direnv
               git
+              lefthook
               nixfmt
               nodejs_24
             ];
@@ -52,6 +53,10 @@
                 )"
                 if [ "$?" -eq 0 ] && [ "$package_name" = "@daiki-beppu/tayk" ]; then
                   export PATH="$tayk_root/node_modules/.bin:$PATH"
+                  if ! (cd "$tayk_root" && ${pkgs.lefthook}/bin/lefthook install >/dev/null); then
+                    echo "tayk: Lefthook の Git hook 導入に失敗しました。無検査の push を防ぐため devShell へ入場できません。" >&2
+                    exit 1
+                  fi
                   if [ ! -d "$tayk_root/node_modules" ]; then
                     echo "tayk: 依存を導入しています (bun install)…" >&2
                   fi
