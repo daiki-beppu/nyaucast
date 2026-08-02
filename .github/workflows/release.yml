@@ -31,8 +31,8 @@ jobs:
         run: |
           git fetch origin main
           bash .github/scripts/check-release-ancestor.sh "$GITHUB_SHA" origin/main
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
       - name: Install dependencies with frozen-lockfile
         run: nix develop --command bun install --frozen-lockfile
       - name: Publish package
