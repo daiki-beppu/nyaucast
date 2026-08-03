@@ -17,6 +17,8 @@ accepted (2026-07-26) / 改訂 2026-07-27（`tayk-fix` の実装に伴い決定 
 改訂 2026-07-31 (2)（#189。#170 の Finding Contract 導入を一時撤回 — takt には project 側 callable に FC を適用する手段がない。callable 内宣言は runtime の FC manager レポート公開先制限で必ず失敗し、親宣言 + `subworkflow.requires_finding_contract` 継承は `takt workflow doctor` の単体検証で必ずエラーになる。収束担保は決定 6 のプロンプト層契約（#171）へ戻す。詳細は Consequences を参照）
 改訂 2026-07-31（#170。決定 12 の実装レビューループ（`tayk-impl-review`）に takt の **Finding Contract** を段階導入 — finding の同一性追跡（ID 振り直しの無効化）・レビュア間矛盾の調停・ラウンド予算を、プロンプト層の契約から engine の finding ledger へ移した。決定 6 の収束契約（ブロッキング / 非ブロッキングの 2 分類）は維持し、ブロッキング指摘だけを台帳に載せる tayk 専用 FC 出力契約 4 本を facets に置いた。併せて `tayk-impl-review` の返り値を takt 正準の `need_replan` へ改名。詳細と拡大条件は Consequences を参照）
 
+改訂 2026-08-03（#253。**決定 14 を追加** — PR レビューを read-only の独立 workflow `tayk-review` に置き、レビュー ⇄ 修正のループを呼び出し側（`issue-direct` skill / 人間）へ移した。ループを内側に持たないため loop monitor と `{step_iteration}` 上限が不要になり、ラウンドをまたぐ finding の同一性は PR コメントが担う。Finding Contract は使わない。併せて**決定 5 の要件 ID 貫通の適用範囲を `tayk-feature` / `tayk-fix` の成果物に限定**することを明記した —— `tayk-review` が見る PR には要件 ID を持たないものが含まれ、その不在を指摘すると存在しない規約違反を作り出すため。決定 5 そのものの内容は変えていない）
+
 ## Context
 
 ADR-0001 の Consequences は takt 運用について 2 点を定めていた（いずれも旧リポ ADR-0021 由来）:
@@ -85,6 +87,24 @@ ADR-0001 の Consequences は takt 運用について 2 点を定めていた（
 
     この決定により、`spillover` は callable 化しない（職務が「親の全レポートの走査」そのものであるため）。`tayk-intake` は callable のままで、境界をまたぐ参照は上表の経路へ寄せた（`tayk-impl-review` は 2026-08-01 の決定 12 反転で廃止した。廃止の理由はレポート境界ではなく Finding Contract の適用制約である）
 
+14. **PR レビューは read-only の独立 workflow に置き、レビュー ⇄ 修正のループは呼び出し側が持つ。**（2026-08-03 追加）
+
+    `tayk-review` は PR 番号を受け取り、diff・linked issue の受入条件・前回レビューコメントを収集し、**仕様適合 / ADR 整合 / AI アンチパターン / コーディング / テストの 5 並列**でレビューして、結果を PR コメントとして投稿する。コードは変更しない。対象は `tayk-feature` / `tayk-fix` が作った PR と、`issue-direct` skill が作った PR の両方である。**後者は設計ゲートも実装レビューも 1 つも通っていないため、この workflow が唯一の仕様ゲートになる。**
+
+    **ループを内側に持たない。** read-only である以上、同じ対象を再レビューしても同じ結論に落ちる。レビュー ⇄ 修正のループは呼び出し側（`issue-direct` skill / 人間）が持ち、1 run = 1 ラウンドとする。結果として cycle が存在せず、`loop_monitors` も `{step_iteration}` の自前上限も要らない —— 決定 6 が繰り返し直面してきた「cycle の外から再入されると loop monitor が発火しない」問題が、構造的に発生しない。**後段から前段へ戻す rule を 1 本でも足した時点でこの前提は崩れ、上限の担保は `max_steps` だけになる。**
+
+    **ラウンドをまたぐ finding の同一性は PR コメントが担う。** 台帳もレポートも run 内で閉じるため、次の run には引き継げない。`gather` が前回の `# tayk-review — PR #<番号> / round <N>` コメントを読んでブロッキング指摘表を引き継ぎ、`tayk-review-rescan` policy の「前回の指摘が解消されたか」を判定できる状態にする。**この見出しと判定行の書式は機械可読な契約であり、揺らしてはならない。**
+
+    **判定行は観点別の件数に加えて、仕様適合の種別内訳（未実装 / 検証なし / 既出未解消 / 判定不能）を持つ。** 呼び出し側は観点の単位で「人間の判断が要るか」を切り分けるが、仕様適合の指摘には解釈が要るもの（未実装）とテストの追加で閉じるもの（検証なし）が混在するため、観点の粒度では粗い。加えて「受入条件を確認できなかった」（判定不能）は観点別件数では `spec:0` となり、問題なしと区別がつかない。**判定不能のとき、ブロッキングが 0 件でも呼び出し側は自動修正を走らせてはならない** —— 受入条件を一度も確認していない PR を「問題なし」として前進させないためである。
+
+    **Finding Contract は使わない。** FC の 3 つの価値（finding の同一性追跡 / レビュア間矛盾の調停 / ラウンド予算）のうち、追跡と予算は 1 run 1 ラウンドでは働かない。調停は 5 観点が互いに独立（仕様・規約・AI 特有の劣化・コーディング・テスト）なため発生頻度が低く、`synthesis` で足りる。決定 12 が FC を再導入したのは反復するレビューの収束を engine に担保させるためであり、反復しないこの workflow は対象外である。
+
+    **ブロッキング指摘が残っても COMPLETE で終える。** 「レビューする」という職務は果たしており、合否はコメント本文の判定行が持つ。ABORT を合否に使うと、takt のキュー上で「実行に失敗した run」と「レビューに通らなかった PR」が区別できなくなる。ABORT は `gather` が対象を特定できない場合と、`publish` が投稿に失敗した場合だけに使う。
+
+    **決定 5 の要件 ID 貫通は `tayk-feature` / `tayk-fix` の成果物にのみ適用される。** `tayk-review` は **PR の出自を問わず**要件 ID の不在を指摘の根拠とせず、受入条件との照合は `tayk-review-convergence` の条件 2 に基づいて行う。要件 ID が差分に存在する場合、照合の手がかりとして参照してよいが、その有無を判定材料にしてはならない。
+
+    出自（takt 発か否か）を差分中の要件 ID の有無で判別する設計は採らない。**判別材料が検出したい違反（要件 ID の欠落）と同一であり、takt 発 PR の決定 5 違反が「issue-direct 発」に誤分類されて構造的に検出できなくなる**ためである。takt 発 PR の要件 ID は `plan` の quality_gates・`design_review` の test-design-review・`final_gate` が既に検査しており、PR レビューが 4 度目に見る必要はない。
+
 ## Why
 
 - **設計ゲートは安い。** 実装前の差し戻しは、実装とテストを書いたあとの差し戻しより桁違いに安い。default が設計レビューを持たないのは、default が汎用だからであって、設計の誤りが安いからではない
@@ -100,6 +120,10 @@ ADR-0001 の Consequences は takt 運用について 2 点を定めていた（
 - **`spillover` は issue #55 の「v0.1.0 に不要な拡張は着手しない」に反しないのか。** 反しない。この制約が禁じているのは **tayk というプロダクトの機能追加**であって、開発ワークフローの構成要素ではない。`spillover` は tayk のコードを 1 行も増やさず、v0.1.0 の成果物にも含まれない。むしろ制約と同じ向きに働く —— 「作業中に見つけた問題をその場で直す」という、スコープを最も膨らませる経路を塞ぎ、発見を issue（= 先送り）へ流すのが役割である。CLAUDE.md の「スコープを膨らませる提案は issue 化して先送りする」を、workflow の中で実行する担当者だと言ってもよい。ただし issue #55 が明示的に要求した機能ではないため、採用の根拠は本 ADR の決定 11 にある（ADR-0001 決定 7 の「黙って逸脱しない」に従い、ここに記録する）
 - **起票を最終ゲートの後（workflow 終端）に置く理由。** 起票をその場（発見時）で行わないのは、作業の途中では「今回の変更と無関係」の判定がまだ確定しないため（実装を進めた結果、実は因果があったと分かることがある）と、重複起票の照合を 1 箇所に集約するためである。（改訂 2026-07-29: 旧稿はここで「delivery の後に置き `gh pr edit` で PR 本文へ転記する」としていたが、決定 7 の反転で spillover 実行時点に PR は存在しなくなったため転記は削除した）
 
+- **`issue-direct` 発 PR には、要求と成果物を突き合わせる工程が 1 つも無い（2026-08-03・決定 14）。** 同 skill は段ごとに実装して CI green まで見るが、`plan` / `test_design` / `impl_review` に相当するものを持たない。CI が緑であることは「壊れていない」の証拠であって「issue が求めたものが作られた」の証拠ではない。この 2 つを混同したまま PR が積み上がるのが、本 ADR の workflow を通さない経路の実害である。仕様適合レビューを最上位に置いたのはこのためで、`tayk-feature` の `impl_review` が持つ 4 観点（architecture / implementation-semantics / contract-lifecycle / robustness）を外してでも通す価値がある
+- **レビューを read-only にしたのは、takt の実行モデルと gh-stack の両方に逆らわないため（2026-08-03・決定 14）。** 修正まで workflow に入れると、決定 7 が外へ出した git 操作を呼び戻すことになる —— `auto_pr` は既存 PR に追加コミットせず、PR ブランチを base にした**新しい PR** を作る。`issue-direct` が `gh stack` で積んだ段の上に、レビュー修正のためだけの段が生える。さらに workflow が `git checkout` を動かせばスタックの追跡状態が壊れる。`--pipeline --skip-git --pr <N>` で起動すれば worktree も clone も作らず checkout も動かさないため、呼び出し側の worktree にそのまま同居できる
+- **判定を workflow 側へ寄せたのは、呼び出し側に裁定させないためである（2026-08-03・決定 14）。** `issue-direct` は「親が代わりに裁定して自分で修正しない」という規律を持つ。レビュー指摘の妥当性を親が判断して直させ始めると、この規律が裏口から破られる。`synthesis` が `tayk-review-convergence` に基づいてブロッキング / 非ブロッキングを確定し、観点別に数えて判定行に書く。呼び出し側は**数字を読むだけで中身を解釈しない**ため、裁定は発生しない
+
 ## Considered Options
 
 - **default のまま、不足を skill 側で補う**: 現行方式。設計レビューと ADR 検査を skill のプロンプトに書くことになるが、skill の指示は「守られるかどうかが agent の裁量」であり、workflow の state machine のような強制力を持たない。takt を使う理由そのものを捨てることになる。不採用
@@ -112,6 +136,10 @@ ADR-0001 の Consequences は takt 運用について 2 点を定めていた（
 - **スコープ外の発見をその場で起票する**: 発見時に `gh issue create` する案。workflow が途中で ABORT しても発見が残るのが利点。ただし作業途中では「今回の変更と因果がない」の判定が確定せず、あとで因果ありと分かっても issue は残る。重複照合も step ごとに必要になる。記録（各レポート）と起票（`spillover`）を分離する形を採った
 - **スコープ外の発見の起票を `delivery` の `finalize` に畳む**: step を増やさずに済むが、`tayk-delivery` は feature / fix 共通の sub-workflow であり、PR の受け渡しという責務に発見の仕分けが混ざる。さらに決定 13 により、`finalize` は callable の内側にいるため親のレポートを走査できず、仕分けの入力そのものを得られない。不採用
 - **`spillover` を callable sub-workflow として切り出す**: 当初はこの形を採り、`tayk-spillover.yaml` として実装していた（決定 12 と同じ「複製の解消」を狙ったもの）。しかし決定 13 の境界により、子は親のレポートを読めない。`spillover` の職務は「Report Directory の全レポートを走査して発見を集める」ことそのものなので、切り出した時点で職務が成立しなくなる。feature / fix で 49 行の重複が戻るが、複製を避けて機能しないものを持つよりよい。撤回
+
+- **`tayk-review` にレビュー ⇄ 修正のループを内包する（2026-08-03・決定 14 の検討）**: `tayk-feature` の `impl_review ⇄ fix` と同型にする案。収束を workflow 内で完結させられるが、修正のためだけに `edit: true` の step と push 経路が要り、決定 7 が外へ出した git 操作を呼び戻す。`auto_pr` は既存 PR に追加コミットせず新しい PR を作るため、`gh stack` の段の上にレビュー修正専用の段が生える。不採用
+- **builtin の `review-takt-default` をそのまま使う（2026-08-03・決定 14 の検討）**: fork を作らずに済む。しかし ADR 整合レビューが無く（ADR-0001 決定 7 を検査する担当が不在）、knowledge が `takt`（TAKT 本体開発向け）で、収束 / 再走査 policy が効かず、**結果が `.takt/runs/` の中に閉じて PR に出てこない**。4 点とも tayk 固有の要求なので、`tayk-audit-architecture` と同じく fork した
+- **findings を structured output で返し、呼び出し側がファイルで回収する（2026-08-03・決定 14 の検討）**: PR を汚さない利点がある。しかし run のレポートは起動の仕方によって隔離クローン配下に出るため、呼び出し側がパスを辿るのは脆い。加えて**ラウンドをまたぐ finding の追跡先が無くなる**（台帳もレポートも run 内で閉じる）。PR コメントは呼び出し側・人間・次のラウンドの `gather` の 3 者が同じものを読める唯一の場所である。不採用
 
 ## Consequences
 
@@ -149,6 +177,11 @@ ADR-0001 の Consequences は takt 運用について 2 点を定めていた（
 - **cycle が途切れる条件を「待機の挟み込み」と読んでいたのは誤りだった。** 当初この項は「待機の再試行（`ci_check` の `pending` / `review_triage` の `awaiting`）が挟まるとカウントが 1 に戻る」と書き、そこから「待機を挟まないループ（`impl_review ⇄ fix` / `design_review ⇄ design_fix`）は cycle が連続するため loop monitor だけで足りる」と結論していた。待機は cycle を途切れさせる原因の 1 つにすぎず、正しい条件は **cycle の外から再入されること**である。実際、`fix` は `final_gate` / `delivery`（当時）の `needs_fix` から、`design_fix` は `write_tests` から、`plan` は 8 方向から再入されており、いずれも約束した上限 3 が効いていなかった。決定 6 に判断基準を書き直し、決定 12 で `fix` の外部再入そのものを構造から取り除いた（`plan` / `design_fix` は構造では消せないため自前上限で塞いだ）。**この誤りを検出したのは削除した検査 C である**（決定 12 の導入時に、`delivery` の差し戻しが `[impl_gate, final_gate]` を途切れさせる穴を実際に見つけた）。同種の誤りが再び入っても、今度は静的には気づけない。**2026-08-01 の決定 12 反転で `fix` の外部再入は復活した** —— 構造から取り除く道は Finding Contract と両立しなかったため、cycle の列挙（上記）で塞いでいる
 - workflow が長くなるぶん 1 issue あたりのトークン消費は default より増える。`.takt/config.yaml` の observability で計測しており、費用が見合わないと判明した場合は step を削る方向で調整する
 
+- **`tayk-review` の出力契約は `impl_review` の Finding Contract 系 7 本とは別系統である（2026-08-03・決定 14）。** 観点固有の検証構造を持つ 2 本（`tayk-spec-conformance-review` の受入条件照合表・既存 `tayk-adr-conformance-review` の ADR 照合表）以外は、汎用の `tayk-review-finding` 1 本に集約した。**両系統が共有するのは決定 6 の 2 分類（ブロッキング / 非ブロッキング）だけ**であり、複製として目視で一致を保つ対象には含めない。収束契約そのものは `tayk-review-convergence` policy が 1 箇所で持つ
+- **呼び出し側の skill は本リポジトリの外にある（2026-08-03・決定 14）。** `issue-direct` skill は `~/.claude/skills/` 管理であり、この workflow と同じ PR には入らない。**skill 側の反映は tayk 側の merge 後に行う** —— 先に skill を更新すると、存在しない workflow を案内する状態になる。この分割は避けられないが、`tayk-review` は単体で（人間が `takt --pipeline --skip-git --pr <N> -w tayk-review` を叩いて）成立するため、skill 未更新でも機能は失われない
+- **`.takt/config.yaml` の冒頭コメントに `tayk-review` を追記した（2026-08-03・決定 14）。** 同コメントは `tayk-audit-runs` の定義監査が固定対象として drift を検査する 3 対象の 1 つであり、workflow を足してコメントを放置すると監査が起票する
+- **doctor が見ないものが 2 つ増えた（2026-08-03・決定 14）。** (1) `publish` が投稿するコメントの見出し・判定行の書式 —— 次のラウンドの `gather` はこの文字列で前回コメントを検出するため、書式が揺れると**前回の指摘が黙って消える**（レビューは走るが、persists 追跡だけが失われるので気づきにくい）。(2) 判定行の観点別内訳と各レポートのブロッキング指摘表の行数の一致 —— 数え間違いは呼び出し側の自動修正の誤動作になる。どちらも `synthesis` / `publish` の quality_gates とプロンプト層の契約で担保しており、**機械的な検査は無い**。実運用のログで再発を観測したら、#104 の 3 分法に従って読み取り専用の `bun test` へ切り出す
+
 ## Related
 
 - ADR-0001（薄いアーキテクチャ規約。本 ADR が Consequences の takt 運用項を上書きする）/ ADR-0005（wayfinder map 起点で決定された先例）
@@ -156,4 +189,5 @@ ADR-0001 の Consequences は takt 運用について 2 点を定めていた（
 - issue #55「feat: tayk 専用の takt feature / fix workflow を確立する」
 - `docs/agents/issue-tracker.md`（issue 運用と wayfinding operations）
 - `.takt/workflows/tayk-feature.yaml` / `tayk-fix.yaml`（本体）と `tayk-intake.yaml`（callable sub-workflow。`tayk-delivery.yaml` は 2026-07-29 の決定 7 反転で、`tayk-impl-review.yaml` は 2026-08-01 の決定 12 反転で削除）
+- `.takt/workflows/tayk-review.yaml`（決定 14。PR の read-only 多角レビュー。呼び出し側は `issue-direct` skill と人間）
 - 旧リポ ADR-0021（「予防的に導入しない」の出典。決定 6 で覆した）
