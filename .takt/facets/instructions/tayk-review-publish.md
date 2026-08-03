@@ -43,7 +43,33 @@ gh pr comment "$PR_NUMBER" --body-file "$SUMMARY_PATH"
 
 `review-summary.md` 末尾の publication marker には Report Directory 由来の run ID が含まれます。同一 run の再試行では安定し、独立 run では異なるため、別 run の本文を回収しません。
 
-## 3. 失敗したとき
+## 3. 投稿証跡を検証する
+
+投稿前後の照合で得た最後のコメント URL を、決定的 validator へ渡します。
+`posted` の structured output を自分で組み立ててはいけません。validator は
+`review-target.md` の PR 番号・round、summary の publication marker、GitHub comment URL
+の PR 番号を相互照合し、検証済みの正規 `publication_identity` を生成します。
+
+```bash
+TARGET_PATH="{review-target.md のパス}"
+COMMENT_URL="$(printf '%s' "$MATCHES" | jq -er '.[-1].url')"
+VALIDATED="$(bun run .takt/scripts/validate-review-publication.ts \
+  --review-target "$TARGET_PATH" \
+  --summary "$SUMMARY_PATH" \
+  --comment-url "$COMMENT_URL")"
+```
+
+validator が終了コード 0 で返した `VALIDATED` の JSON を、**一字も変えずに** structured
+output として返します。終了コードが非 0 なら投稿済みとせず、エラーを
+`failure_reason` に入れた `failed` を返して ABORT します。
+
+validator が受理する URL は次の形だけです。
+
+```text
+https://github.com/{owner}/{repository}/pull/{PR番号}#issuecomment-{comment ID}
+```
+
+## 4. 失敗したとき
 
 `gh` の操作に失敗した場合、**握りつぶさずに ABORT します。** レビューは完了しているのに結果がどこにも残らない状態を、成功と同じ扱いにしてはいけません。
 
@@ -58,4 +84,5 @@ gh pr comment "$PR_NUMBER" --body-file "$SUMMARY_PATH"
 - `gh pr review` / `gh pr edit` / `gh pr merge` / `gh pr ready` の実行（この step の職務はコメントの投稿だけ。PR の状態を変えるのは人間の判断）
 - レポート本文の要約・改変・節の省略
 - marker 行だけが一致するコメントや、現在の GitHub 認証主体以外が投稿したコメントの回収
+- validator を通さずに `posted` の structured output を組み立てること
 - 既存コメントの編集・削除（ラウンドごとに新しいコメントを追加する。過去のラウンドは履歴として残す）

@@ -275,6 +275,8 @@ steps:
       extends: review-readonly
     session: refresh
     instruction: tayk-review-publish
+    structured_output:
+      schema_ref: tayk-review-publish
     quality_gates:
       - review-summary.md の本文をそのまま投稿していること（要約・改変をしていない）
       - コメント冒頭に PR 番号とラウンド番号を含む見出しと、機械可読な判定行があること
@@ -283,10 +285,13 @@ steps:
       - コードを変更していないこと
       - gh の操作に失敗したなら、投稿できなかった理由と手動投稿用のコマンドを残していること
     rules:
-      - condition: コメントの投稿が完了した
+      # posted は instruction が決定的 validator の出力だけを使って生成する。
+      - condition: when(structured.publish.status == "posted")
         next: COMPLETE
-      - condition: gh の操作に失敗し、投稿できなかった
+      - condition: when(structured.publish.status == "failed")
         next: ABORT
         appendix: |
           手動投稿用のコマンド:
           - {gh pr comment のコマンド}
+      - condition: when(true)
+        next: ABORT
