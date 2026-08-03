@@ -6,9 +6,9 @@ Issues and PRDs for this repo live as GitHub issues. Use the `gh` CLI for all op
 
 開発は takt メイン。ただし用途ごとに使う workflow / skill が異なるので、文脈に合わせて選ぶ:
 
-- **新機能・機能拡張の実装** — tayk 専用の **`tayk-feature`** workflow（ADR-0008）。`takt -w tayk-feature "#<N>"`。
+- **新機能・機能拡張の実装** — tayk 専用の **`tayk-feature`** workflow（ADR-0008）。手動 worktree 内で `takt --auto-pr -w tayk-feature "#<N>"`。
   フロー: intake（着手可能性の判定 / wayfinder map・ticket 対応）→ 計画（要件 ID 採番）→ テスト設計 → 設計レビュー（設計 / ADR 整合性 / テスト設計の 3 並列）→ テスト先行実装 → 実装 → 実装レビュー（7 並列・Finding Contract）→ 最終ゲート → spillover（スコープ外発見の起票）。commit / push / PR 作成は workflow 完了後に takt の **auto_pr** が行い（タスク投入時に `auto_pr: true` を設定）、push 時の pre-push フックが最終関門になる（ADR-0008 決定 7 改訂）。**マージは人間の判断。** PR 上の CI・レビュー指摘への対応も人間が判断し、必要なら fix issue を起票して再キューする。
-- **バグ修正の実装** — tayk 専用の **`tayk-fix`** workflow（ADR-0008）。`takt -w tayk-fix "#<N>"`。
+- **バグ修正の実装** — tayk 専用の **`tayk-fix`** workflow（ADR-0008）。手動 worktree 内で `takt --auto-pr -w tayk-fix "#<N>"`。
   フロー: intake → 診断（原因特定 / 検証可能な予測 / 修正方針 / 回帰テスト設計・要件 ID 採番）→ 診断レビュー（診断妥当性 / ADR 整合性 / 回帰テスト設計の 3 並列）→ 再現テスト（**red で診断を検証**）→ 修正 → 実装レビュー（7 並列・Finding Contract）→ 最終ゲート → spillover。PR 化は feature と同じく auto_pr。intake は feature と同じ sub-workflow を再利用する。実装レビューは Finding Contract が project 側 callable に効かないため両 workflow へ展開されており、定義は複製されている（ADR-0008 決定 12 改訂）。
   **原因を特定してから直す。** 再現テストが red にならなければ、テストの問題ではなく診断の誤りとして差し戻される（ADR-0008 決定 9・10）。
 - **アーキテクチャ / 構成の全件監査** — tayk 専用の **`tayk-audit-architecture`** workflow（#108）。issue 起点なら `takt -w tayk-audit-architecture "#<N>"`、issue なしなら `takt add` で order.md に監査スコープを書く。
@@ -21,6 +21,8 @@ Issues and PRDs for this repo live as GitHub issues. Use the `gh` CLI for all op
 共通の規約:
 
 - worktree 必須。メイン作業ツリーで直接ブランチを切らない
+- `tayk-feature` / `tayk-fix` は、main から手動で作った worktree 内で直接実行する。takt のキューへ `worktree: true` で投入すると、実行 clone の `reportDir` とメイン checkout 基準の `projectCwd` がずれ、Finding Contract の publication が必ず失敗する。手動 worktree を `projectCwd` と `execCwd` の両方にすることで、takt 内部の追加 clone を使わず隔離を維持する。これは [nrslib/takt#1128](https://github.com/nrslib/takt/pull/1128) の修正を含むリリースへ更新するまでの暫定経路であり、更新後は隔離 clone での実走行を再検証して解除する
+- 手動 worktree では `direnv allow` 後に `takt --auto-pr -w <workflow> "#<N>"` を実行する。`--auto-pr` により workflow 完了後の commit / push / PR 作成を takt に委ねる
 - workflow / facets / schemas は `.takt/` 配下に置き git 管理する（ADR-0008）。定義を変えたら `takt workflow doctor <name>` で検証する
 - 着手前に main を `git pull --ff-only` で最新化する
 
@@ -71,7 +73,7 @@ Used by `/wayfinder`. The **map** is a single issue with **child** issues as tic
 wayfinder が地図を描き終えたら、その map issue をそのまま takt に渡して実装へ移る:
 
 ```
-takt -w tayk-feature "#<map番号>"
+takt --auto-pr -w tayk-feature "#<map番号>"
 ```
 
 `tayk-feature` の intake（`tayk-intake` sub-workflow）が地図を読み、実装ブリーフへ畳み込む。振る舞いは以下:
