@@ -1,0 +1,15 @@
+name: spillover
+description: 全レポートのスコープ外発見を収集し、起票・追記・破棄へ仕分ける
+tags: [delivery]
+edit: false
+session: compact
+persona: tayk-delivery-operator
+policy: tayk-scope-spillover
+knowledge: tayk-domain
+provider_options:
+  extends: review-readonly
+instruction: tayk-spillover
+output_contracts:
+  report:
+    - name: spillover.md
+      format: tayk-spillover

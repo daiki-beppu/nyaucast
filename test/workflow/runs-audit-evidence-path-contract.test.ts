@@ -5,7 +5,6 @@ import { readRepositoryFile } from "../helpers";
 const repositoryRunsPath = "/Users/mba/02-yt/tayk/.takt/runs";
 const cloneMetaPath = "/Users/mba/02-yt/tayk/.takt/clone-meta/*.json";
 const paths = {
-  adr: "docs/adr/0008-takt-dedicated-workflow.md",
   analyze: ".takt/facets/instructions/tayk-audit-runs-analyze.md",
   auditContract: ".takt/facets/output-contracts/tayk-runs-audit.md",
   issueTracker: "docs/agents/issue-tracker.md",
@@ -182,7 +181,6 @@ describe("tayk-audit-runs evidence path contract", () => {
 
   test("should resolve clone-meta from the repository root in every lifecycle contract", () => {
     for (const path of [
-      paths.adr,
       paths.analyze,
       paths.issueTracker,
       paths.plan,

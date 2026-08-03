@@ -17,7 +17,6 @@ workflow_config:
       network_access: true
     opencode:
       network_access: true
-max_steps: 5
 initial_step: read_issue
 steps:
   # system step。issue / task / branch のコンテキストを TAKT 側から受け取り、

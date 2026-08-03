@@ -11,13 +11,13 @@ run の証拠経路は、本体リポの絶対パス `/Users/mba/02-yt/tayk/.tak
 
 **定義監査の固定対象（#1〜#3。毎回必ず含める）:**
 
-run とは別に、workflow 定義そのものを対象とする固定 3 対象を Audit Targets の先頭に置く（#146。ADR-0008 Consequences 検査 E / F の動的代替と、工程説明 drift の再発検出）:
+run とは別に、workflow 定義そのものを対象とする固定 3 対象を Audit Targets の先頭に置く（#146。共有 fragment、callable の report namespace、工程説明 drift の再発検出）:
 
-| #   | Audit Target                    | Runs 列に列挙するもの（run ではなく対象ファイル）                                                     | What to Analyze                                          |
-| --- | ------------------------------- | ----------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| 1   | 検査 E: spillover 複製の一致    | `.takt/workflows/tayk-feature.yaml` / `.takt/workflows/tayk-fix.yaml`                                 | 複製された spillover step 定義の乖離                     |
-| 2   | 検査 F: callable のレポート境界 | `.takt/workflows/tayk-intake.yaml` / `.takt/workflows/tayk-impl-review.yaml` と参照先 facet           | 親レポート・親 Report Directory への参照（決定 13 違反） |
-| 3   | drift: 工程説明と実配線         | `.takt/workflows/*.yaml` 冒頭コメント / `.takt/config.yaml` コメント / `docs/agents/issue-tracker.md` | 工程説明と YAML 実配線の乖離                             |
+| #   | Audit Target            | Runs 列に列挙するもの（run ではなく対象ファイル）                                                                                        | What to Analyze                                        |
+| --- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| 1   | shared fragment の配線  | `.takt/steps/reviewers.yaml` / `.takt/steps/tayk-spillover.yaml` / `.takt/workflows/tayk-feature.yaml` / `.takt/workflows/tayk-fix.yaml` | fragment 不使用、reviewer 対応漏れ、意図しない分岐差分 |
+| 2   | callable のレポート境界 | `.takt/workflows/tayk-intake.yaml` と参照先 facet                                                                                        | 親レポート・親 Report Directory への参照               |
+| 3   | drift: 工程説明と実配線 | `.takt/workflows/*.yaml` 冒頭コメント / `.takt/config.yaml` コメント / `docs/agents/issue-tracker.md`                                    | 工程説明と YAML 実配線の乖離                           |
 
 - 定義ファイルは**隔離クローン内に git 追跡で存在する**。run の証拠に記録した絶対パスではなく、リポジトリルートからの相対パスで読む（証拠パス確認の対象にもしない）
 - 固定対象の # と対象名は毎回この表のとおりにする（監査間の突き合わせ先になる）。Priority は既定 Medium とし、run 対象の緊急度に応じて上下してよい
@@ -40,7 +40,7 @@ run とは別に、workflow 定義そのものを対象とする固定 3 対象�
 
 ## Recovery Inventory
 
-ABORT / failed で終わった run では `spillover` が実行されない（`spillover` は `final_gate` の COMPLETE 経路にしか配線されていない）。そのレポートに記録されたスコープ外の発見・非ブロッキング指摘は、どこにも起票されないまま実行ログに埋もれる。この回収は後続の監査、つまりこの workflow が引き受ける（#163。ADR-0008 決定 11）。
+ABORT / failed で終わった run では `spillover` が実行されない（`spillover` は `final_gate` の COMPLETE 経路にしか配線されていない）。そのレポートに記録されたスコープ外の発見・非ブロッキング指摘は、どこにも起票されないまま実行ログに埋もれる。この回収は後続の監査、つまりこの workflow が引き受ける（#163。ADR-0008「spillover」）。
 
 回収対象は、次の 2 条件をともに満たす**完了済みの run**:
 

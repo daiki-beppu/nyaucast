@@ -1,22 +1,19 @@
 # tayk リポジトリの takt 設定
 # provider / model / language はグローバル設定 (~/.takt/config.yaml) を継承する。
 #
-# workflow は tayk 専用の .takt/workflows/ を使う (ADR-0008):
+# 実装 workflow は tayk 専用の .takt/workflows/ を使う (ADR-0008):
 #   tayk-feature  — 新機能・機能拡張（intake → 計画 → テスト設計 → 設計レビュー →
-#                   テスト先行実装 → 実装 → 実装レビュー → 最終ゲート → spillover）
+#                   test-first → 実装 → 7観点レビュー → 最終ゲート → spillover）
 #   tayk-fix      — バグ修正・回帰修正（intake → 診断 → 診断レビュー → 再現テスト →
-#                   修正 → 実装レビュー → 最終ゲート → spillover）
+#                   原因修正 → 7観点レビュー → 最終ゲート → spillover）
 #   tayk-intake   — feature / fix 共通の intake（wayfinder map / ticket 対応）
-#   tayk-review   — PR の read-only 多角レビュー（PR 収集 → 仕様適合 / ADR 整合 /
-#                   AI アンチパターン / コーディング / テストの 5 並列 → 統合 →
-#                   PR コメント投稿）。修正は行わず、レビュー ⇄ 修正のループは
-#                   呼び出し側が持つ（ADR-0008 決定 14）
-# commit / push / PR 作成は workflow 完了後に takt の auto_pr が行う（ADR-0008 決定 7 改訂）。
+# 一般の計画・test-first・実装・レビュー・修正 prompt は takt から eject した
+# .takt/steps/ を使い、tayk 固有の gate / policy / knowledge だけを重ねる。
+# PR review は project workflow を持たず、takt-review skill から builtin
+# review-takt-default を使う。
+# commit / push / PR 作成は workflow 完了後に takt の auto_pr が行う（ADR-0008「Git と PR」）。
 # タスク投入時は auto_pr: true を設定すること。
-# ただし tayk-review は例外で、PR を作らず既存 PR にコメントするだけなので auto_pr を使わない。
-# 起動は `takt --pipeline --skip-git --pr <PR番号> -w tayk-review`（worktree / clone を
-# 作らず、checkout も動かさないため gh-stack の段構成を壊さない）。
-# facets は .takt/facets/、structured output schema は .takt/schemas/。
+# facets は .takt/facets/、step fragment は .takt/steps/、structured output schema は .takt/schemas/。
 # 定義を変えたら `takt workflow doctor <name>` で検証する。
 draft_pr: false
 base_branch: main
@@ -32,13 +29,13 @@ provider_routing:
     tayk-intake-analyst:
       provider: codex
       model: gpt-5.6-sol
-    # 設計ゲートの一角（ADR-0008 決定 3）。テスト設計の誤りは write_tests で red を
+    # 設計ゲートの一角（ADR-0008「feature の工程」）。テスト設計の誤りは write_tests で red を
     # 確認しても表面化せず、「通るだけで要件を検証しないテスト」として実装後まで残る。
     # グローバルに登録がないため既定モデルへ落ちていた。planner と同格に置く
     test-planner:
       provider: codex
       model: gpt-5.6-sol
-    # 診断ゲートの一角（ADR-0008 決定 9）。誤った原因のまま進むと、テストも修正も
+    # 診断ゲートの一角（ADR-0008「fix の工程」）。誤った原因のまま進むと、テストも修正も
     # すべて無駄になる。再現テストの red は「症状を再現できたか」しか見ないため、
     # 「症状は再現するが因果の理解が違う」誤診はここでしか捕まらない。intake と同格に置く
     tayk-diagnosis-reviewer:
@@ -48,13 +45,6 @@ provider_routing:
     tayk-adr-conformance-reviewer:
       provider: codex
       model: gpt-5.6-terra
-    # tayk-review の主役（ADR-0008 決定 14）。issue-direct 発 PR は設計ゲートを 1 つも
-    # 通っていないため、要求と成果物の対応を見る工程がこのレビューにしか無い。
-    # 受入条件の解釈を誤ると「実装されていないのに APPROVE」が通るため、
-    # 他 reviewer より上に置く
-    tayk-spec-conformance-reviewer:
-      provider: codex
-      model: gpt-5.6-sol
     # spillover の gh 操作（起票・重複照合）が主。手続き的な作業なので軽量モデル
     tayk-delivery-operator:
       provider: codex

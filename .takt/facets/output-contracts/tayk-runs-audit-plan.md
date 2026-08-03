@@ -24,12 +24,12 @@
 
 ## Audit Targets
 
-| #   | Audit Target                    | Runs                                                                     | Evidence Paths                         | What to Analyze                                 | Priority            |
-| --- | ------------------------------- | ------------------------------------------------------------------------ | -------------------------------------- | ----------------------------------------------- | ------------------- |
-| 1   | 検査 E: spillover 複製の一致    | .takt/workflows/tayk-feature.yaml / tayk-fix.yaml                        | -                                      | 複製された spillover step 定義の乖離            | Medium              |
-| 2   | 検査 F: callable のレポート境界 | .takt/workflows/tayk-intake.yaml / tayk-impl-review.yaml と参照先 facet  | -                                      | 親レポート・親 Report Directory への参照        | Medium              |
-| 3   | drift: 工程説明と実配線         | workflow 冒頭コメント / .takt/config.yaml / docs/agents/issue-tracker.md | -                                      | 工程説明と YAML 実配線の乖離                    | Medium              |
-| 4   | {同じ問いで束ねた run 群}       | {run ディレクトリ名列挙}                                                 | {各 run と一対一の run 絶対パスを列挙} | {ABORT 原因 / 差し戻し経路 / loop monitor 発火} | High / Medium / Low |
+| #   | Audit Target              | Runs                                                                      | Evidence Paths                         | What to Analyze                                 | Priority            |
+| --- | ------------------------- | ------------------------------------------------------------------------- | -------------------------------------- | ----------------------------------------------- | ------------------- |
+| 1   | shared fragment の配線    | .takt/steps/reviewers.yaml / tayk-spillover.yaml / feature / fix workflow | -                                      | fragment 不使用・対応漏れ・意図しない分岐差分   | Medium              |
+| 2   | callable のレポート境界   | .takt/workflows/tayk-intake.yaml と参照先 facet                           | -                                      | 親レポート・親 Report Directory への参照        | Medium              |
+| 3   | drift: 工程説明と実配線   | workflow 冒頭コメント / .takt/config.yaml / docs/agents/issue-tracker.md  | -                                      | 工程説明と YAML 実配線の乖離                    | Medium              |
+| 4   | {同じ問いで束ねた run 群} | {run ディレクトリ名列挙}                                                  | {各 run と一対一の run 絶対パスを列挙} | {ABORT 原因 / 差し戻し経路 / loop monitor 発火} | High / Medium / Low |
 
 ## Recovery Inventory
 

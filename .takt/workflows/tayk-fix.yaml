@@ -1,16 +1,8 @@
 name: tayk-fix
 description: >
-  tayk のバグ修正ワークフロー。intake → 診断（原因特定・検証可能な予測・修正方針・回帰テスト設計）→
-  診断レビュー（診断妥当性 / ADR 整合性 / 回帰テスト設計の 3 並列）→ 再現テスト（red 確認）→
-  修正 → 実装レビュー（7 並列・Finding Contract）→ 最終ゲート → スコープ外発見の起票。
-  commit / push / PR 作成は workflow 完了後に takt の auto_pr が行う（ADR-0008 決定 7 改訂）。
-  原因を特定してから直すこと、再現テストの red を診断の検証に使うことが feature との差分。
-# 実装レビューの finding を engine の台帳で追跡する（ADR-0008 決定 12 改訂）。
-# reviewer は raw finding を報告するだけで最終 ID を採番しないため、ID 振り直しによる
-# persists 追跡の無効化が起こらない。レビュア間の相互排他な指摘は
-# finding-conflict-adjudication（engine 注入の synthetic step）が調停し、
-# ラウンド予算は findings.rounds が持つ。
-# ledger / raw の置き場は .takt/.gitignore の `*` が無視する実行時生成物である。
+  tayk の不具合修正 workflow。issue intake、原因診断と独立レビュー、修正前の red 再現、
+  root-cause repair、Finding Contract 付き専門レビュー、最終ゲート、spillover を行う。
+  実装レビューと修正の基礎プロンプトは takt 0.55 の eject 済み step fragment を使う。
 finding_contract:
   ledger_path: .takt/findings/tayk-fix.json
   raw_findings_path: .takt/findings/tayk-fix/raw
@@ -24,113 +16,48 @@ workflow_config:
       network_access: true
     opencode:
       network_access: true
-# 診断ループ・実装ループを含むため default (30) では足りない。
-# ループの歯止めは loop monitor と各 step の上限が持つ。max_steps はそれらを
-# すり抜けた場合の最後の保険であり、正常系が枯渇しない広さを取る
-max_steps: 90
+max_steps: 50
 initial_step: intake
+
 loop_monitors:
-  # 各 monitor の末尾 step を diagnose_fix / diagnose_review / final_gate に分けてあるため、
-  # 3 つの monitor は互いに干渉しない（照合は履歴末尾との一致で行われる）。
-  #
-  # 重要: 照合は「履歴末尾でパターンが *連続して* threshold 回反復する」厳密一致である。
-  # したがって cycle の外から再入される step は、cycle が途切れてカウントが 1 に戻る。
-  # diagnose は複数方向から再訪されるため cycle パターンが安定しない。原因再探索は
-  # rediagnose、診断全体の訪問は diagnose の {step_iteration} で別々に制限する
-  # （ADR-0008 決定 6）。
-  #
-  # ① 診断レビュー ⇄ 診断修正。実装前なので、打ち切りより再診断を優先する
-  - cycle:
-      - diagnose_review
-      - diagnose_fix
+  - cycle: [diagnose_review, diagnose_fix]
     threshold: 3
     judge:
       persona: supervisor
       instruction: tayk-loop-monitor-diagnosis
       rules:
-        - condition: 健全（指摘が減っている・記述の不足が埋まっている）
+        - condition: 健全（仮説が絞られ、診断の検証可能性が上がっている）
           next: diagnose_review
-        - condition: 原因の特定そのものが誤っている（レポート修正では解消しない）
-          next: rediagnose
-        - condition: 調査材料が尽きている、または issue 側の情報不足に帰着する
+        - condition: 原因仮説を作り直す必要がある
+          next: diagnose
+        - condition: 利用可能な証拠では原因を一意に確定できない
           next: ABORT
-  # ② 診断のやり直しが繰り返される。ここまで来たら原因の探索が行き詰まっている可能性が高い
-  - cycle:
-      - rediagnose
-      - diagnose
-      - diagnose_review
+  - cycle: [diagnose, diagnose_review]
+    ignore_steps: [diagnose_fix, reproduce]
     threshold: 3
     judge:
       persona: supervisor
       instruction: tayk-loop-monitor-rediagnose
       rules:
-        - condition: 健全（仮説が実質的に更新され、棄却根拠が積み上がっている）
-          next: rediagnose
-        - condition: 同じ仮説の言い換えを繰り返している、または外部要因に帰着する
+        - condition: 健全（新しい反証または観測により仮説が収束している）
+          next: diagnose
+        - condition: 非生産的（同じ仮説と失敗を繰り返している）
           next: ABORT
-  # ③ 実装レビュー ⇄ 修正。決定 12 の撤回（Finding Contract 化）により、このループは
-  #    callable の内側から親へ展開された。閉じていたころは [impl_review, fix] が必ず
-  #    連続したが、いまは final_gate の needs_fix が fix へ再入するため cycle が
-  #    途切れうる。途切れる形を列挙して塞ぐ（builtin takt-default-high と同じ方式）。
-  #    判定基準は FC 版 — 台帳の open / provisional / conflicts を根拠にする
-  - cycle:
-      - fix
-      - impl_review
+  - cycle: [fix, reviewers]
+    ignore_steps: [final_gate]
     threshold: 3
     judge:
       persona: supervisor
       instruction: loop-monitor-reviewers-fix-fc
       rules:
-        - condition: 修正後レビューで進捗が確認され、次の修正が実行可能である
+        - condition: 修正進捗があり、報告内容が収束中で、次の修正が実行可能である
           next: fix
-        - condition: 同じ指摘が繰り返されるが再診断で解消できる見込みがある
-          next: rediagnose
+        - condition: 修正未完了または報告未収束で、再診断により解消できる見込みがある
+          next: diagnose
         - condition: 試行済みの再診断を踏まえても要件を満たす実現可能な方針がない
           next: ABORT
-  # ④ 最終ゲートの差し戻しが挟まる形。③ だけでは final_gate が 1 つ挟まった時点で
-  #    カウントが 1 に戻り、上限 3 が実効化しない
-  - cycle:
-      - fix
-      - impl_review
-      - final_gate
-    threshold: 3
-    judge:
-      persona: supervisor
-      instruction: loop-monitor-reviewers-fix-fc
-      rules:
-        - condition: 修正後レビューで進捗が確認され、次の修正が実行可能である
-          next: fix
-        - condition: 同じ指摘が繰り返されるが再診断で解消できる見込みがある
-          next: rediagnose
-        - condition: 試行済みの再診断を踏まえても要件を満たす実現可能な方針がない
-          next: ABORT
-  # ⑤ 実装レビューからの再診断。impl_review の provisional（判定不能な観測）が
-  #    fixpoint に達する、または台帳のラウンド予算が尽きたとき、fix では解けないため
-  #    診断へ戻る。この差し戻しには上限が要る（doctor の
-  #    warnOnUnsafeFindingBudgetRouting）。doctor が認識する形は「cycle[0] が差し戻し先・
-  #    cycle[末尾] が差し戻し元・judge に ABORT 経路あり」（hasBoundedReplanMonitor）
-  #    なので、diagnose から impl_review までの経路を並べる。実装後の再診断は診断段階の
-  #    それより高くつくため threshold は 2 に絞る。diagnose_fix が挟まると連続一致が
-  #    崩れるが、そのときは diagnose の自前上限が二重化として効く
-  - cycle:
-      - diagnose
-      - diagnose_review
-      - reproduce
-      - repair
-      - impl_review
-    threshold: 2
-    judge:
-      persona: supervisor
-      instruction: loop-monitor-fix-replan
-      rules:
-        - condition: 要件と受入条件を変えずに原因の特定と修正方針を再定義できる
-          next: rediagnose
-        - condition: 試行済みの再診断を踏まえても要件を満たす実現可能な方針がない
-          next: ABORT
+
 steps:
-  # ── Phase 0: intake ───────────────────────────────────────────────
-  # feature と共通。着手可能性の判定（未決事項・矛盾・依存・情報不足）は fix でも変わらない。
-  # fix 固有の入口検査（再現条件を確定できるか）は diagnose が持つ
   - name: intake
     kind: workflow_call
     call: tayk-intake
@@ -142,664 +69,268 @@ steps:
       - condition: ABORT
         next: ABORT
 
-  # ── Phase 1: 診断 ─────────────────────────────────────────────────
-  # 直し方から考え始めない。原因が確定していない状態で書いた修正は対症療法になる
-  - name: rediagnose
-    description: 原因仮説の再探索予算を管理する入口
-    tags:
-      - plan
-      - diagnosis
-    edit: false
-    persona: planner
-    provider_options:
-      extends: review-readonly
-    instruction: tayk-rediagnose
-    rules:
-      - condition: これが 4 回目以降の原因再探索である（3 回再探索しても原因を確定できなかった）
-        next: ABORT
-        appendix: |
-          棄却された仮説と、決着に必要な情報:
-          - {何を試し、何が否定されたか}
-      - condition: これが 3 回目以内の原因再探索である
-        next: diagnose
-
   - name: diagnose
-    description: 原因の特定・検証可能な予測・修正方針・回帰テスト設計
-    tags:
-      - plan
-      - diagnosis
+    description: 原因、反証可能な予測、修正方針、回帰契約を確定する
+    tags: [plan, diagnosis]
     edit: false
+    session: compact
     persona: planner
-    policy:
-      - tayk-traceability
-      - existing-system-respect
-      - tayk-scope-spillover
-    knowledge:
-      - architecture
-      - tayk-adr
-      - tayk-domain
+    policy: [existing-system-respect, tayk-traceability, tayk-toolchain]
+    knowledge: [architecture, implementation-semantics, tayk-adr, tayk-domain]
     provider_options:
       extends: review-readonly
-    # 1 回目の診断で外した原因は浅くない。やり直しからは推論を厚くする
-    promotion:
-      - at: 2
-        provider_options:
-          codex:
-            reasoning_effort: high
-          claude:
-            effort: high
     instruction: tayk-diagnose
-    quality_gates:
-      - 因果の連鎖が file:line で示され、段が飛んでいないこと
-      - 対立仮説が最低 1 つ挙げられ、観測に基づく根拠で棄却されていること
-      - 報告された全症状に対し、原因仮説が説明できるか否かが判定されていること
-      - 予測が「入力 X → 症状 Y」の形で、再現テストとして書ける粒度であること
-      - 全要件に REQ-<issue番号>-<2桁連番> 形式の ID が振られていること
-      - 修正方針が因果の連鎖のどこを断つかを示しており、症状の出口を塞ぐだけでないこと
-      - プロダクションコード・テストコードを書いていないこと
-    rules:
-      # 原因再探索の上限は rediagnose が持つ。ここでは非再探索の再訪を含む診断全体を
-      # 有限に止める（ADR-0008 決定 6）
-      - condition: これが 11 回目以降の診断である（診断全体の訪問上限に達した）
-        next: ABORT
-        appendix: |
-          棄却された仮説と、決着に必要な情報:
-          - {何を試し、何が否定されたか}
-      - condition: 原因を特定し、予測・修正方針・回帰テスト設計を作った
-        next: diagnose_review
-      - condition: 調査しても再現条件を確定できない
-        next: ABORT
-        appendix: |
-          試した再現手順と結果:
-          - {何を実行し、どうなったか}
-      - condition: 原因が複数あり 1 つの issue として扱うべきでない
-        next: ABORT
-        appendix: |
-          分割の提案:
-          - {どう分けるか}
     output_contracts:
       report:
         - name: diagnosis.md
           format: tayk-diagnosis
+    rules:
+      - condition: 原因の因果連鎖、対立仮説の棄却、予測、修正方針、回帰契約を確定した
+        next: diagnose_review
+      - condition: 再現条件または必要な証拠を取得できない
+        next: ABORT
+      - condition: 原因が複数あり単一の修正 scope に収まらない
+        next: ABORT
 
-  # 修正前の関門。誤った原因のまま進めば、テストも修正もすべて無駄になる
   - name: diagnose_review
-    description: 診断妥当性 / ADR 整合性 / 回帰テスト設計の 3 並列レビュー
-    tags:
-      - review
-      - diagnosis-gate
+    description: 診断妥当性、ADR 整合性、回帰検証設計を独立に審査する
+    tags: [review, diagnosis-gate]
     parallel:
       - name: diagnosis-review
-        tags:
-          - review
-          - diagnosis-gate
+        tags: [review, diagnosis-gate]
         edit: false
+        session: compact
         persona: tayk-diagnosis-reviewer
         policy:
-          - review
-          - tayk-review-rescan
-          - tayk-review-convergence
-          - tayk-diagnosis-review-limit
-        knowledge:
-          - tayk-domain
+          [
+            review,
+            existing-system-respect,
+            tayk-review-rescan,
+            tayk-review-convergence,
+          ]
+        knowledge: [architecture, implementation-semantics, tayk-domain]
         provider_options:
           extends: review-readonly
-        pass_previous_response: false
         instruction: tayk-review-diagnosis
-        rules:
-          - condition: APPROVE
-          - condition: REJECT
-          - condition: NEED_REDIAGNOSE
         output_contracts:
           report:
             - name: diagnosis-review.md
               format: tayk-diagnosis-review
-      - name: adr-conformance-diagnosis
-        tags:
-          - review
-          - diagnosis-gate
-          - adr
-        edit: false
-        persona: tayk-adr-conformance-reviewer
-        policy:
-          - review
-          - tayk-review-rescan
-          - tayk-review-convergence
-          - tayk-diagnosis-review-limit
-        knowledge:
-          - tayk-adr
-          - tayk-domain
-        provider_options:
-          extends: review-readonly
-        pass_previous_response: false
-        instruction: tayk-review-adr-conformance-gate
         rules:
           - condition: APPROVE
           - condition: REJECT
-          - condition: NEEDS_ADR_REVISION
+          - condition: NEED_REDIAGNOSE
+      - name: adr-conformance-diagnosis
+        tags: [review, diagnosis-gate, adr]
+        edit: false
+        session: compact
+        persona: tayk-adr-conformance-reviewer
+        policy: [review, tayk-review-rescan, tayk-review-convergence]
+        knowledge: [tayk-adr, tayk-domain]
+        provider_options:
+          extends: review-readonly
+        instruction: tayk-review-adr-conformance-gate
         output_contracts:
           report:
             - name: adr-conformance-diagnosis.md
               format: tayk-adr-conformance-review
-      - name: regression-test-review
-        tags:
-          - review
-          - diagnosis-gate
-        edit: false
-        persona: testing-reviewer
-        policy:
-          - review
-          - testing
-          - tayk-traceability
-          - tayk-review-rescan
-          - tayk-review-convergence
-          - tayk-diagnosis-review-limit
-        knowledge:
-          - unit-testing
-          - e2e-testing
-        provider_options:
-          extends: review-readonly
-        pass_previous_response: false
-        instruction: tayk-review-test-design
-        rules:
-          - condition: APPROVE
-          - condition: REJECT
-        output_contracts:
-          report:
-            - name: regression-test-review.md
-              format: tayk-test-design-review
-    rules:
-      # loop monitor ① は連続する [diagnose_review, diagnose_fix] を 3 周した時点で先に
-      # supervisor を起動する。外部 diagnose 再入で連続一致が切れた場合は、通算 4 回目を
-      # この step 自身で ABORT し、run 15engc と同型の 5 回訪問を許さない（ADR-0008 決定 6）
-      - condition: これが 4 回目以降の診断レビューである（通算訪問上限に達した）
-        next: ABORT
-        appendix: |
-          各訪問で残った診断レビュー指摘:
-          - {どの指摘が解消せず、再入に至ったか}
-      - condition: all("APPROVE")
-        next: reproduce
-      - condition: any("NEED_REDIAGNOSE")
-        next: rediagnose
-      - condition: any("REJECT", "NEEDS_ADR_REVISION")
-        next: diagnose_fix
-      # sub-step の verdict がどの宣言条件にも分類されないと（分類器の失敗・空応答）、
-      # all() は false・any() は skip になり全 rule が外れ、rule 不一致で run 全体が
-      # ABORT する（#167）。決定的な受け皿で共通診断入口へ戻し、
-      # 分類失敗の再試行も診断全体の訪問上限に算入する（ADR-0008 決定 6）
-      - condition: when(true)
-        next: diagnose
-
-  - name: diagnose_fix
-    description: 診断レビュー指摘の解消（レポートのみを直す。コードは書かない）
-    tags:
-      - plan
-      - diagnosis-gate
-    edit: true
-    persona: planner
-    policy:
-      - tayk-traceability
-      - existing-system-respect
-      - tayk-conflict-escalation
-    knowledge:
-      - architecture
-      - tayk-adr
-    required_permission_mode: edit
-    session: refresh
-    provider_options:
-      extends: edit
-    # 同じ診断指摘で 2 周目に入ったら、推論を厚くして食い違いの根に届かせる
-    promotion:
-      - at: 2
-        provider_options:
-          codex:
-            reasoning_effort: high
-          claude:
-            effort: high
-    instruction: tayk-gate-fix
-    pass_previous_response: false
-    quality_gates:
-      - 全 finding に対応（修正 or 根拠を示した反論）していること
-      - 要件 ID を振り直していないこと（分割時は枝番を使うこと）
-      - プロダクションコード・テストコードを書いていないこと
-    rules:
-      # diagnose_fix は diagnose_review からだけでなく reproduce（再現に環境依存があり
-      # 決定的なテストにできない）からも再入する。挟み込みで loop monitor ① の cycle
-      # [diagnose_review, diagnose_fix] が途切れ、カウントが 1 に戻ることがあるため、
-      # ラウンド上限をこの step 自身にも持たせる（ADR-0008 決定 6）
-      - condition: これが 4 回目以降の診断修正である（3 ラウンドで診断が固まらなかった）
-        next: diagnose
-        appendix: |
-          各ラウンドで直した内容と、残った指摘:
-          - {何を直し、何が残ったか}
-      - condition: 全 finding に対応した
-        next: diagnose_review
-      - condition: 指摘が原因の特定そのものを否定している
-        next: rediagnose
-
-  # ── Phase 2: 再現と修正 ───────────────────────────────────────────
-  # 再現テストが red になることが、診断した原因が正しいことの証拠になる
-  - name: reproduce
-    description: 回帰テスト設計に基づく再現テストの実装（red を確認する）
-    tags:
-      - coding
-      - test-planning
-    edit: true
-    persona: coder
-    policy:
-      - coding
-      - testing
-      - tayk-traceability
-      - existing-system-respect
-      - tayk-toolchain
-    knowledge:
-      - unit-testing
-      - e2e-testing
-      - tayk-adr
-    required_permission_mode: edit
-    provider_options:
-      extends: edit
-    instruction: tayk-reproduce
-    quality_gates:
-      - 回帰テスト設計の全ケースを実装していること
-      - 各テストに要件 ID・ケース ID・予測 ID が埋め込まれていること
-      - 再現テストが修正前に red であり、失敗の内容が診断の予測と一致していることを確認していること
-      - 既存挙動の回帰テストが修正前から green であることを確認していること
-      - プロダクションコードを変更していないこと
-      - 外部サービスへ実アクセスしていないこと
-    rules:
-      # 再現できないバグは診断も検証もできない。cycle パターンが安定しないため
-      # ラウンド上限をこの step 自身に持たせる（ADR-0008 決定 6）
-      - condition: これが 4 回目以降の再現テスト実装である（3 回書き直しても症状を再現できなかった）
-        next: ABORT
-        appendix: |
-          各ラウンドで書いたテストと失敗の内容:
-          - {何を書き、どうなったか}
-      # 差し戻し条件を先に置く。「red かつ回帰 green」は予測が外れている場合も満たすため、
-      # 成功条件を先頭に置くと予測不一致がそこへ吸われ、診断の検証機構が働かなくなる
-      # （spillover の rule 順と同じ理由）
-      - condition: 再現テストが green である（症状を再現できない）
-        next: rediagnose
-      - condition: 再現テストは red だが、失敗の内容が診断の予測と違う
-        next: rediagnose
-      - condition: 既存挙動の回帰テストが修正前から red である
-        next: rediagnose
-      - condition: 再現に環境依存があり決定的なテストにできない
-        next: diagnose_fix
-      # 症状を再現しないテストを抱えたまま修正へ進む出口は置かない。
-      # red にならない再現テストは、修正が効いたかどうかを判定できない。
-      # 予測一致を条件に明記する（quality_gates だけに置くと遷移は素通りする）
-      - condition: 再現テストが red で失敗の内容が診断の予測と一致し、既存挙動の回帰テストが green である
-        next: repair
-    output_contracts:
-      report:
-        - name: test-report.md
-          format: test-report
-
-  - name: repair
-    description: 因果の連鎖を断つ修正（症状を止めるのではなく原因を除く）
-    tags:
-      - coding
-    edit: true
-    persona: coder
-    policy:
-      - coding
-      - testing
-      - tayk-traceability
-      - existing-system-respect
-      - tayk-scope-spillover
-      - tayk-toolchain
-    knowledge:
-      - architecture
-      - tayk-adr
-      - tayk-domain
-    required_permission_mode: edit
-    session: refresh
-    provider_options:
-      extends: edit
-    instruction: tayk-repair
-    quality_gates:
-      - 再現テストが green になり、既存挙動の回帰テストが green のままであること
-      - 対症療法の自己検査を実施し、その結果を報告していること
-      - 診断で断つと決めた箇所以外に、因果関係のない変更を混ぜていないこと
-      - 全差分を「必須変更 / 関連変更 / 不要変更」に分類し、不要変更が残っていないこと
-      - 診断で申告した ADR 逸脱がある場合、該当 ADR の改訂を差分に含めていること
-    rules:
-      - condition: 原因を除き、再現テストと既存挙動の回帰が green になった
-        next: impl_review
-      - condition: 修正が対症療法にしかならない（原因を除くには診断の範囲を超える）
-        next: rediagnose
-      - condition: 修正方針が ADR と衝突する
-        next: rediagnose
-      - condition: 修正しても再現テストが red のまま
-        next: rediagnose
-    output_contracts:
-      report:
-        - name: maintenance-scope.md
-          format: maintenance-scope
-
-  # ── Phase 3: 実装レビュー ─────────────────────────────────────────
-  # 7 並列レビュー ⇄ 修正。かつては tayk-impl-review という callable の内側に閉じて
-  # いた（旧決定 12）が、takt の Finding Contract は project 側 callable に適用できない
-  # ため親へ展開した — 子だけの宣言は runtime のレポート公開先制限で必ず失敗し、
-  # 親宣言 + `subworkflow.requires_finding_contract` 継承は doctor の単体検証で必ず
-  # エラーになる（実測の記録は ADR-0008 Consequences）。ループの歯止めは
-  # loop monitor ③④ が持つ。
-  #
-  # feature / fix で定義が重複する。spillover と同じく目視で一致を保つこと
-  # （ADR-0008 Consequences の検査 E）。差異は意図されたものだけ —
-  # 差し戻し先が plan ではなく diagnose であること、fix の quality_gates が
-  # 再現テストを見ること。
-  - name: impl_review
-    description: アーキテクチャ / AI アンチパターン / コーディング / 実装意味論 / 契約ライフサイクル / 堅牢性 / ADR 整合性の 7 並列レビュー
-    tags:
-      - review
-    parallel:
-      - name: arch-review
-        tags:
-          - review
-        edit: false
-        persona: architecture-reviewer
-        policy:
-          - review
-          - existing-system-respect
-          - tayk-review-convergence
-        knowledge:
-          - architecture
-          - tayk-domain
-        provider_options:
-          extends: review-readonly
-        instruction: review-arch
-        rules:
-          - condition: approved
-          - condition: needs_fix
-        output_contracts:
-          report:
-            - name: architect-review.md
-              format: tayk-architecture-review-finding-contract
-      - name: ai-antipattern-review-2nd
-        tags:
-          - review
-        edit: false
-        persona: ai-antipattern-reviewer
-        policy:
-          - review
-          - ai-antipattern
-          - existing-system-respect
-          - tayk-review-convergence
-        provider_options:
-          extends: review-readonly
-        instruction: ai-antipattern-review
-        rules:
-          - condition: AI特有の問題なし
-          - condition: AI特有の問題あり
-        output_contracts:
-          report:
-            - name: ai-antipattern-review.md
-              format: tayk-ai-antipattern-review-finding-contract
-      - name: coding-review
-        tags:
-          - review
-        edit: false
-        persona: coding-reviewer
-        policy:
-          - review
-          - coding
-          - tayk-traceability
-          - existing-system-respect
-          - tayk-review-convergence
-        pass_previous_response: false
-        provider_options:
-          extends: review-readonly
-        instruction: review-coding
-        rules:
-          - condition: approved
-          - condition: needs_fix
-        output_contracts:
-          report:
-            - name: coding-review.md
-              format: tayk-coding-review-finding-contract
-      - name: implementation-semantics-review
-        tags:
-          - review
-        edit: false
-        persona: implementation-semantics-reviewer
-        policy:
-          - review
-          - existing-system-respect
-          - tayk-review-convergence
-        knowledge:
-          - implementation-semantics
-        pass_previous_response: false
-        provider_options:
-          extends: review-readonly
-        instruction: review-implementation-semantics
-        rules:
-          - condition: approved
-          - condition: needs_fix
-        output_contracts:
-          report:
-            - name: implementation-semantics-review.md
-              format: tayk-implementation-semantics-review-finding-contract
-      - name: contract-lifecycle-review
-        tags:
-          - review
-        edit: false
-        persona: contract-lifecycle-reviewer
-        policy:
-          - review
-          - tayk-traceability
-          - tayk-review-convergence
-        knowledge:
-          - contract-lifecycle
-        pass_previous_response: false
-        provider_options:
-          extends: review-readonly
-        instruction: contract-lifecycle-review
-        rules:
-          - condition: approved
-          - condition: needs_fix
-        output_contracts:
-          report:
-            - name: contract-lifecycle-review.md
-              format: tayk-contract-lifecycle-review-finding-contract
-      - name: robustness-review
-        tags:
-          - review
-        edit: false
-        persona: robustness-reviewer
-        policy:
-          - review
-          - existing-system-respect
-          - tayk-review-convergence
-        knowledge:
-          - robustness
-        pass_previous_response: false
-        provider_options:
-          extends: review-readonly
-        instruction: robustness-review
-        rules:
-          - condition: approved
-          - condition: needs_fix
-        output_contracts:
-          report:
-            - name: robustness-review.md
-              format: tayk-robustness-review-finding-contract
-      - name: adr-conformance-impl
-        tags:
-          - review
-          - adr
-        edit: false
-        persona: tayk-adr-conformance-reviewer
-        policy:
-          - review
-          - tayk-review-rescan
-          - tayk-review-convergence
-        knowledge:
-          - tayk-adr
-          - tayk-domain
-        pass_previous_response: false
-        provider_options:
-          extends: review-readonly
-        instruction: tayk-review-adr-conformance-impl
         rules:
           - condition: APPROVE
           - condition: REJECT
           - condition: NEEDS_ADR_REVISION
+      - name: regression-design-review
+        tags: [review, diagnosis-gate]
+        edit: false
+        session: compact
+        persona: testing-reviewer
+        policy:
+          [
+            review,
+            testing,
+            tayk-traceability,
+            tayk-review-rescan,
+            tayk-review-convergence,
+          ]
+        knowledge: [unit-testing, e2e-testing]
+        provider_options:
+          extends: review-readonly
+        instruction: tayk-review-test-design
         output_contracts:
           report:
-            - name: adr-conformance-impl.md
-              format: tayk-adr-conformance-review-finding-contract
+            - name: regression-design-review.md
+              format: tayk-test-design-review
+        rules:
+          - condition: APPROVE
+          - condition: REJECT
     rules:
-      # 台帳の状態を先に見る。conflicts（レビュア間の相互排他な指摘）が未調停なら
-      # engine 注入の synthetic step へ回し、調停後も残るなら人間の判断が要る
-      - condition: when(findings.conflicts.count > 0 && findings.conflicts.unadjudicated.count > 0)
-        next: finding-conflict-adjudication
-      - condition: when(findings.conflicts.count > 0)
-        next: ABORT
-      # provisional（判定不能な観測）はゲートを塞ぐ。原因仮説の無効化は
-      # 確定していないため、原因再探索予算を消費しない共通診断入口へ戻す
-      - condition: when(findings.provisional.fixpoint == true && findings.conflicts.count == 0)
+      - condition: all("APPROVE")
+        next: reproduce
+      - condition: any("NEED_REDIAGNOSE")
         next: diagnose
-      - condition: when(findings.rounds.budgetExhausted == true && findings.provisional.count > 0 && findings.conflicts.count == 0)
-        next: diagnose
-      - condition: when(findings.provisional.count > 0 && findings.conflicts.count == 0)
-        next: diagnose
-      # all() の複数引数は並列 sub-step と位置対応で照合され、個数が一致しないと
-      # ルールごとスキップされる（= 前進不能）。sub-step の宣言順に 7 個並べる
-      - condition: all("approved", "AI特有の問題なし", "approved", "approved", "approved", "approved", "APPROVE") && when(findings.open.count == 0 && findings.provisional.count == 0 && findings.conflicts.count == 0)
-        next: final_gate
-      # reviewer の応答自体に異常があっても、台帳が空なら最終ゲートの supervise で拾う
-      - condition: any("approved", "needs_fix", "AI特有の問題なし", "AI特有の問題あり", "APPROVE", "REJECT", "NEEDS_ADR_REVISION") && when(findings.open.count == 0 && findings.provisional.count == 0 && findings.conflicts.count == 0 && findings.reviewerAnomalies.count > 0)
-        next: final_gate
-      - condition: any("needs_fix", "AI特有の問題あり", "REJECT", "NEEDS_ADR_REVISION") && when(findings.conflicts.count == 0)
-        next: fix
-      - condition: when(findings.conflicts.count == 0 && findings.open.count > 0)
-        next: fix
-      # sub-step の verdict がどの宣言条件にも分類されないと（分類器の失敗・空応答）、
-      # all() は false・any() は skip になり全 rule が外れ、rule 不一致で run 全体が
-      # ABORT していた（#167。全レビュー APPROVE でも落ちる）。決定的な受け皿で
-      # 再レビューへ戻す。連続自己再入は fix への外部再入ではないため
-      # loop monitor の cycle を壊さない。上限は max_steps が持つ
+      - condition: any("REJECT", "NEEDS_ADR_REVISION")
+        next: diagnose_fix
       - condition: when(true)
-        next: impl_review
+        next: diagnose_review
 
-  - name: fix
-    description: 実装レビュー指摘の修正
-    tags:
-      - coding
+  - name: diagnose_fix
+    description: 診断レビュー指摘を解消する（コードは変更しない）
+    tags: [plan, diagnosis-gate]
+    edit: false
+    session: compact
+    persona: planner
+    policy:
+      [existing-system-respect, tayk-traceability, tayk-conflict-escalation]
+    knowledge: [architecture, implementation-semantics, tayk-adr]
+    provider_options:
+      extends: review-readonly
+    instruction: tayk-gate-fix
+    rules:
+      - condition: 全 finding に対応した
+        next: diagnose_review
+      - condition: 指摘が原因仮説そのものを無効化した
+        next: diagnose
+
+  - name: reproduce
+    description: 診断の予測を修正前の red テストで検証する
+    tags: [coding, test-planning]
     edit: true
+    session: compact
     persona: coder
     policy:
-      - coding
-      - testing
-      - tayk-traceability
-      - existing-system-respect
-      - tayk-scope-spillover
-      - tayk-conflict-escalation
+      [
+        coding,
+        testing,
+        existing-system-respect,
+        tayk-traceability,
+        tayk-toolchain,
+      ]
     knowledge:
-      - architecture
-      - tayk-adr
+      [
+        takt,
+        architecture,
+        unit-testing,
+        e2e-testing,
+        implementation-semantics,
+        tayk-adr,
+      ]
     required_permission_mode: edit
-    session: refresh
-    provider_options:
-      extends: edit
-    promotion:
-      - at: 2
-        provider_options:
-          codex:
-            reasoning_effort: high
-          claude:
-            effort: high
-    instruction: fix
-    pass_previous_response: false
-    quality_gates:
-      - テストの削除・skip・アサーション緩和で指摘を消していないこと
-      - 再現テストと既存挙動の回帰テストが green のままであること
-      - ADR 逸脱の指摘に対し、該当 ADR の改訂を差分に含めたか、逸脱を解消したかのいずれかであること
-      - 診断の要件 ID にない機能を追加していないこと
+    instruction: tayk-reproduce
+    output_contracts:
+      report:
+        - name: test-report.md
+          format: test-report
     rules:
-      # 上限は loop monitor が持つ。この step は「このループでは解けない」と分かった
-      # ときだけ診断へ戻す
-      - condition: 修正完了
-        next: impl_review
-      - condition: 判断できない、情報不足
+      - condition: 再現テストが red で診断の予測と一致し、既存挙動の回帰テストが green である
+        next: repair
+      - condition: 再現テストが green、予測と異なる失敗、または既存回帰が red である
+        next: diagnose
+      - condition: 環境依存により決定的な再現テストを作れない
+        next: diagnose_fix
+
+  - name: repair
+    description: 診断で特定した原因を除去し、red を green にする
+    tags: [coding]
+    edit: true
+    session: compact
+    persona: coder
+    policy:
+      [
+        coding,
+        testing,
+        existing-system-respect,
+        tayk-traceability,
+        tayk-scope-spillover,
+        tayk-toolchain,
+      ]
+    knowledge:
+      [takt, architecture, implementation-semantics, tayk-adr, tayk-domain]
+    required_permission_mode: edit
+    instruction: tayk-repair
+    output_contracts:
+      report:
+        - name: maintenance-scope.md
+          format: maintenance-scope
+    rules:
+      - condition: 原因を除き、再現テストと既存回帰が green になった
+        next: reviewers
+      - condition: 修正が対症療法、ADR 衝突、または予測不一致になった
         next: diagnose
 
-  # ── Phase 4: 最終ゲート ───────────────────────────────────────────
-  # builtin の merge-readiness + supervise ゲートの Finding Contract 版。台帳の
-  # open / provisional / conflicts を見て差し戻し先を決めるため、レビュー側と同じ
-  # 判断基準で最終確認が走る。
-  #
-  # builtin callable なので FC が効く（project 側 callable では効かない）。この
-  # 非対称が、実装レビューを親へ展開してこの step は callable のまま残した理由である。
+  - name: reviewers
+    uses: reviewers
+    rules:
+      self:
+        - condition: when(findings.conflicts.count > 0 && findings.conflicts.unadjudicated.count > 0)
+          next: finding-conflict-adjudication
+        - condition: when(findings.conflicts.count > 0)
+          next: ABORT
+        - condition: when(findings.provisional.count > 0 && findings.conflicts.count == 0)
+          next: diagnose
+        - condition: all("approved", "AI特有の問題なし", "approved", "approved", "approved", "approved", "APPROVE") && when(findings.open.count == 0 && findings.provisional.count == 0 && findings.conflicts.count == 0)
+          next: final_gate
+        - condition: any("approved", "needs_fix", "AI特有の問題なし", "AI特有の問題あり", "APPROVE", "REJECT", "NEEDS_ADR_REVISION") && when(findings.open.count == 0 && findings.provisional.count == 0 && findings.conflicts.count == 0 && findings.reviewerAnomalies.count > 0)
+          next: final_gate
+        - condition: any("needs_fix", "AI特有の問題あり", "REJECT", "NEEDS_ADR_REVISION") && when(findings.conflicts.count == 0)
+          next: fix
+        - condition: when(findings.conflicts.count == 0 && findings.open.count > 0)
+          next: fix
+      parallel:
+        arch-review: [{ condition: approved }, { condition: needs_fix }]
+        ai-antipattern-review:
+          [{ condition: AI特有の問題なし }, { condition: AI特有の問題あり }]
+        coding-review: [{ condition: approved }, { condition: needs_fix }]
+        implementation-semantics-review:
+          [{ condition: approved }, { condition: needs_fix }]
+        contract-lifecycle-review:
+          [{ condition: approved }, { condition: needs_fix }]
+        robustness-review: [{ condition: approved }, { condition: needs_fix }]
+        adr-conformance-review:
+          [
+            { condition: APPROVE },
+            { condition: REJECT },
+            { condition: NEEDS_ADR_REVISION },
+          ]
+
   - name: final_gate
-    kind: workflow_call
-    call: merge-readiness-finding-contract-final-gate
-    args:
-      supervise_knowledge:
-        - architecture
-        - tayk-adr
+    uses: finding-contract-final-gate
     rules:
       - condition: COMPLETE
         next: spillover
       - condition: needs_review
-        next: impl_review
-      - condition: needs_fix
-        next: fix
+        next: reviewers
       - condition: need_replan
         next: diagnose
+      - condition: needs_fix
+        next: fix
       - condition: needs_conflict_adjudication
         next: finding-conflict-adjudication
       - condition: ABORT
         next: ABORT
 
-  # ── Phase 5: スコープ外発見の起票 ─────────────────────────────────
-  # 「ついで直しをしない」という禁止の受け皿。ここを通さないと発見は実行ログとともに埋もれる。
-  #
-  # commit / push / PR 作成はこの workflow では行わない。workflow 完了後に takt の
-  # auto_pr がサンドボックス外で実行し、push 時の pre-push フック（bun run check +
-  # takt workflow doctor）が最終関門になる（ADR-0008 決定 7 改訂）。
-  #
-  # callable sub-workflow にしない。この step の職務は「Report Directory の全レポートを
-  # 走査する」ことだが、callable の子は自分専用の report namespace を持ち、親のレポートが
-  # 見えない（ADR-0008 決定 13）。feature / fix で定義が重複するが、複製を避けて職務が
-  # 成立しなくなるより重複を選ぶ。
-  - name: spillover
-    description: 各レポートのスコープ外の発見を集め、起票する / 捨てるに仕分ける
-    tags:
-      - delivery
-    edit: false
-    persona: tayk-delivery-operator
+  - name: fix
+    uses: fix
     policy:
-      - tayk-scope-spillover
-    knowledge:
-      - tayk-domain
-    # gh issue create / comment を使うため Bash が要る。ソースは触らないので edit: false
-    provider_options:
-      extends: review-readonly
-    session: refresh
-    instruction: tayk-spillover
-    output_contracts:
-      report:
-        - name: spillover.md
-          format: tayk-spillover
-    quality_gates:
-      - Report Directory の全レポートを読み、発見がなかったものも収集元に記録していること
-      - 起票したものが 3 条件（因果なし / 実害あり / 根拠あり）をすべて満たしていること
-      - 起票前に gh issue list で重複を照合していること
-      - 破棄した発見について、満たさなかった条件と理由を記録していること
-      - gh issue の操作に失敗したなら、起票できなかった発見と手動起票用のコマンドを
-        レポートに残していること
-      - コードを変更していないこと
+      [
+        coding,
+        testing,
+        existing-system-respect,
+        tayk-traceability,
+        tayk-scope-spillover,
+        tayk-conflict-escalation,
+        tayk-toolchain,
+      ]
+    knowledge: [takt, architecture, implementation-semantics, tayk-adr]
     rules:
-      # 仕分け自体は完了しているため、この rule を先に置かないと下の「仕分けが終わった」に
-      # 吸われて素通りする。因果のある発見は要件 ID の採番からやり直すため診断へ戻す
+      - condition: 修正完了
+        next: reviewers
+      - condition: 修正を進められない、または原因仮説の再検証が必要
+        next: diagnose
+
+  - name: spillover
+    uses: tayk-spillover
+    rules:
       - condition: 因果ありと判定した発見があり、今回の差分に含めるべきものが残っている
         next: diagnose
-      # gh 失敗を「仕分けが終わった」と同じ rule に畳まない。畳むと実行ログ上で成功と
-      # 区別できなくなる。起票できなかった発見と手動起票コマンドはレポートに残るため、
-      # 実装が完了している以上ここでは止めない（ADR-0008 決定 11）
       - condition: gh issue の操作に失敗し、起票できなかった発見が残っている
         next: COMPLETE
       - condition: 仕分けが終わり、起票・追記・破棄をすべて記録した（発見ゼロの場合を含む）

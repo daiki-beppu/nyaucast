@@ -2,7 +2,7 @@
 
 ## tayk の final gate 証跡契約
 
-この workflow では、実装とローカル検証が終わった後に takt の `auto_pr` がサンドボックス外で commit / push / PR 作成を行う。push 時の `pre-push` フック（`bun run check` + `takt workflow doctor`）が品質の最終関門である（ADR-0008 決定 7）。
+この workflow では、実装とローカル検証が終わった後に takt の `auto_pr` がサンドボックス外で commit / push / PR 作成を行う。push 時の `pre-push` フック（`bun run check` + `takt workflow doctor`）が品質の最終関門である（ADR-0008「Git と PR」）。
 
 final gate の必須証跡は、workflow 内で生成可能な証跡に限る。具体的には `bun run check`、issue 固有の read-only 検査、ローカルで完結する dry-run、および前段が記録したローカルのテスト・ビルド・動作確認を対象とする。これらのうち変更内容に必要な検査が未実行または失敗している場合は、従来どおり承認しない。
 

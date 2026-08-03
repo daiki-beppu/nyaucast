@@ -4,7 +4,7 @@
 
 ## 手順
 
-1. Report Directory の実装計画（`plan.md`）を Read で開く。intake が確定した決定・制約・対象外は、その「ブリーフからの引き継ぎ」節にある。**`intake-brief.md` をファイルとして探さないでください** — intake は callable sub-workflow であり、そのレポートはこの step の Report Directory には存在しません（ADR-0008 決定 13）
+1. Report Directory の実装計画（`plan.md`）を Read で開く。intake が確定した決定・制約・対象外は、その引き継ぎ内容にある。**`intake-brief.md` をファイルとして探さないでください** — intake は callable sub-workflow であり、そのレポートはこの step の Report Directory には存在しません（ADR-0008「report namespace」）
 2. Knowledge の Source Path を Read で開き、全文を取得する。`##` セクションをすべて列挙し、取捨選択しない
 3. 列挙した各セクションの判定基準を実装方針と照合する
 4. 以下の観点で設計を判定する:

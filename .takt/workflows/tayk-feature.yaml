@@ -1,16 +1,8 @@
 name: tayk-feature
 description: >
-  tayk の新機能開発ワークフロー。intake（wayfinder map / ticket 対応）→ 計画 → テスト設計 →
-  設計レビュー（設計 / ADR 整合性 / テスト設計の 3 並列）→ テスト先行実装 → 実装 →
-  実装レビュー（7 並列・Finding Contract）→ 最終ゲート → スコープ外発見の起票。commit / push / PR 作成は
-  workflow 完了後に takt の auto_pr が行う（ADR-0008 決定 7 改訂）。実装に入る前に設計を
-  止められること、ADR からの逸脱を黙って通さないことが default との差分。
-# 実装レビューの finding を engine の台帳で追跡する（ADR-0008 決定 12 改訂）。
-# reviewer は raw finding を報告するだけで最終 ID を採番しないため、ID 振り直しによる
-# persists 追跡の無効化が起こらない。レビュア間の相互排他な指摘は
-# finding-conflict-adjudication（engine 注入の synthetic step）が調停し、
-# ラウンド予算は findings.rounds が持つ。
-# ledger / raw の置き場は .takt/.gitignore の `*` が無視する実行時生成物である。
+  tayk の機能開発 workflow。issue intake、要件と検証契約の計画、実装前の設計ゲート、
+  test-first 実装、Finding Contract 付き専門レビュー、最終ゲート、spillover を行う。
+  実装・レビュー・修正の基礎プロンプトは takt 0.55 の eject 済み step fragment を使う。
 finding_contract:
   ledger_path: .takt/findings/tayk-feature.json
   raw_findings_path: .takt/findings/tayk-feature/raw
@@ -24,16 +16,11 @@ workflow_config:
       network_access: true
     opencode:
       network_access: true
-# 設計ループ・実装ループを含むため default (30) では足りない。
-# ループの歯止めは loop monitor と各修正 step の上限が持つ。max_steps はそれらを
-# すり抜けた場合の最後の保険であり、正常系が枯渇しない広さを取る
-max_steps: 90
+max_steps: 50
 initial_step: intake
+
 loop_monitors:
-  # ── 設計レビュー ⇄ 設計修正。実装前なので、打ち切りより再計画を優先する ──
-  - cycle:
-      - design_review
-      - design_fix
+  - cycle: [design_review, design_fix]
     threshold: 3
     judge:
       persona: supervisor
@@ -43,86 +30,32 @@ loop_monitors:
           next: design_review
         - condition: 非生産的（同じ指摘が繰り返される・要件が固まっていない）
           next: plan
-  # ── 再計画ループ。ここまで来たら計画の作り直しでは解けない可能性が高い ──
-  - cycle:
-      - plan
-      - test_design
-      - design_review
-    threshold: 3
-    judge:
-      persona: supervisor
-      instruction: tayk-loop-monitor-replan
-      rules:
-        - condition: 健全（曖昧さが減り計画が具体化している）
-          next: plan
-        - condition: 非生産的（issue の未決事項 / ADR との衝突に帰着する）
-          next: ABORT
-  # ── 実装レビュー ⇄ 修正 ──
-  # 決定 12 の撤回（Finding Contract 化）により、このループは callable の内側から
-  # 親へ展開された。閉じていたころは [impl_review, fix] が必ず連続したが、いまは
-  # final_gate の needs_fix が fix へ再入するため cycle が途切れうる。途切れる形を
-  # 列挙して塞ぐ（builtin takt-default-high と同じ方式）。判定基準は FC 版 —
-  # 台帳の open / provisional / conflicts を根拠にする。
-  # 未解消のブロッキング指摘を抱えたまま前進させない（決定 6）。
-  - cycle:
-      - fix
-      - impl_review
-    threshold: 3
-    judge:
-      persona: supervisor
-      instruction: loop-monitor-reviewers-fix-fc
-      rules:
-        - condition: 修正後レビューで進捗が確認され、次の修正が実行可能である
-          next: fix
-        - condition: 同じ指摘が繰り返されるが再計画で解消できる見込みがある
-          next: plan
-        - condition: 試行済みの再計画を踏まえても要件を満たす実現可能な方針がない
-          next: ABORT
-  # 最終ゲートの差し戻しが挟まる形。上の cycle だけでは final_gate が 1 つ挟まった
-  # 時点でカウントが 1 に戻り、上限 3 が実効化しない
-  - cycle:
-      - fix
-      - impl_review
-      - final_gate
-    threshold: 3
-    judge:
-      persona: supervisor
-      instruction: loop-monitor-reviewers-fix-fc
-      rules:
-        - condition: 修正後レビューで進捗が確認され、次の修正が実行可能である
-          next: fix
-        - condition: 同じ指摘が繰り返されるが再計画で解消できる見込みがある
-          next: plan
-        - condition: 試行済みの再計画を踏まえても要件を満たす実現可能な方針がない
-          next: ABORT
-  # ── 実装レビューからの再計画 ──
-  # impl_review の provisional（判定不能な観測）が fixpoint に達する、または台帳の
-  # ラウンド予算が尽きたとき、fix では解けないため計画へ戻る。この差し戻しには
-  # 上限が要る（doctor の warnOnUnsafeFindingBudgetRouting）。doctor が認識する形は
-  # 「cycle[0] が差し戻し先・cycle[末尾] が差し戻し元・judge に ABORT 経路あり」
-  # （hasBoundedReplanMonitor）なので、plan から impl_review までの経路を並べる。
-  # 実装後の再計画は設計段階のそれより高くつくため threshold は 2 に絞る。
-  # design_fix が挟まると連続一致が崩れるが、そのときは plan 自身の
-  # {step_iteration} 上限が二重化として効く（ADR-0008 決定 6）
-  - cycle:
-      - plan
-      - test_design
-      - design_review
-      - write_tests
-      - draft
-      - impl_review
+  - cycle: [replan, implement]
+    ignore_steps: [reviewers, final_gate, fix]
     threshold: 2
     judge:
       persona: supervisor
       instruction: loop-monitor-fix-replan
       rules:
         - condition: 要件と受入条件を変えずに実装方針を再定義できる
-          next: plan
+          next: replan
         - condition: 試行済みの再計画を踏まえても要件を満たす実現可能な方針がない
           next: ABORT
+  - cycle: [fix, reviewers]
+    ignore_steps: [final_gate]
+    threshold: 3
+    judge:
+      persona: supervisor
+      instruction: loop-monitor-reviewers-fix-fc
+      rules:
+        - condition: 修正進捗があり、報告内容が収束中で、次の修正が実行可能である
+          next: fix
+        - condition: 修正未完了または報告未収束で、再計画により解消できる見込みがある
+          next: replan
+        - condition: 試行済みの再計画を踏まえても要件を満たす実現可能な方針がない
+          next: ABORT
+
 steps:
-  # ── Phase 0: intake ───────────────────────────────────────────────
-  # feature / fix 共通。wayfinder map の未完（open ticket 残存）を検出して止める。
   - name: intake
     kind: workflow_call
     call: tayk-intake
@@ -134,169 +67,102 @@ steps:
       - condition: ABORT
         next: ABORT
 
-  # ── Phase 1: 設計 ─────────────────────────────────────────────────
   - name: plan
-    description: 要件 ID の採番と実装方針の決定
-    tags:
-      - plan
-    edit: false
-    persona: planner
-    policy:
-      - tayk-traceability
-      - tayk-toolchain
-    knowledge:
-      - architecture
-      - tayk-adr
-      - tayk-domain
-    provider_options:
-      extends: review-readonly
-    instruction: tayk-plan
-    quality_gates:
-      - 全要件に REQ-<issue番号>-<2桁連番> 形式の ID が振られていること
-      - 要件 ID ごとに対象ファイルと方針が対応づいていること
-      - ADR 整合性の事前申告が全 ADR に対して行われていること
-      - v0.1.0 のゲート外の拡張を方針に含めていないこと
+    uses: implementation-high-plan-to-write-tests
+    policy: [design-planning, tayk-traceability, tayk-toolchain]
+    knowledge: [architecture, tayk-adr, tayk-domain]
     rules:
-      # plan は 9 方向から再訪される（intake / test_design / design_review の NEED_REPLAN /
-      # design_fix / draft の need_replan / impl_review の provisional 3 経路 / fix の
-      # 情報不足 / final_gate / spillover、加えて loop monitor 4 本）。cycle パターンが
-      # 安定しないため、やり直し回数の上限をこの step 自身が持つ（ADR-0008 決定 6）
-      - condition: これが 4 回目以降の計画である（3 回作り直しても方針が定まらなかった）
-        next: ABORT
-        appendix: |
-          各ラウンドで立てた方針と、差し戻された理由:
-          - {何を計画し、なぜ差し戻されたか}
-      - condition: 要件 ID を採番し実装方針を決めた
+      - condition: タスク分析と計画が完了した
         next: test_design
       - condition: ユーザーが質問をしている（実装タスクではない）
         next: COMPLETE
-      - condition: ブリーフの決定だけでは方針が一意に決まらない
+      - condition: 要件が不明確で計画を立てられない
         next: ABORT
-        appendix: |
-          方針を決めるために必要な情報:
-          - {何が決まれば進めるか}
-    output_contracts:
-      report:
-        - name: plan.md
-          format: tayk-plan
 
   - name: test_design
-    description: 要件 ID ごとの検証設計（テストコードは書かない）
-    tags:
-      - plan
-      - test-planning
+    description: 計画の completion contract ごとに検証方法を設計する
+    tags: [plan, test-planning]
     edit: false
     persona: test-planner
-    policy:
-      - testing
-      - tayk-traceability
-      - tayk-toolchain
-    knowledge:
-      - unit-testing
-      - e2e-testing
-      - tayk-domain
+    policy: [testing, tayk-traceability, tayk-toolchain]
+    knowledge: [unit-testing, e2e-testing, tayk-domain]
     provider_options:
       extends: review-readonly
     instruction: tayk-test-design
-    quality_gates:
-      - 全要件 ID にテストケースが対応しているか、検証不能の理由が書かれていること
-      - 境界と失敗経路のケースが設計されていること
-      - critical regression に触れる変更なら 3 種それぞれの回帰ケースがあること
-      - 1 tool = テスト 1 ファイルの配置になっていること
-    rules:
-      - condition: 全要件にテスト設計が対応づいた
-        next: design_review
-      - condition: 実装計画の要件が曖昧でテスト設計できない
-        next: plan
     output_contracts:
       report:
         - name: test-design.md
           format: tayk-test-design
+    rules:
+      - condition: 全 completion contract に検証設計が対応づいた
+        next: design_review
+      - condition: 計画の要件が曖昧で検証設計できない
+        next: plan
 
-  # 実装前の関門。ここで止めた誤りは、実装後に見つける場合より桁違いに安い。
   - name: design_review
-    description: 設計 / ADR 整合性 / テスト設計の 3 並列レビュー
-    tags:
-      - review
-      - design-gate
+    description: 実装前に設計、ADR 整合性、検証設計を独立に審査する
+    tags: [review, design-gate]
     parallel:
       - name: design-arch-review
-        tags:
-          - review
-          - design-gate
+        tags: [review, design-gate]
         edit: false
+        session: compact
         persona: architecture-reviewer
-        policy:
-          - review
-          - tayk-review-rescan
-          - tayk-review-convergence
-        knowledge:
-          - architecture
-          - tayk-domain
+        policy: [review, tayk-review-rescan, tayk-review-convergence]
+        knowledge: [architecture, tayk-domain]
         provider_options:
           extends: review-readonly
-        pass_previous_response: false
         instruction: tayk-review-design-arch
-        rules:
-          - condition: APPROVE
-          - condition: REJECT
-          - condition: NEED_REPLAN
         output_contracts:
           report:
             - name: design-review.md
               format: tayk-design-arch-review
-      - name: adr-conformance-design
-        tags:
-          - review
-          - design-gate
-          - adr
-        edit: false
-        persona: tayk-adr-conformance-reviewer
-        policy:
-          - review
-          - tayk-review-rescan
-          - tayk-review-convergence
-        knowledge:
-          - tayk-adr
-          - tayk-domain
-        provider_options:
-          extends: review-readonly
-        pass_previous_response: false
-        instruction: tayk-review-adr-conformance-gate
         rules:
           - condition: APPROVE
           - condition: REJECT
-          - condition: NEEDS_ADR_REVISION
+          - condition: NEED_REPLAN
+      - name: adr-conformance-design
+        tags: [review, design-gate, adr]
+        edit: false
+        session: compact
+        persona: tayk-adr-conformance-reviewer
+        policy: [review, tayk-review-rescan, tayk-review-convergence]
+        knowledge: [tayk-adr, tayk-domain]
+        provider_options:
+          extends: review-readonly
+        instruction: tayk-review-adr-conformance-gate
         output_contracts:
           report:
             - name: adr-conformance-design.md
               format: tayk-adr-conformance-review
-      - name: test-design-review
-        tags:
-          - review
-          - design-gate
-        edit: false
-        persona: testing-reviewer
-        policy:
-          - review
-          - testing
-          - tayk-traceability
-          - tayk-review-rescan
-          - tayk-review-convergence
-        knowledge:
-          - unit-testing
-          - e2e-testing
-        provider_options:
-          extends: review-readonly
-        pass_previous_response: false
-        instruction: tayk-review-test-design
         rules:
           - condition: APPROVE
           - condition: REJECT
+          - condition: NEEDS_ADR_REVISION
+      - name: test-design-review
+        tags: [review, design-gate]
+        edit: false
+        session: compact
+        persona: testing-reviewer
+        policy:
+          [
+            review,
+            testing,
+            tayk-traceability,
+            tayk-review-rescan,
+            tayk-review-convergence,
+          ]
+        knowledge: [unit-testing, e2e-testing]
+        provider_options:
+          extends: review-readonly
+        instruction: tayk-review-test-design
         output_contracts:
           report:
             - name: test-design-review.md
               format: tayk-test-design-review
+        rules:
+          - condition: APPROVE
+          - condition: REJECT
     rules:
       - condition: all("APPROVE")
         next: write_tests
@@ -304,447 +170,152 @@ steps:
         next: plan
       - condition: any("REJECT", "NEEDS_ADR_REVISION")
         next: design_fix
-      # sub-step の verdict がどの宣言条件にも分類されないと（分類器の失敗・空応答）、
-      # all() は false・any() は skip になり全 rule が外れ、rule 不一致で run 全体が
-      # ABORT する（#167）。決定的な受け皿で再レビューへ戻す。連続自己再入は
-      # design_fix への外部再入ではないため ADR-0008 決定 12 に反しない。
-      # 上限は max_steps が持つ
       - condition: when(true)
         next: design_review
 
   - name: design_fix
-    description: 設計レビュー指摘の解消（レポートのみを直す。コードは書かない）
-    tags:
-      - plan
-      - design-gate
+    description: 設計レビューの指摘だけを解消する
+    tags: [plan, design-gate]
     edit: true
+    session: compact
     persona: planner
-    policy:
-      - tayk-traceability
-      - tayk-conflict-escalation
-    knowledge:
-      - architecture
-      - tayk-adr
+    policy: [tayk-traceability, tayk-conflict-escalation]
+    knowledge: [architecture, tayk-adr]
     required_permission_mode: edit
-    session: refresh
     provider_options:
       extends: edit
-    # 同じ設計指摘で 2 周目に入ったら、推論を厚くして食い違いの根に届かせる
-    promotion:
-      - at: 2
-        provider_options:
-          codex:
-            reasoning_effort: high
-          claude:
-            effort: high
     instruction: tayk-gate-fix
-    pass_previous_response: false
-    quality_gates:
-      - 全 finding に対応（修正 or 根拠を示した反論）していること
-      - 要件 ID を振り直していないこと（分割時は枝番を使うこと）
-      - プロダクションコード・テストコードを書いていないこと
     rules:
-      # design_fix は design_review からだけでなく write_tests（テストを書けない要件が
-      # 残る）からも再入する。挟み込みで loop monitor ① の cycle
-      # [design_review, design_fix] が途切れ、カウントが 1 に戻ることがあるため、
-      # ラウンド上限をこの step 自身にも持たせる（ADR-0008 決定 6）
-      - condition: これが 4 回目以降の設計修正である（3 ラウンドで設計が固まらなかった）
-        next: plan
-        appendix: |
-          各ラウンドで直した内容と、残った指摘:
-          - {何を直し、何が残ったか}
       - condition: 全 finding に対応した
         next: design_review
       - condition: 指摘が計画の前提そのものを否定している
         next: plan
 
-  # ── Phase 2: 実装 ─────────────────────────────────────────────────
   - name: write_tests
-    description: 承認されたテスト設計に基づくテスト先行実装（red を確認する）
-    tags:
-      - coding
-      - test-planning
-    edit: true
-    persona: coder
-    policy:
-      - coding
-      - testing
-      - tayk-traceability
-      - tayk-toolchain
+    uses: implementation-high-write-tests-to-implement
+    policy: [coding, testing, tayk-traceability, tayk-toolchain]
     knowledge:
-      - unit-testing
-      - e2e-testing
-      - tayk-adr
-    required_permission_mode: edit
-    provider_options:
-      extends: edit
-    instruction: tayk-write-tests
-    quality_gates:
-      - テスト設計で自動テスト化すると決めた全ケースを実装していること
-      - 各テストに要件 ID とケース ID が埋め込まれていること
-      - 実装前の時点でテストが失敗する（red である）ことを確認していること
-      - 外部サービスへ実アクセスしていないこと
-      - 未作成ケースが、設計レビューで承認済みの非テスト化ケースだけであること
+      [
+        takt,
+        architecture,
+        unit-testing,
+        e2e-testing,
+        implementation-semantics,
+        tayk-adr,
+      ]
     rules:
-      # run hntkbo では、承認済みの非テスト化ケースが test-report の「未カバー」と
-      # して並んだため、Iter 15→16 と Iter 20→21 の両方で下の差し戻し条件へ誤分類
-      # された。自動テスト化の決定と承認済み非テスト化を分けて判定する（#207）。
-      - condition: テスト設計で自動テスト化すると決めた全ケースを実装し red を確認した。未作成は設計レビューで承認済みの非テスト化ケースだけである
-        next: draft
-      # テスト未作成のまま draft へ進む出口は置かない。テストのない要件は
-      # 「検証不能」としてテスト設計に明記し、設計レビューを通してから実装へ入る
-      # （1 要件に最低 1 テストケース: ADR-0008 決定 5）
-      - condition: テスト設計で自動テスト化すると決めたケースを実装できていない（テスト設計の誤り、または依存する基盤が未実装）。承認済みの非テスト化ケースと未実装を示す想定内の red は含めない
+      - condition: テスト作成が完了した
+        next: implement
+      - condition: 実装対象が未実装のためテスト作成をスキップ
+        next: implement
+      - condition: テスト作成を進行できない
         next: design_fix
-      - condition: ユーザーへの確認事項があるためユーザー入力が必要
+      - condition: ユーザー入力が必要
         next: write_tests
         requires_user_input: true
         interactive_only: true
-    output_contracts:
-      report:
-        - name: test-report.md
-          format: tayk-test-report
 
-  # builtin の実装 + AI アンチパターン自己レビューループ。
-  # implement の instruction だけ tayk の ADR 制約を効かせたものへ差し替える。
-  #
-  # builtin の子へは policy を渡せない（差し替えられるのは args の instruction だけ）。
-  # そのため他 step が policy: tayk-toolchain に集約した bun 規約も、この step にだけは
-  # 届かない。tayk-implement の「禁止」節が bun 以外の PM 実行を止めているのは、
-  # 重複ではなくこの制約の埋め合わせである。tayk-toolchain を変えたら同時に見直す
-  - name: draft
-    kind: workflow_call
-    call: default-draft
-    args:
-      impl_instruction: tayk-implement
-    rules:
-      - condition: COMPLETE
-        next: impl_review
-      - condition: need_replan
-        next: plan
-      - condition: ABORT
-        next: ABORT
-
-  # ── Phase 3: 実装レビュー ─────────────────────────────────────────
-  # 7 並列レビュー ⇄ 修正。かつては tayk-impl-review という callable の内側に閉じて
-  # いた（旧決定 12）が、takt の Finding Contract は project 側 callable に適用できない
-  # ため親へ展開した — 子だけの宣言は runtime のレポート公開先制限で必ず失敗し、
-  # 親宣言 + `subworkflow.requires_finding_contract` 継承は doctor の単体検証で必ず
-  # エラーになる（実測の記録は ADR-0008 Consequences）。ループの歯止めは
-  # loop monitor 2 本が持つ。
-  #
-  # feature / fix で定義が重複する。spillover と同じく目視で一致を保つこと
-  # （ADR-0008 Consequences の検査 E）。
-  - name: impl_review
-    description: アーキテクチャ / AI アンチパターン / コーディング / 実装意味論 / 契約ライフサイクル / 堅牢性 / ADR 整合性の 7 並列レビュー
-    tags:
-      - review
-    parallel:
-      - name: arch-review
-        tags:
-          - review
-        edit: false
-        persona: architecture-reviewer
-        policy:
-          - review
-          - existing-system-respect
-          - tayk-review-convergence
-        knowledge:
-          - architecture
-          - tayk-domain
-        provider_options:
-          extends: review-readonly
-        instruction: review-arch
-        rules:
-          - condition: approved
-          - condition: needs_fix
-        output_contracts:
-          report:
-            - name: architect-review.md
-              format: tayk-architecture-review-finding-contract
-      - name: ai-antipattern-review-2nd
-        tags:
-          - review
-        edit: false
-        persona: ai-antipattern-reviewer
-        policy:
-          - review
-          - ai-antipattern
-          - existing-system-respect
-          - tayk-review-convergence
-        provider_options:
-          extends: review-readonly
-        instruction: ai-antipattern-review
-        rules:
-          - condition: AI特有の問題なし
-          - condition: AI特有の問題あり
-        output_contracts:
-          report:
-            - name: ai-antipattern-review.md
-              format: tayk-ai-antipattern-review-finding-contract
-      - name: coding-review
-        tags:
-          - review
-        edit: false
-        persona: coding-reviewer
-        policy:
-          - review
-          - coding
-          - tayk-traceability
-          - existing-system-respect
-          - tayk-review-convergence
-        pass_previous_response: false
-        provider_options:
-          extends: review-readonly
-        instruction: review-coding
-        rules:
-          - condition: approved
-          - condition: needs_fix
-        output_contracts:
-          report:
-            - name: coding-review.md
-              format: tayk-coding-review-finding-contract
-      - name: implementation-semantics-review
-        tags:
-          - review
-        edit: false
-        persona: implementation-semantics-reviewer
-        policy:
-          - review
-          - existing-system-respect
-          - tayk-review-convergence
-        knowledge:
-          - implementation-semantics
-        pass_previous_response: false
-        provider_options:
-          extends: review-readonly
-        instruction: review-implementation-semantics
-        rules:
-          - condition: approved
-          - condition: needs_fix
-        output_contracts:
-          report:
-            - name: implementation-semantics-review.md
-              format: tayk-implementation-semantics-review-finding-contract
-      - name: contract-lifecycle-review
-        tags:
-          - review
-        edit: false
-        persona: contract-lifecycle-reviewer
-        policy:
-          - review
-          - tayk-traceability
-          - tayk-review-convergence
-        knowledge:
-          - contract-lifecycle
-        pass_previous_response: false
-        provider_options:
-          extends: review-readonly
-        instruction: contract-lifecycle-review
-        rules:
-          - condition: approved
-          - condition: needs_fix
-        output_contracts:
-          report:
-            - name: contract-lifecycle-review.md
-              format: tayk-contract-lifecycle-review-finding-contract
-      - name: robustness-review
-        tags:
-          - review
-        edit: false
-        persona: robustness-reviewer
-        policy:
-          - review
-          - existing-system-respect
-          - tayk-review-convergence
-        knowledge:
-          - robustness
-        pass_previous_response: false
-        provider_options:
-          extends: review-readonly
-        instruction: robustness-review
-        rules:
-          - condition: approved
-          - condition: needs_fix
-        output_contracts:
-          report:
-            - name: robustness-review.md
-              format: tayk-robustness-review-finding-contract
-      - name: adr-conformance-impl
-        tags:
-          - review
-          - adr
-        edit: false
-        persona: tayk-adr-conformance-reviewer
-        policy:
-          - review
-          - tayk-review-rescan
-          - tayk-review-convergence
-        knowledge:
-          - tayk-adr
-          - tayk-domain
-        pass_previous_response: false
-        provider_options:
-          extends: review-readonly
-        instruction: tayk-review-adr-conformance-impl
-        rules:
-          - condition: APPROVE
-          - condition: REJECT
-          - condition: NEEDS_ADR_REVISION
-        output_contracts:
-          report:
-            - name: adr-conformance-impl.md
-              format: tayk-adr-conformance-review-finding-contract
-    rules:
-      # 台帳の状態を先に見る。conflicts（レビュア間の相互排他な指摘）が未調停なら
-      # engine 注入の synthetic step へ回し、調停後も残るなら人間の判断が要る
-      - condition: when(findings.conflicts.count > 0 && findings.conflicts.unadjudicated.count > 0)
-        next: finding-conflict-adjudication
-      - condition: when(findings.conflicts.count > 0)
-        next: ABORT
-      # provisional（判定不能な観測）はゲートを塞ぐ。fix では解けないため計画へ戻す
-      - condition: when(findings.provisional.fixpoint == true && findings.conflicts.count == 0)
-        next: plan
-      - condition: when(findings.rounds.budgetExhausted == true && findings.provisional.count > 0 && findings.conflicts.count == 0)
-        next: plan
-      - condition: when(findings.provisional.count > 0 && findings.conflicts.count == 0)
-        next: plan
-      # all() の複数引数は並列 sub-step と位置対応で照合され、個数が一致しないと
-      # ルールごとスキップされる（= 前進不能）。sub-step の宣言順に 7 個並べる
-      - condition: all("approved", "AI特有の問題なし", "approved", "approved", "approved", "approved", "APPROVE") && when(findings.open.count == 0 && findings.provisional.count == 0 && findings.conflicts.count == 0)
-        next: final_gate
-      # reviewer の応答自体に異常があっても、台帳が空なら最終ゲートの supervise で拾う
-      - condition: any("approved", "needs_fix", "AI特有の問題なし", "AI特有の問題あり", "APPROVE", "REJECT", "NEEDS_ADR_REVISION") && when(findings.open.count == 0 && findings.provisional.count == 0 && findings.conflicts.count == 0 && findings.reviewerAnomalies.count > 0)
-        next: final_gate
-      - condition: any("needs_fix", "AI特有の問題あり", "REJECT", "NEEDS_ADR_REVISION") && when(findings.conflicts.count == 0)
-        next: fix
-      - condition: when(findings.conflicts.count == 0 && findings.open.count > 0)
-        next: fix
-      # sub-step の verdict がどの宣言条件にも分類されないと（分類器の失敗・空応答）、
-      # all() は false・any() は skip になり全 rule が外れ、rule 不一致で run 全体が
-      # ABORT していた（#167。全レビュー APPROVE でも落ちる）。決定的な受け皿で
-      # 再レビューへ戻す。連続自己再入は fix への外部再入ではないため
-      # loop monitor の cycle を壊さない。上限は max_steps が持つ
-      - condition: when(true)
-        next: impl_review
-
-  - name: fix
-    description: 実装レビュー指摘の修正
-    tags:
-      - coding
+  - name: implement
+    tags: [coding]
     edit: true
+    session: compact
     persona: coder
     policy:
-      - coding
-      - testing
-      - tayk-traceability
-      - existing-system-respect
-      - tayk-scope-spillover
-      - tayk-conflict-escalation
+      [coding, testing, tayk-traceability, tayk-scope-spillover, tayk-toolchain]
     knowledge:
-      - architecture
-      - tayk-adr
+      [takt, architecture, implementation-semantics, tayk-adr, tayk-domain]
     required_permission_mode: edit
-    session: refresh
-    provider_options:
-      extends: edit
-    promotion:
-      - at: 2
-        provider_options:
-          codex:
-            reasoning_effort: high
-          claude:
-            effort: high
-    instruction: fix
-    pass_previous_response: false
-    quality_gates:
-      - テストの削除・skip・アサーション緩和で指摘を消していないこと
-      - テスト先行で書いたテストが green のままであること
-      - ADR 逸脱の指摘に対し、該当 ADR の改訂を差分に含めたか、逸脱を解消したかのいずれかであること
-      - 計画の要件 ID にない機能を追加していないこと
+    instruction: implement
     rules:
-      # 上限は loop monitor が持つ。この step は「このループでは解けない」と分かった
-      # ときだけ計画へ戻す
-      - condition: 修正完了
-        next: impl_review
-      - condition: 判断できない、情報不足
-        next: plan
+      - condition: 実装完了
+        next: reviewers
+      - condition: 実装を進められない
+        next: replan
 
-  # ── Phase 4: 最終ゲート ───────────────────────────────────────────
-  # builtin の merge-readiness + supervise ゲートの Finding Contract 版。台帳の
-  # open / provisional / conflicts を見て差し戻し先を決めるため、レビュー側と同じ
-  # 判断基準で最終確認が走る。supervise 側の knowledge に tayk の ADR を足して、
-  # 規約観点の最終確認を効かせる。
-  #
-  # builtin callable なので FC が効く（project 側 callable では効かない）。この
-  # 非対称が、実装レビューを親へ展開してこの step は callable のまま残した理由である。
+  - name: replan
+    uses: implementation-high-replan-to-implement
+    policy: [design-planning, tayk-traceability, tayk-toolchain]
+    knowledge: [architecture, tayk-adr, tayk-domain]
+    rules:
+      - condition: プロジェクト内で実行可能な未試行の変更または原因調査と、その検証手順を具体化した
+        next: implement
+      - condition: 確認済みの根拠により、プロジェクト内の変更や調査では解消できず、外部操作だけが残るか要件が両立不能である
+        next: ABORT
+
+  - name: reviewers
+    uses: reviewers
+    rules:
+      self:
+        - condition: when(findings.conflicts.count > 0 && findings.conflicts.unadjudicated.count > 0)
+          next: finding-conflict-adjudication
+        - condition: when(findings.conflicts.count > 0)
+          next: ABORT
+        - condition: when(findings.provisional.count > 0 && findings.conflicts.count == 0)
+          next: replan
+        - condition: all("approved", "AI特有の問題なし", "approved", "approved", "approved", "approved", "APPROVE") && when(findings.open.count == 0 && findings.provisional.count == 0 && findings.conflicts.count == 0)
+          next: final_gate
+        - condition: any("approved", "needs_fix", "AI特有の問題なし", "AI特有の問題あり", "APPROVE", "REJECT", "NEEDS_ADR_REVISION") && when(findings.open.count == 0 && findings.provisional.count == 0 && findings.conflicts.count == 0 && findings.reviewerAnomalies.count > 0)
+          next: final_gate
+        - condition: any("needs_fix", "AI特有の問題あり", "REJECT", "NEEDS_ADR_REVISION") && when(findings.conflicts.count == 0)
+          next: fix
+        - condition: when(findings.conflicts.count == 0 && findings.open.count > 0)
+          next: fix
+      parallel:
+        arch-review: [{ condition: approved }, { condition: needs_fix }]
+        ai-antipattern-review:
+          [{ condition: AI特有の問題なし }, { condition: AI特有の問題あり }]
+        coding-review: [{ condition: approved }, { condition: needs_fix }]
+        implementation-semantics-review:
+          [{ condition: approved }, { condition: needs_fix }]
+        contract-lifecycle-review:
+          [{ condition: approved }, { condition: needs_fix }]
+        robustness-review: [{ condition: approved }, { condition: needs_fix }]
+        adr-conformance-review:
+          [
+            { condition: APPROVE },
+            { condition: REJECT },
+            { condition: NEEDS_ADR_REVISION },
+          ]
+
   - name: final_gate
-    kind: workflow_call
-    call: merge-readiness-finding-contract-final-gate
-    args:
-      supervise_knowledge:
-        - architecture
-        - tayk-adr
+    uses: finding-contract-final-gate
     rules:
       - condition: COMPLETE
         next: spillover
       - condition: needs_review
-        next: impl_review
+        next: reviewers
+      - condition: need_replan
+        next: replan
       - condition: needs_fix
         next: fix
-      - condition: need_replan
-        next: plan
       - condition: needs_conflict_adjudication
         next: finding-conflict-adjudication
       - condition: ABORT
         next: ABORT
 
-  # ── Phase 5: スコープ外発見の起票 ─────────────────────────────────
-  # 「ついで直しをしない」という禁止の受け皿。ここを通さないと発見は実行ログとともに埋もれる。
-  #
-  # commit / push / PR 作成はこの workflow では行わない。workflow 完了後に takt の
-  # auto_pr がサンドボックス外で実行し、push 時の pre-push フック（bun run check +
-  # takt workflow doctor）が最終関門になる（ADR-0008 決定 7 改訂）。
-  #
-  # callable sub-workflow にしない。この step の職務は「Report Directory の全レポートを
-  # 走査する」ことだが、callable の子は自分専用の report namespace を持ち、親のレポートが
-  # 見えない（ADR-0008 決定 13）。feature / fix で定義が重複するが、複製を避けて職務が
-  # 成立しなくなるより重複を選ぶ。
-  - name: spillover
-    description: 各レポートのスコープ外の発見を集め、起票する / 捨てるに仕分ける
-    tags:
-      - delivery
-    edit: false
-    persona: tayk-delivery-operator
+  - name: fix
+    uses: fix
     policy:
-      - tayk-scope-spillover
-    knowledge:
-      - tayk-domain
-    # gh issue create / comment を使うため Bash が要る。ソースは触らないので edit: false
-    provider_options:
-      extends: review-readonly
-    session: refresh
-    instruction: tayk-spillover
-    output_contracts:
-      report:
-        - name: spillover.md
-          format: tayk-spillover
-    quality_gates:
-      - Report Directory の全レポートを読み、発見がなかったものも収集元に記録していること
-      - 起票したものが 3 条件（因果なし / 実害あり / 根拠あり）をすべて満たしていること
-      - 起票前に gh issue list で重複を照合していること
-      - 破棄した発見について、満たさなかった条件と理由を記録していること
-      - gh issue の操作に失敗したなら、起票できなかった発見と手動起票用のコマンドを
-        レポートに残していること
-      - コードを変更していないこと
+      [
+        coding,
+        testing,
+        tayk-traceability,
+        tayk-scope-spillover,
+        tayk-conflict-escalation,
+        tayk-toolchain,
+      ]
+    knowledge: [takt, architecture, implementation-semantics, tayk-adr]
     rules:
-      # 仕分け自体は完了しているため、この rule を先に置かないと下の「仕分けが終わった」に
-      # 吸われて素通りする。因果のある発見は要件 ID の採番からやり直すため計画へ戻す
+      - condition: 修正完了
+        next: reviewers
+      - condition: 修正を進められない、または実装方針の再定義が必要
+        next: replan
+
+  - name: spillover
+    uses: tayk-spillover
+    rules:
       - condition: 因果ありと判定した発見があり、今回の差分に含めるべきものが残っている
         next: plan
-      # gh 失敗を「仕分けが終わった」と同じ rule に畳まない。畳むと実行ログ上で成功と
-      # 区別できなくなる。起票できなかった発見と手動起票コマンドはレポートに残るため、
-      # 実装が完了している以上ここでは止めない（ADR-0008 決定 11）
       - condition: gh issue の操作に失敗し、起票できなかった発見が残っている
         next: COMPLETE
       - condition: 仕分けが終わり、起票・追記・破棄をすべて記録した（発見ゼロの場合を含む）

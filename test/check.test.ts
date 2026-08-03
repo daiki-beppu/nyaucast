@@ -35,8 +35,8 @@ const prepareSentinelName = "prepare-ran";
 /**
  * 「ローカルで CI を再現する」を指示する facet。
  *
- * `tayk-write-tests.md` / `tayk-reproduce.md` はここに含めない。あの 2 つの `bun test` は
- * ゲートの再現ではなく **red の観測**（ADR-0008 決定 5 / 9 / 10）であり、まだ実装が無い状態で
+ * `tayk-reproduce.md` はここに含めない。その `bun test` はゲートの再現ではなく
+ * **red の観測**であり、まだ実装が無い状態で
  * 全ゲートを通すことは設計上できない。
  */
 const gateInstructingFacets = [
@@ -49,24 +49,12 @@ const gateInstructingFacets = [
     commandScope: {
       container: "ordered-list-item",
       introduction: completionGateInstruction,
-      ordinal: 4,
-    },
-    path: ".takt/facets/instructions/tayk-implement.md",
-    sectionHeading: "## 手順",
-  },
-  {
-    commandScope: {
-      container: "ordered-list-item",
-      introduction: completionGateInstruction,
       ordinal: 6,
     },
     path: ".takt/facets/instructions/tayk-repair.md",
     sectionHeading: "## 手順",
   },
 ] as const;
-const replanMonitorInstructionPath =
-  ".takt/facets/instructions/tayk-loop-monitor-replan.md";
-const planContractPath = ".takt/facets/output-contracts/tayk-plan.md";
 
 /**
  * ゲート集合の複製を検出する表記。`test` は red 観測にも使うため対象外。
@@ -999,47 +987,6 @@ describe("check command", () => {
     expect(lintFix).toContain("--config oxlint.config.ts");
     expect(formatCheck.endsWith(" .")).toBeTrue();
     expect(formatFix.endsWith(" .")).toBeTrue();
-  });
-});
-
-describe("replan monitor report boundary", () => {
-  // REQ-121-01 / TC-121-01 / P-121-01
-  test("should use only parent-visible reports as monitor inputs", () => {
-    const instruction = readRepositoryFile(replanMonitorInstructionPath);
-
-    expect(instruction).not.toContain("intake-brief.md");
-    expect(instruction).not.toContain("実装ブリーフ");
-    expect(instruction).toContain("Report Directory 内の `plan.md`");
-  });
-
-  // REQ-121-02 / TC-121-02 / P-121-02
-  test("should read unresolved issue details from the plan handoff", () => {
-    const instruction = readRepositoryFile(replanMonitorInstructionPath);
-
-    expect(instruction).toContain(
-      "`plan.md` の「ブリーフからの引き継ぎ」に記録された issue の未決事項"
-    );
-  });
-
-  // REQ-121-03 / TC-121-03 / P-121-03
-  test("should require every intake handoff in the plan contract", () => {
-    const contract = readRepositoryFile(planContractPath);
-    const handoffSection = /## ブリーフからの引き継ぎ[\s\S]*?(?=\n## )/.exec(
-      contract
-    )?.[0];
-
-    expect(handoffSection).toBeDefined();
-    expect(handoffSection).toContain("確定している決定");
-    expect(handoffSection).toContain("制約");
-    expect(handoffSection).toContain("ブリーフの対象外");
-    expect(contract).toContain("「ブリーフからの引き継ぎ」も省略不可");
-  });
-
-  // REQ-121-04 / TC-121-04 / P-121-04
-  test("should keep callable child report exploration out of the instruction", () => {
-    const instruction = readRepositoryFile(replanMonitorInstructionPath);
-
-    expect(instruction).not.toMatch(/(?:intake-brief\.md|実装ブリーフ)/);
   });
 });
 

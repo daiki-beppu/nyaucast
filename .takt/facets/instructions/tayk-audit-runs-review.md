@@ -20,7 +20,7 @@
 1. 分析レポートの Audit Scope を計画レポートの Audit Targets と突き合わせ、⏳ と根拠不足の対象を特定する
 2. そのうち今回分析する対象を優先度順に選ぶ（**最低 4 対象**。残りが 4 未満なら全部）
 3. 選んだ対象の run 群について meta.json で結末を掴み、trace.md の遷移系列を再構成し、run 名 + トレース引用を根拠として分析結果を記録する。loop monitor 不発の検査（手順と判定は `.takt/facets/instructions/tayk-audit-runs-analyze.md` の「必須の分析手順」3 と同一）も適用し、「Loop Monitor 不発の疑い」節を維持・更新する
-4. 定義監査の対象（#1〜#3）を再分析する場合は、隔離クローン内の定義ファイルを相対パスで読む。観点・意図された差分・根拠の形式は初回分析と同じ（E: spillover 複製の一致 — 戻し先 `plan` / `diagnose` 以外の差分は乖離 / F: callable が参照するリポ内 facet からの親レポート参照の検出 / drift: 工程説明 3 箇所と実配線の照合）。乖離が無い観点は Key Observations に「乖離なし」と何を照合したかを明記する
+4. 定義監査の対象（#1〜#3）を再分析する場合は、隔離クローン内の定義ファイルを相対パスで読む。観点・意図された差分・根拠の形式は初回分析と同じ（shared fragment: `uses:`・reviewer 対応・spillover 戻し先 / callable: intake facet の親レポート参照 / drift: 工程説明 3 箇所と実配線）。乖離が無い観点は Key Observations に「乖離なし」と何を照合したかを明記する
 5. Recovery Coverage に「未回収」「一部未回収」の run が残っていれば、その Report Directory を `reports/**/*.md` で再帰走査して回収を前進させる（走査手順・拾う対象・失敗の区別は `.takt/facets/instructions/tayk-audit-runs-analyze.md` の「Recovery Inventory の分析」と同一）
 
 ## 通常 Finding の Evidence
