@@ -3,17 +3,16 @@ import {
   cpSync,
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readdirSync,
   readFileSync,
-  rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 
-const packageRoot = resolve(import.meta.dirname, "..");
+import { packageRoot, withTemporaryDirectory } from "./helpers";
+
 const subprocessTimeoutMilliseconds = 20_000;
 const validTypeScript = 'export const fixtureValue: string = "valid";\n';
 const invalidTypeScript = "export const fixtureValue: string = 1;\n";
@@ -71,31 +70,31 @@ function withTypecheckFixture(
     );
   }
 
-  const fixtureRoot = mkdtempSync(join(fixtureParent, "tayk-typecheck-"));
-  try {
-    cpSync(
-      join(packageRoot, "package.json"),
-      join(fixtureRoot, "package.json")
-    );
-    cpSync(
-      join(packageRoot, "tsconfig.json"),
-      join(fixtureRoot, "tsconfig.json")
-    );
-    for (const fixture of includedFixtures) {
-      writeFixtureFile(
-        fixtureRoot,
-        fixture.path,
-        fixture.path === "bin/fixture.js" ? validJavaScript : validTypeScript
+  withTemporaryDirectory(
+    join(fixtureParent, "tayk-typecheck-"),
+    (fixtureRoot) => {
+      cpSync(
+        join(packageRoot, "package.json"),
+        join(fixtureRoot, "package.json")
       );
+      cpSync(
+        join(packageRoot, "tsconfig.json"),
+        join(fixtureRoot, "tsconfig.json")
+      );
+      for (const fixture of includedFixtures) {
+        writeFixtureFile(
+          fixtureRoot,
+          fixture.path,
+          fixture.path === "bin/fixture.js" ? validJavaScript : validTypeScript
+        );
+      }
+      symlinkSync(
+        join(dependencyRoot, "node_modules"),
+        join(fixtureRoot, "node_modules")
+      );
+      run(fixtureRoot);
     }
-    symlinkSync(
-      join(dependencyRoot, "node_modules"),
-      join(fixtureRoot, "node_modules")
-    );
-    run(fixtureRoot);
-  } finally {
-    rmSync(fixtureRoot, { force: true, recursive: true });
-  }
+  );
 }
 
 function runTypecheck(directory: string) {
@@ -153,8 +152,7 @@ describe("TypeScript configuration", () => {
   });
 
   test("REQ-117-09 should reject missing dependencies before creating a fixture", () => {
-    const directory = mkdtempSync(join(tmpdir(), "tayk-typecheck-missing-"));
-    try {
+    withTemporaryDirectory("tayk-typecheck-missing-", (directory) => {
       const dependencyRoot = join(directory, "dependency-root");
       const fixtureParent = join(directory, "fixtures");
       mkdirSync(dependencyRoot);
@@ -172,8 +170,6 @@ describe("TypeScript configuration", () => {
       }).toThrow("root dependencies; run bun install");
       expect(readdirSync(fixtureParent)).toEqual([]);
       expect(callbackCalls).toBe(0);
-    } finally {
-      rmSync(directory, { force: true, recursive: true });
-    }
+    });
   });
 });
