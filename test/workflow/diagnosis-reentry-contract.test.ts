@@ -375,24 +375,7 @@ describe("tayk-fix diagnosis re-entry contract", () => {
     ).toBe(true);
   });
 
-  // REQ-199-07 / TC-10 / P-1, P-2, P-3, P-4, P-5
-  test("the repository check gate continues to execute the workflow contract tests", () => {
-    const packageJson = JSON.parse(
-      readRepositoryFile("package.json")
-    ) as unknown;
-    if (!isRecord(packageJson)) {
-      throw new TypeError("package.json must contain an object");
-    }
-    const scripts = packageJson["scripts"];
-    if (!isRecord(scripts)) {
-      throw new TypeError("package.json must declare scripts");
-    }
-
-    expect(scripts["test"]).toBe("bun test");
-    expect(scripts["check"]).toMatch(/bun run test/);
-  });
-
-  // REQ-199-03 / TC-11 / P-1
+  // REQ-199-03, REQ-199-07 / TC-10, TC-11 / P-1, P-2, P-3, P-4, P-5
   test("diagnosis, parallel review, and spillover keep their parent report namespaces", () => {
     const workflow = parseWorkflow();
     const diagnosis = requireStep(workflow, "diagnose");

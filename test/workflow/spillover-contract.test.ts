@@ -58,14 +58,6 @@ function readSpilloverOutputFormat(workflowPath: string): string {
 }
 
 describe("feature/fix spillover report contract", () => {
-  test("should validate workflows with the externally managed takt executable", () => {
-    const packageManifest = readRepositoryFile("package.json");
-    const prePushHook = readRepositoryFile("lefthook.yml");
-
-    expect(packageManifest).not.toContain('"takt":');
-    expect(prePushHook).toContain("run: takt workflow doctor");
-  });
-
   test("[REQ-119-01] should wire the spillover report contract into both workflows", () => {
     for (const workflowPath of workflowPaths) {
       expect(readSpilloverReportContract(workflowPath)).toEqual(

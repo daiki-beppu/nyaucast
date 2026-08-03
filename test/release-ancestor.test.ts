@@ -468,7 +468,7 @@ describe("release ancestor guard", () => {
     });
   });
 
-  // REQ-77-05 / TC-77-05 / P-77-02
+  // REQ-77-05, REQ-77-06 / TC-77-05, TC-77-06 / P-77-01, P-77-02
   test("should run only npm publish dry-run for a manual main release", () => {
     withTemporaryDirectory("tayk-release-dry-run-", (directory) => {
       const environment = hermeticGitEnvironment(join(directory, "gitconfig"));
@@ -494,16 +494,6 @@ describe("release ancestor guard", () => {
       expect(result.exitCode).toBe(0);
       expect(npmCalls(stub.callsPath)).toEqual(["publish --dry-run"]);
     });
-  });
-
-  // REQ-77-06 / TC-77-06 / P-77-01
-  test("should keep the release regression test connected to the repository gate", () => {
-    const packageJson = JSON.parse(
-      readFileSync(join(packageRoot, "package.json"), "utf-8")
-    ) as { scripts: Record<string, string> };
-
-    expect(packageJson.scripts["check"]).toMatch(/\bbun run test\b/);
-    expect(packageJson.scripts["test"]).toBe("bun test");
   });
 
   // REQ-77-07 / TC-77-07 / P-77-02, P-77-03

@@ -376,6 +376,7 @@ function expectRecoveryLaneContract(): void {
 }
 
 describe("tayk-audit-runs recovery contract", () => {
+  // REQ-163-08 / TC-163-08B is distributed across the focused tests below.
   // REQ-199-05 / TC-08 / P-5
   test("tayk-fix keeps direct diagnosis ABORT reports recoverable while its overall limit changes", () => {
     expectAbortWiringContract();
@@ -435,14 +436,5 @@ describe("tayk-audit-runs recovery contract", () => {
   test("[REQ-163-07 / TC-163-07B] should assign completed abort and failed report trees to a later audit while normal completion keeps spillover", () => {
     expectRecoveryLaneContract();
     expectAbortWiringContract();
-  });
-
-  test("[REQ-163-08 / TC-163-08B] should keep selection, extraction, filing, deduplication, and lane ownership contracts consistent when recovery is enabled", () => {
-    expectRecoverySelectionContract();
-    expectRecoveryCoverageContract();
-    expectEvidenceValidationContract();
-    expectGitHubCommandContract();
-    expectAbortWiringContract();
-    expectRecoveryLaneContract();
   });
 });
