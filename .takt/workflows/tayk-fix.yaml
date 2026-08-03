@@ -239,6 +239,7 @@ steps:
           - review
           - tayk-review-rescan
           - tayk-review-convergence
+          - tayk-diagnosis-review-limit
         knowledge:
           - tayk-domain
         provider_options:
@@ -264,6 +265,7 @@ steps:
           - review
           - tayk-review-rescan
           - tayk-review-convergence
+          - tayk-diagnosis-review-limit
         knowledge:
           - tayk-adr
           - tayk-domain
@@ -291,6 +293,7 @@ steps:
           - tayk-traceability
           - tayk-review-rescan
           - tayk-review-convergence
+          - tayk-diagnosis-review-limit
         knowledge:
           - unit-testing
           - e2e-testing
@@ -306,6 +309,14 @@ steps:
             - name: regression-test-review.md
               format: tayk-test-design-review
     rules:
+      # loop monitor ① は連続する [diagnose_review, diagnose_fix] を 3 周した時点で先に
+      # supervisor を起動する。外部 diagnose 再入で連続一致が切れた場合は、通算 4 回目を
+      # この step 自身で ABORT し、run 15engc と同型の 5 回訪問を許さない（ADR-0008 決定 6）
+      - condition: これが 4 回目以降の診断レビューである（通算訪問上限に達した）
+        next: ABORT
+        appendix: |
+          各訪問で残った診断レビュー指摘:
+          - {どの指摘が解消せず、再入に至ったか}
       - condition: all("APPROVE")
         next: reproduce
       - condition: any("NEED_REDIAGNOSE")
