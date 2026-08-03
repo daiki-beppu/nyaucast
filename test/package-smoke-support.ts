@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import type { SpawnSyncReturns } from "node:child_process";
 import {
+  cpSync,
   copyFileSync,
   existsSync,
   mkdirSync,
@@ -24,6 +25,7 @@ const dependencyProbeFixturePath = join(
   "package-dependency-probe.ts"
 );
 const subprocessTimeoutMilliseconds = 60_000;
+const unavailableRegistry = "http://127.0.0.1:1";
 const bunPath = Bun.which("bun");
 const nodePath = Bun.which("node");
 export const packageSmokePrerequisitesUnavailable =
@@ -67,6 +69,9 @@ export interface DependencyProbeOutcome {
   probes: DependencyProbe[] | null;
   result: SubprocessResult;
 }
+
+export const localRuntimeDependencyName = "tayk-package-smoke-runtime";
+const localRuntimeDependencyVersion = "0.0.0-package-smoke-fixture";
 
 export function withTemporaryDirectory(run: (directory: string) => void): void {
   withSharedTemporaryDirectory("tayk-smoke-", run, realpathSync);
@@ -161,14 +166,18 @@ export function sourceDependencies(): Record<string, string> {
   );
 }
 
-export function installProductionPackage(directory: string): InstalledPackage {
+function installPackageFromSource(
+  directory: string,
+  sourcePackageRoot: string,
+  consumerRuntimeDependencies: Record<string, string>
+): InstalledPackage {
   const environment = createIsolatedEnvironment(directory);
   const tarballPath = join(directory, "tayk-production.tgz");
   const packed = spawnSync(
     bunExecutablePath(),
     ["pm", "pack", "--ignore-scripts", "--filename", tarballPath],
     {
-      cwd: packageRoot,
+      cwd: sourcePackageRoot,
       encoding: "utf-8",
       env: environment,
       killSignal: "SIGKILL",
@@ -180,7 +189,9 @@ export function installProductionPackage(directory: string): InstalledPackage {
     throw new Error(`bun pm pack did not create ${tarballPath}`);
   }
 
-  const sourceManifest = readJsonRecord(packageJsonPath);
+  const sourceManifest = readJsonRecord(
+    join(sourcePackageRoot, "package.json")
+  );
   const packageName = requireString(sourceManifest["name"], "package name");
   const consumerRoot = join(directory, "consumer");
   mkdirSync(consumerRoot);
@@ -188,8 +199,12 @@ export function installProductionPackage(directory: string): InstalledPackage {
     join(consumerRoot, "package.json"),
     `${JSON.stringify(
       {
-        dependencies: { [packageName]: `file:${tarballPath}` },
+        dependencies: {
+          ...consumerRuntimeDependencies,
+          [packageName]: `file:${tarballPath}`,
+        },
         name: "tayk-production-smoke-consumer",
+        overrides: consumerRuntimeDependencies,
         private: true,
         version: "0.0.0",
       },
@@ -200,7 +215,13 @@ export function installProductionPackage(directory: string): InstalledPackage {
 
   const installed = spawnSync(
     bunExecutablePath(),
-    ["install", "--production", "--ignore-scripts", "--backend=copyfile"],
+    [
+      "install",
+      "--production",
+      "--ignore-scripts",
+      "--backend=copyfile",
+      `--registry=${unavailableRegistry}`,
+    ],
     {
       cwd: consumerRoot,
       encoding: "utf-8",
@@ -221,6 +242,86 @@ export function installProductionPackage(directory: string): InstalledPackage {
     packageDirectory,
     shimPath: join(consumerRoot, "node_modules", ".bin", "tayk"),
   };
+}
+
+function createLocalRuntimeDependency(directory: string): string {
+  const dependencyRoot = join(directory, "local-runtime-dependency");
+  const tarballPath = join(directory, "local-runtime-dependency.tgz");
+  mkdirSync(dependencyRoot, { recursive: true });
+  writeFileSync(
+    join(dependencyRoot, "package.json"),
+    `${JSON.stringify(
+      {
+        exports: { ".": { import: "./index.js" } },
+        name: localRuntimeDependencyName,
+        type: "module",
+        version: localRuntimeDependencyVersion,
+      },
+      null,
+      2
+    )}\n`
+  );
+  writeFileSync(join(dependencyRoot, "index.js"), "export {};\n");
+  const packed = spawnSync(
+    bunExecutablePath(),
+    ["pm", "pack", "--ignore-scripts", "--filename", tarballPath],
+    {
+      cwd: dependencyRoot,
+      encoding: "utf-8",
+      killSignal: "SIGKILL",
+      timeout: subprocessTimeoutMilliseconds,
+    }
+  );
+  requireSuccessfulSubprocess("bun pm pack local runtime dependency", packed);
+  if (!existsSync(tarballPath)) {
+    throw new Error(`bun pm pack did not create ${tarballPath}`);
+  }
+  return `file:${tarballPath}`;
+}
+
+function createSourcePackageWithLocalRuntimeDependency(directory: string): {
+  dependencyReference: string;
+  sourcePackageRoot: string;
+} {
+  const sourcePackageRoot = join(directory, "source-package");
+  mkdirSync(sourcePackageRoot);
+  cpSync(join(packageRoot, "bin"), join(sourcePackageRoot, "bin"), {
+    recursive: true,
+  });
+  cpSync(join(packageRoot, "src"), join(sourcePackageRoot, "src"), {
+    recursive: true,
+  });
+
+  const sourceManifest = readJsonRecord(packageJsonPath);
+  const dependencyReference = createLocalRuntimeDependency(directory);
+  writeFileSync(
+    join(sourcePackageRoot, "package.json"),
+    `${JSON.stringify(
+      {
+        ...sourceManifest,
+        dependencies: {
+          [localRuntimeDependencyName]: localRuntimeDependencyVersion,
+        },
+      },
+      null,
+      2
+    )}\n`
+  );
+  return { dependencyReference, sourcePackageRoot };
+}
+
+export function installProductionPackage(directory: string): InstalledPackage {
+  return installPackageFromSource(directory, packageRoot, {});
+}
+
+export function installProductionPackageWithLocalRuntimeDependency(
+  directory: string
+): InstalledPackage {
+  const { dependencyReference, sourcePackageRoot } =
+    createSourcePackageWithLocalRuntimeDependency(directory);
+  return installPackageFromSource(directory, sourcePackageRoot, {
+    [localRuntimeDependencyName]: dependencyReference,
+  });
 }
 
 export function runInstalledShim(
