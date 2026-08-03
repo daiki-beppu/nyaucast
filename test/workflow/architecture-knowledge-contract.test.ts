@@ -2,11 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
-import {
-  packageRoot,
-  parseYamlRecord,
-  readRepositoryFile,
-} from "../helpers";
+import { packageRoot, parseYamlRecord, readRepositoryFile } from "../helpers";
 
 const facetPath = ".takt/facets/knowledge/architecture.md";
 const adrPath = "docs/adr/0001-thin-architecture.md";

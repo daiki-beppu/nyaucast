@@ -27,10 +27,6 @@ interface ReportContract {
   name: string;
 }
 
-interface PackageManifest {
-  scripts: Record<string, string>;
-}
-
 function readMarkdownSection(source: string, heading: string): string {
   const lines = source.split("\n");
   const start = lines.indexOf(heading);

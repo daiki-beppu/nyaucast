@@ -38,10 +38,6 @@ interface WorkflowDefinition {
   steps?: WorkflowStep[];
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function parseWorkflow(): WorkflowDefinition {
   return parseYamlRecord({
     expectedShape: "a workflow object",
