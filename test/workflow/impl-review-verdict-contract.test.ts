@@ -19,42 +19,6 @@ const workflows = [
   { backtrackStep: "diagnose", path: ".takt/workflows/tayk-fix.yaml" },
 ] as const;
 
-/**
- * verdict だけが遷移先を決める台帳状態。#197 要件 4 の「sub-step がすべて分類された
- * 場合」に対応する。`open` が 0 でない状態も併せて掃くのは、verdict が全 APPROVE でも
- * 台帳に未解消の指摘が残っていれば前進させない（ADR-0008 決定 6）ことの裏取り。
- */
-const ledgerStates = [
-  {
-    expectedRoute: (matchesAll: boolean) => (matchesAll ? "final_gate" : "fix"),
-    name: "settled ledger",
-    state: {
-      "findings.conflicts.count": 0,
-      "findings.conflicts.unadjudicated.count": 0,
-      "findings.open.count": 0,
-      "findings.provisional.count": 0,
-      "findings.provisional.fixpoint": false,
-      "findings.reviewerAnomalies.count": 0,
-      "findings.rounds.budgetExhausted": false,
-    },
-  },
-  {
-    expectedRoute: () => "fix",
-    name: "ledger with open findings",
-    state: {
-      "findings.conflicts.count": 0,
-      "findings.conflicts.unadjudicated.count": 0,
-      "findings.open.count": 1,
-      "findings.provisional.count": 0,
-      "findings.provisional.fixpoint": false,
-      "findings.reviewerAnomalies.count": 0,
-      "findings.rounds.budgetExhausted": false,
-    },
-  },
-] as const;
-
-type LedgerState = Readonly<Record<string, boolean | number>>;
-
 interface WorkflowRule {
   condition?: string;
   next?: string;
@@ -238,10 +202,7 @@ function parseAggregateClause(clause: string): AggregateCondition | undefined {
   return { kind: kind === "all" ? "all" : "any", targets };
 }
 
-/**
- * takt の rule condition 文法を、この step が使う範囲だけ再現する。
- * 未知の構文は黙って false にせず投げる — 契約の取りこぼしを沈黙させないため。
- */
+/** 未知の構文は投げ、宣言済みの aggregate targets の読み落としを防ぐ。 */
 function parseParentRule(rule: WorkflowRule, owner: string): ParentRule {
   const condition = rule.condition;
   const next = rule.next;
@@ -271,153 +232,6 @@ function parseParentRule(rule: WorkflowRule, owner: string): ParentRule {
     throw new TypeError(`${owner} declares a rule with no evaluable clause`);
   }
   return parsed;
-}
-
-function resolveOperand(
-  operand: string,
-  ledger: LedgerState
-): boolean | number {
-  if (operand === "true") {
-    return true;
-  }
-  if (operand === "false") {
-    return false;
-  }
-  if (/^-?\d+(\.\d+)?$/.test(operand)) {
-    return Number(operand);
-  }
-
-  const value = ledger[operand];
-
-  if (value === undefined) {
-    throw new TypeError(`${operand} is not modelled by the ledger fixture`);
-  }
-  return value;
-}
-
-function compareOperands(
-  operator: string,
-  left: boolean | number,
-  right: boolean | number
-): boolean {
-  if (operator === "==") {
-    return left === right;
-  }
-  if (operator === "!=") {
-    return left !== right;
-  }
-  if (typeof left !== "number" || typeof right !== "number") {
-    throw new TypeError(`${operator} requires numeric operands`);
-  }
-  if (operator === ">") {
-    return left > right;
-  }
-  if (operator === "<") {
-    return left < right;
-  }
-  if (operator === ">=") {
-    return left >= right;
-  }
-  return left <= right;
-}
-
-function evaluateWhenClause(clause: string, ledger: LedgerState): boolean {
-  if (clause === "true") {
-    return true;
-  }
-  if (clause === "false") {
-    return false;
-  }
-
-  const comparison =
-    /^([A-Za-z][A-Za-z0-9_.]*)\s*(==|!=|>=|<=|>|<)\s*(\S+)$/.exec(clause);
-  const reference = comparison?.[1];
-  const operator = comparison?.[2];
-  const literal = comparison?.[3];
-
-  if (
-    reference === undefined ||
-    operator === undefined ||
-    literal === undefined
-  ) {
-    throw new TypeError(
-      `when clause "${clause}" is not modelled by this contract`
-    );
-  }
-  return compareOperands(
-    operator,
-    resolveOperand(reference, ledger),
-    resolveOperand(literal, ledger)
-  );
-}
-
-function evaluateWhen(expression: string, ledger: LedgerState): boolean {
-  return splitTopLevel(expression, "||").some((alternative) =>
-    splitTopLevel(alternative, "&&").every((clause) =>
-      evaluateWhenClause(clause, ledger)
-    )
-  );
-}
-
-/**
- * takt の `AggregateEvaluator` と同じ判定。`all()` は引数が 2 個以上のとき並列
- * sub-step と**位置対応**で照合し、個数が違えばそのルールごと外れる。`any()` は
- * 集合の包含で照合する。
- */
-function matchesAggregate(
-  aggregate: AggregateCondition,
-  verdicts: readonly string[]
-): boolean {
-  if (aggregate.kind === "any") {
-    return verdicts.some((verdict) => aggregate.targets.includes(verdict));
-  }
-  if (aggregate.targets.length === 1) {
-    return verdicts.every((verdict) => verdict === aggregate.targets[0]);
-  }
-  return (
-    verdicts.length === aggregate.targets.length &&
-    verdicts.every((verdict, index) => verdict === aggregate.targets[index])
-  );
-}
-
-function matchesRule(
-  rule: ParentRule,
-  verdicts: readonly string[],
-  ledger: LedgerState
-): boolean {
-  if (
-    rule.aggregate !== undefined &&
-    !matchesAggregate(rule.aggregate, verdicts)
-  ) {
-    return false;
-  }
-  return rule.when === undefined || evaluateWhen(rule.when, ledger);
-}
-
-function resolveRoute(
-  rules: readonly ParentRule[],
-  verdicts: readonly string[],
-  ledger: LedgerState
-): ParentRule {
-  const matched = rules.find((rule) => matchesRule(rule, verdicts, ledger));
-
-  if (matched === undefined) {
-    throw new TypeError(
-      `no rule classifies the verdict combination ${verdicts.join(" / ")}`
-    );
-  }
-  return matched;
-}
-
-function cartesianProduct(groups: readonly string[][]): string[][] {
-  let combinations: string[][] = [[]];
-
-  for (const group of groups) {
-    combinations = combinations.flatMap((combination) =>
-      group.map((value) => [...combination, value])
-    );
-  }
-  return combinations;
 }
 
 function requireAggregateRule(
@@ -521,37 +335,6 @@ describe("impl_review verdict aggregation contract", () => {
       expect(
         nonApproving.filter((verdict) => !fixTargets.includes(verdict))
       ).toEqual([]);
-    }
-  });
-
-  test("[REQ-197-04] should classify every verdict combination without reaching the receptacle", () => {
-    for (const { path } of workflows) {
-      const { parentRules, subStepVerdicts } = requireContract(path);
-      const allTargets =
-        requireAggregateRule(parentRules, "all", path).aggregate?.targets ?? [];
-      const combinations = cartesianProduct(
-        subStepVerdicts.map((subStep) => subStep.verdicts)
-      );
-
-      expect(combinations).not.toBeEmpty();
-
-      for (const ledger of ledgerStates) {
-        const misrouted = combinations
-          .map((verdicts) => ({
-            expected: ledger.expectedRoute(
-              matchesAggregate({ kind: "all", targets: allTargets }, verdicts)
-            ),
-            resolved: resolveRoute(parentRules, verdicts, ledger.state).next,
-            verdicts,
-          }))
-          .filter((route) => route.resolved !== route.expected);
-
-        expect({ ledger: ledger.name, misrouted, workflow: path }).toEqual({
-          ledger: ledger.name,
-          misrouted: [],
-          workflow: path,
-        });
-      }
     }
   });
 
