@@ -278,6 +278,8 @@ steps:
     quality_gates:
       - review-summary.md の本文をそのまま投稿していること（要約・改変をしていない）
       - コメント冒頭に PR 番号とラウンド番号を含む見出しと、機械可読な判定行があること
+      - publication marker に Report Directory 由来の run ID が含まれていること
+      - 投稿済み判定は現在の GitHub 認証主体と review-summary.md 本文全体の完全一致であること
       - コードを変更していないこと
       - gh の操作に失敗したなら、投稿できなかった理由と手動投稿用のコマンドを残していること
     rules:

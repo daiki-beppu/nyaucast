@@ -11,6 +11,10 @@
     そのまま呼び出し側の挙動になる
 
   したがって見出しと判定行の書式は、揺らしてはならない。
+
+  末尾の publication marker は publish の冪等キーである。run ID は Workflow
+  Context の Report Directory（.takt/runs/{run ID}/reports）から取得する。同一 run
+  の step 再試行では同じ値になり、独立 run では異なる値になる。
 -->
 
 ```markdown
@@ -71,11 +75,14 @@
 | `ai-antipattern-review.md`   | ✅     | 2            | 0              |
 | `coding-review.md`           | ✅     | 1            | 1              |
 | `testing-review.md`          | ✅     | 1            | 0              |
+
+<!-- tayk-review-publication: PR #{PR番号} / round {N} / run {run ID} -->
 ```
 
 **出力整合性:**
 
 - 見出しは `# tayk-review — PR #{番号} / round {N}` の 1 行。**次のラウンドの gather がこの文字列で前回コメントを検出する**ため、書式を変えない
+- publication marker は `<!-- tayk-review-publication: PR #{PR番号} / round {N} / run {run ID} -->` の 1 行。`run ID` は Report Directory の `runs/` と `reports/` の間のディレクトリ名を使い、別の run の ID や PR 番号・round だけから組み立ててはならない
 - 判定行は見出しの直後に 1 行。**ブロッキングの合計は内訳 5 つの和と一致**していること
 - 観点別のブロッキング件数は、各レビューレポートの「ブロッキング指摘」表の**行数と一致**していること。数え間違いは呼び出し側の誤動作になる
 - **ブロッキング合計が 1 件以上 → REJECT。0 件 → APPROVE**（非ブロッキング指摘が残っていてもよい）

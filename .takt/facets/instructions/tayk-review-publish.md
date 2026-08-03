@@ -13,17 +13,35 @@ Report Directory の統合レポート（`review-summary.md`）を読みます�
 
 ## 2. 投稿する
 
-```bash
-gh pr comment {PR番号} --body-file {統合レポートのパス}
-```
-
-`--body` で本文を渡し直さず、**`--body-file` でファイルをそのまま渡します**。プロンプト経由で本文を再構成すると、書式が揺れて次のラウンドの検出が外れます。
-
-投稿後、コメント URL を確認します。
+投稿前に、現在の GitHub 認証主体が**同じ本文全体**を既に投稿していないか確認します。
+marker 行だけの一致、別 run の marker、別ユーザーによる投稿は成功証跡にできません。
 
 ```bash
-gh pr view {PR番号} --json comments --jq '.comments[-1].url'
+SUMMARY_PATH="{統合レポートのパス}"
+PR_NUMBER="{PR番号}"
+GH_LOGIN="$(gh api user --jq '.login')"
+MATCHES="$(
+  gh pr view "$PR_NUMBER" --json comments |
+    jq \
+      --arg login "$GH_LOGIN" \
+      --rawfile expected "$SUMMARY_PATH" \
+      '[
+        .comments[]
+        | select(.author.login == $login and .body == $expected)
+      ]'
+)"
 ```
+
+`MATCHES` が 1 件以上なら、その最後のコメント URL を回収して投稿済みとして完了します。
+0 件なら、次のコマンドで投稿します。
+
+```bash
+gh pr comment "$PR_NUMBER" --body-file "$SUMMARY_PATH"
+```
+
+`--body` で本文を渡し直さず、**`--body-file` でファイルをそのまま渡します**。プロンプト経由で本文を再構成すると、書式が揺れて次のラウンドの検出が外れます。投稿後に同じ照合をもう一度行い、返された URL が現在の認証主体・現在の `review-summary.md` 本文全体に一致するコメントの URL であることを確認します。
+
+`review-summary.md` 末尾の publication marker には Report Directory 由来の run ID が含まれます。同一 run の再試行では安定し、独立 run では異なるため、別 run の本文を回収しません。
 
 ## 3. 失敗したとき
 
@@ -39,4 +57,5 @@ gh pr view {PR番号} --json comments --jq '.comments[-1].url'
 - コードの変更
 - `gh pr review` / `gh pr edit` / `gh pr merge` / `gh pr ready` の実行（この step の職務はコメントの投稿だけ。PR の状態を変えるのは人間の判断）
 - レポート本文の要約・改変・節の省略
+- marker 行だけが一致するコメントや、現在の GitHub 認証主体以外が投稿したコメントの回収
 - 既存コメントの編集・削除（ラウンドごとに新しいコメントを追加する。過去のラウンドは履歴として残す）
