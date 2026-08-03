@@ -31,8 +31,8 @@ YouTube チャンネル運営を自動化するツールキット。skill に蓄
 
 ## 開発フロー
 
-- **worktree 必須・main 直コミット禁止**
-- 開発は takt メイン: `takt -w tayk-feature "#<issue番号>"` / `takt -w tayk-fix "#<issue番号>"`。設計ゲート・診断ゲート・レビューループ・要件 ID の採番は workflow 側が持つ（`docs/agents/issue-tracker.md` / ADR-0008）
+- **worktree 必須・main 直コミット禁止**。worktree は takt に作らせず、先に手動で作って `direnv allow` する
+- 開発は takt メイン。手動 worktree 内から直接 `takt --auto-pr -w tayk-feature "#<issue番号>"` / `takt --auto-pr -w tayk-fix "#<issue番号>"` を実行する。`worktree: true` のキュー実行は、Finding Contract の publication がメイン checkout と隔離 clone のパス基準不一致で失敗するため使わない。これは nrslib/takt#1128 の修正を含むリリースへ更新するまでの暫定措置。設計ゲート・診断ゲート・レビューループ・要件 ID の採番は workflow 側が持つ（`docs/agents/issue-tracker.md` / ADR-0008）
 - workflow の一般構造（schema・遷移・facet 参照）の検査は `takt workflow doctor` の 1 本。pre-push で自動実行されるが、**CI では走らない** — takt は dotfiles の profile 由来で CI 環境に無いため。doctor が検出しない issue 固有の受け入れ契約に限り、Takt に依存しない読み取り専用テストを `bun run check` に含めてよい（ADR-0008 Consequences）
 - **rule の決定的な分岐は `condition: when(<式>)` と書く。** 決定的か LLM 判定かはキーではなく `condition` の**値の構文**で決まるため、`when()` を外すと `structured.*` の分岐が黙って自然言語判定に化ける。`when:` という別キーは takt が受け付けない
 - **doctor が見ないもの**は目視で保つ — ループ上限の実効性（cycle の外から再入されると loop monitor が発火しない）・複製 step の一致・レポート境界（callable の子は親のレポートを読めない）。ただし `spillover` の report 名・format は issue #119 の読み取り専用テストが feature / fix の一致を検査する。遷移や複製定義を変えるときは ADR-0008 の Consequences を読むこと
