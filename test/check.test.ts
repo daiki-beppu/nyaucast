@@ -1551,7 +1551,8 @@ describe("check command", () => {
     });
   });
 
-  // REQ-82-02 / REQ-106-01 / REQ-106-02 / TC-106-01C / TC-106-02A
+  // REQ-82-02 / REQ-106-01 / REQ-106-02 / REQ-115-01
+  // TC-106-01C / TC-106-02A / TC-115-01A / TC-115-01D
   test("should leave the gate set undefined outside package.json", () => {
     const workflow = readRepositoryFile(".github/workflows/ci.yml");
 
@@ -1574,7 +1575,7 @@ describe("check command", () => {
     }
   });
 
-  // REQ-82-03 / REQ-106-01 / TC-106-01B
+  // REQ-82-03 / REQ-106-01 / REQ-115-02 / TC-106-01B / TC-115-02A
   test("should run the gates before push", () => {
     const configuration = readRepositoryFile("lefthook.yml");
 
@@ -1583,7 +1584,7 @@ describe("check command", () => {
     }).not.toThrow();
   });
 
-  // REQ-82-04
+  // REQ-82-04 / REQ-115-04 / TC-115-04A
   test("should point takt facets at the single gate command", () => {
     for (const facetContract of gateInstructingFacets) {
       const facet = readRepositoryFile(facetContract.path);
@@ -1836,15 +1837,6 @@ describe("replan monitor report boundary", () => {
 });
 
 describe("check entry structure", () => {
-  // REQ-115-01 / TC-115-01A
-  test("should accept the check entry when the quality job runs the exact command", () => {
-    const workflow = readRepositoryFile(".github/workflows/ci.yml");
-
-    expect(() => {
-      validateCiWorkflow(workflow);
-    }).not.toThrow();
-  });
-
   // REQ-115-01 / TC-115-01B
   test.each([
     ["is missing", "jobs:\n  quality: {}\n"],
@@ -1880,15 +1872,6 @@ describe("check entry structure", () => {
       }).toThrow();
     }
   );
-
-  // REQ-115-01 / TC-115-01D
-  test("should contain no individual gate commands when inspecting every real CI job", () => {
-    const workflow = readRepositoryFile(".github/workflows/ci.yml");
-
-    expect(() => {
-      validateCiWorkflow(workflow);
-    }).not.toThrow();
-  });
 
   // REQ-115-01 / TC-115-01E
   test("should reject an individual gate command when another CI job runs it", () => {
@@ -1956,15 +1939,6 @@ describe("check entry structure", () => {
       }).toThrow();
     }
   );
-
-  // REQ-115-02 / TC-115-02A
-  test("should accept pre-push when check and workflow doctor use their exact commands", () => {
-    const configuration = readRepositoryFile("lefthook.yml");
-
-    expect(() => {
-      validatePrePushConfiguration(configuration);
-    }).not.toThrow();
-  });
 
   // REQ-115-02 / TC-115-02B
   test("should reject pre-push when check and workflow doctor commands are swapped", () => {
@@ -2245,21 +2219,6 @@ describe("check entry structure", () => {
     expect(() => {
       validateCiWorkflow(workflow);
     }).not.toThrow();
-  });
-
-  // REQ-115-04 / TC-115-04A
-  test("should find an independent check command in every facet instruction section", () => {
-    for (const facetContract of gateInstructingFacets) {
-      const facet = readRepositoryFile(facetContract.path);
-
-      expect(() => {
-        validateFacetGate(
-          facet,
-          facetContract.sectionHeading,
-          facetContract.commandScope
-        );
-      }).not.toThrow();
-    }
   });
 
   // REQ-115-04 / TC-115-04B

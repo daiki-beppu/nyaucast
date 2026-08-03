@@ -28,10 +28,6 @@ interface ReportContract {
   name: string;
 }
 
-interface PackageManifest {
-  scripts: Record<string, string>;
-}
-
 function readRepositoryFile(relativePath: string): string {
   return readFileSync(join(packageRoot, relativePath), "utf-8");
 }
@@ -173,20 +169,6 @@ function readReportContract(step: string): ReportContract {
     throw new Error("step must declare its report output contract");
   }
   return { format: match[2], name: match[1] };
-}
-
-function readPackageManifest(): PackageManifest {
-  const manifest: unknown = JSON.parse(readRepositoryFile("package.json"));
-  if (
-    typeof manifest !== "object" ||
-    manifest === null ||
-    !("scripts" in manifest) ||
-    typeof manifest.scripts !== "object" ||
-    manifest.scripts === null
-  ) {
-    throw new TypeError("package.json must declare scripts");
-  }
-  return manifest as PackageManifest;
 }
 
 describe("architecture audit Issue-ready contract", () => {
@@ -367,7 +349,7 @@ describe("architecture audit Issue-ready contract", () => {
     expect(completedBranch).toMatch(/満たす場合だけ.+publish へ進めてよい/);
   });
 
-  test("[REQ-120-07 / TC-120-07A] should wire audit and review to the architecture audit report contract", () => {
+  test("[REQ-120-07 / TC-120-07A / TC-120-07C] should wire audit and review to the architecture audit report contract", () => {
     const workflow = readRepositoryFile(workflowPath);
     const expected = {
       format: "tayk-architecture-audit",
@@ -392,15 +374,6 @@ describe("architecture audit Issue-ready contract", () => {
     expect(loopMonitors).toMatch(
       /judge:\n\s+persona: supervisor\n\s+instruction: tayk-loop-monitor-audit/
     );
-  });
-
-  test("[REQ-120-07 / TC-120-07C] should reach Bun tests from the check script", () => {
-    const { scripts } = readPackageManifest();
-
-    expect(
-      scripts["check"]?.split("&&").map((command) => command.trim())
-    ).toContain("bun run test");
-    expect(scripts["test"]).toBe("bun test");
   });
 
   test("[REQ-120-07 / TC-120-07D] should publish only after the wired supervisor approves", () => {
