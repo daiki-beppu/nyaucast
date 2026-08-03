@@ -12,20 +12,35 @@ Report Directory 内の 5 つのレビューレポートをすべて読みます
 
 **読めなかったレポートを「指摘 0 件」に畳んではいけません。** 収集元の表に理由を記録します。畳むと、レビューが走らなかったことと問題が無かったことが区別できなくなります。
 
-## 2. 観点別にブロッキング指摘を数える
+## 2. 明細から集計と判定行を生成する
 
-各レポートの「ブロッキング指摘」表の**行数を数えます**。
+自分で行数を数えたり、判定行を組み立てたりしてはいけません。Report Directory を
+決定的 validator へ渡し、明細から生成された判定行を取得します。
+
+```bash
+REPORT_DIR="{Report Directory の絶対パス}"
+DECISION_LINE="$(bun run .takt/scripts/validate-review-synthesis.ts \
+  --report-dir "$REPORT_DIR" \
+  --decision-line)"
+```
+
+validator が非 0 で終了したら、読めないレポートや不正な明細を 0 件に畳まず、
+`status: failed` と理由を返します。成功したら `DECISION_LINE` を一字も変えずに、
+統合レポートの見出し直後へ置きます。
+
+validator は各レポートの明細表から次を一度だけ集計します。
 
 この数字は呼び出し側（`issue-direct` skill）が自動修正の可否を決めるのに使います。呼び出し側は**数字を読むだけで指摘の中身を解釈しません**。したがって数え間違いは、そのまま呼び出し側の誤動作になります。
 
 - 「非ブロッキング指摘」表の行は数えない
 - ADR 整合性レビューの `NEEDS_ADR_REVISION` は**ブロッキングとして数える**（ADR 改訂の判断は人間に要るため、前進させてはならない）
 
-合計は内訳 5 つの和と一致させます。
+合計・内訳・総合判定はすべてこの集計から導かれます。
 
 ### 仕様適合は種別まで数える
 
-仕様適合レビューのレポートには「種別の集計」行があります。これを判定行の `spec内訳` へ転記します。
+仕様適合レビューの `spec内訳` は転記せず、ブロッキング指摘表の `種別` 列から
+validator が数えます。
 
 呼び出し側はこの内訳で「人間の判断が要るもの」と「機械的に直せるもの」を切り分けます:
 
@@ -55,9 +70,27 @@ Report Directory 内の 5 つのレビューレポートをすべて読みます
 
 **ブロッキング合計が 1 件以上 → REJECT。0 件 → APPROVE。** 非ブロッキング指摘が残っていても APPROVE です（`tayk-review-convergence`）。
 
+## 6. complete の前に統合レポートを検証する
+
+統合レポートを書き終えたら、同じ validator によって、判定行・統合した 3 表
+（ブロッキング / 非ブロッキング / 解消済み）・収集元 5 行を元レポートの明細と
+照合します。
+
+```bash
+SUMMARY_PATH="$REPORT_DIR/review-summary.md"
+VALIDATED="$(bun run .takt/scripts/validate-review-synthesis.ts \
+  --report-dir "$REPORT_DIR" \
+  --summary "$SUMMARY_PATH")"
+```
+
+終了コード 0 で返された `VALIDATED` の JSON を、**一字も変えずに** structured output
+として返します。validator を通さずに `status: complete` を組み立ててはいけません。
+非 0 なら complete にせず、検出された不整合を `failure_reason` に含む `failed` を返します。
+
 ## 禁止
 
 - コードの変更、テスト実行、ビルド
 - 各レビューの指摘を要約して情報を落とすこと（場所・根拠・修正方針は原文の情報量を保つ）
 - 読めなかったレポートを「問題なし」に畳むこと
 - 自分で新しい指摘を追加すること（この step の職務は統合であって、6 番目のレビューではない）
+- validator を通さず `status: complete` を返すこと
