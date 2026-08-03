@@ -13,30 +13,49 @@ const workflowPaths = {
   fix: ".takt/workflows/tayk-fix.yaml",
 } as const;
 
+interface NormContract {
+  id: `${string} ${"OK" | "REJECT" | "REQUIRED"}:`;
+  keywords: readonly string[];
+}
+
 const requiredNorms = {
   adapter: [
-    "TA-06 OK: adapter は MCP primary と CLI thin の境界に限定する。",
-    "TA-06 REJECT: adapter に業務ロジックを書く。",
+    { id: "TA-06 OK:", keywords: ["adapter", "MCP", "CLI", "境界"] },
+    { id: "TA-06 REJECT:", keywords: ["adapter", "業務ロジック"] },
   ],
   adrChange: [
-    "TA-07 REQUIRED: ADR から逸脱する変更には該当 ADR の改訂を同じ変更に含める。",
-    "TA-07 REJECT: ADR を改訂せず黙って逸脱する。",
+    { id: "TA-07 REQUIRED:", keywords: ["ADR", "逸脱", "改訂", "同じ変更"] },
+    { id: "TA-07 REJECT:", keywords: ["ADR", "改訂", "黙って逸脱"] },
   ],
-  priority:
-    "TA-02 REQUIRED: `docs/adr/0001-thin-architecture.md` を tayk の構造規約の正書とし、一般的なレイヤー構成や Vertical Slice は ADR-0001 と競合しない場合に限って補助観点として使う。",
+  priority: {
+    id: "TA-02 REQUIRED:",
+    keywords: ["ADR-0001", "正書", "Vertical Slice", "競合"],
+  },
   registry: [
-    "TA-04 OK: tool 一覧には entry point のフラットな import 配列を使う。",
-    "TA-04 REJECT: tool registry、動的収集、または「登録」工程を新設する。",
+    {
+      id: "TA-04 OK:",
+      keywords: ["entry point", "フラット", "import", "配列"],
+    },
+    { id: "TA-04 REJECT:", keywords: ["registry", "動的収集", "登録"] },
   ],
   serviceFrame: [
-    "TA-05 OK: core 内部は throw し、MCP/CLI adapter 境界で外部表現へ変換する。",
-    "TA-05 REJECT: Result 型・createService・toServiceError の追加 service frame を導入する。",
+    { id: "TA-05 OK:", keywords: ["core", "throw", "adapter", "境界"] },
+    {
+      id: "TA-05 REJECT:",
+      keywords: ["Result", "createService", "service frame"],
+    },
   ],
   toolColocation: [
-    "TA-03 OK: 1 MCP tool を実装1ファイルとテスト1ファイルの基本単位にし、zod の入出力 schema・description・handler を tool 定義ファイルに同居させる。",
-    "TA-03 REJECT: schema・service・index を別ファイルへ分割する。",
+    {
+      id: "TA-03 OK:",
+      keywords: ["1 MCP tool", "1ファイル", "schema", "handler", "同居"],
+    },
+    {
+      id: "TA-03 REJECT:",
+      keywords: ["schema", "service", "index", "別ファイル"],
+    },
   ],
-} as const;
+} as const satisfies Record<string, NormContract | readonly NormContract[]>;
 
 const allRequiredNorms = [
   requiredNorms.priority,
@@ -103,19 +122,33 @@ function normalizeNorm(line: string): string {
 
 function findMissingNorms(
   source: string,
-  expected: readonly string[]
-): string[] {
+  expected: readonly NormContract[]
+): NormContract[] {
   const section = readMarkdownSection(source, "## tayk 固有の優先規則");
-  const actual = new Set(section.split("\n").map(normalizeNorm));
-  return expected.filter((line) => !actual.has(normalizeNorm(line)));
+  const actual = section.split("\n").map(normalizeNorm);
+  return expected.filter(
+    ({ id, keywords }) =>
+      !actual.some(
+        (line) =>
+          line.includes(id) &&
+          keywords.every((keyword) => line.includes(keyword))
+      )
+  );
 }
 
 function minimalFacet(lines: readonly string[]): string {
   return `# Architecture\n\n## tayk 固有の優先規則\n\n${lines.map((line) => `- ${line}`).join("\n")}\n`;
 }
 
-function invertNorms(lines: readonly string[]): string[] {
-  return lines.map((line) => {
+function renderNorms(contracts: readonly NormContract[]): string[] {
+  return contracts.map(
+    ({ id, keywords }) =>
+      `${id} ${keywords.toReversed().join(" / ")} を確認する`
+  );
+}
+
+function invertNorms(contracts: readonly NormContract[]): string[] {
+  return renderNorms(contracts).map((line) => {
     if (line.includes(" REQUIRED:")) {
       return line.replace(" REQUIRED:", " OPTIONAL:");
     }
@@ -126,19 +159,23 @@ function invertNorms(lines: readonly string[]): string[] {
   });
 }
 
-function expectNormContract(expected: readonly string[]): void {
+function expectNormContract(expected: readonly NormContract[]): void {
   const firstNorm = expected[0];
   if (firstNorm === undefined) {
     throw new Error("norm contract requires at least one expected line");
   }
   expect(findMissingNorms(readRepositoryFile(facetPath), expected)).toEqual([]);
 
+  expect(
+    findMissingNorms(minimalFacet(renderNorms(allRequiredNorms)), expected)
+  ).toEqual([]);
+
   const withoutFirstNorm = allRequiredNorms.filter(
-    (line) => line !== firstNorm
+    (contract) => contract !== firstNorm
   );
-  expect(findMissingNorms(minimalFacet(withoutFirstNorm), expected)).toContain(
-    firstNorm
-  );
+  expect(
+    findMissingNorms(minimalFacet(renderNorms(withoutFirstNorm)), expected)
+  ).toContain(firstNorm);
   expect(
     findMissingNorms(minimalFacet(invertNorms(allRequiredNorms)), expected)
   ).toEqual([...expected]);
