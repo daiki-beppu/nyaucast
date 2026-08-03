@@ -328,310 +328,58 @@ function validatePrePushConfiguration(source: string): void {
   }
 }
 
-interface Fence {
-  containsCommands: boolean;
-  indentation: number;
-  marker: "`" | "~";
-  minimumLength: number;
-}
-
-interface ListItem {
-  contentIndentation: number;
-  introduction: string;
-  ordinal: number | null;
-}
-
-const shellFenceLanguages = new Set(["bash", "sh", "shell", "zsh"]);
-
-function readFenceOpening(line: string): Fence | null {
-  const match = /^( {0,3})(`{3,}|~{3,})(.*)$/.exec(line);
-  if (match === null) {
-    return null;
+function readSection(markdown: string, heading: string): string {
+  const start = markdown.indexOf(`${heading}\n`);
+  if (start === -1) {
+    throw new Error(`missing section: ${heading}`);
   }
-  const indentation = match[1];
-  const delimiter = match[2];
-  const infoString = match[3];
-  if (
-    indentation === undefined ||
-    delimiter === undefined ||
-    infoString === undefined
-  ) {
-    throw new Error("fence opening is invalid");
-  }
-  const language = infoString.trim().split(/\s+/, 1)[0]?.toLowerCase() ?? "";
-  return {
-    containsCommands: language === "" || shellFenceLanguages.has(language),
-    indentation: indentation.length,
-    marker: delimiter[0] as Fence["marker"],
-    minimumLength: delimiter.length,
-  };
-}
 
-function isFenceClosing(line: string, fence: Fence): boolean {
-  const match = /^ {0,3}(`+|~+)[ \t]*$/.exec(line);
-  const delimiter = match?.[1];
-  return (
-    delimiter !== undefined &&
-    delimiter.startsWith(fence.marker) &&
-    delimiter.length >= fence.minimumLength
+  const contentStart = start + heading.length + 1;
+  const nextHeading = markdown.indexOf("\n## ", contentStart);
+  return markdown.slice(
+    contentStart,
+    nextHeading === -1 ? markdown.length : nextHeading
   );
 }
 
-function readHeading(line: string): { level: number; text: string } | null {
-  const match = /^(#{1,6})(?:[ \t]+(.*)|[ \t]*)$/.exec(line);
-  if (match === null) {
-    return null;
-  }
-  const marker = match[1];
-  const rawText = match[2];
-  if (marker === undefined) {
-    throw new Error("facet heading is invalid");
-  }
-  const text = (rawText ?? "")
-    .trim()
-    .replace(/[ \t]+#+[ \t]*$/, "")
-    .trimEnd();
-  if (text === "") {
-    return null;
-  }
-  return { level: marker.length, text };
-}
-
-function readListItem(line: string): ListItem | null {
-  const ordered = /^(\d{1,9})[.)]([ \t]+)(.*)$/.exec(line);
-  if (ordered !== null) {
-    const ordinal = ordered[1];
-    const whitespace = ordered[2];
-    const introduction = ordered[3];
-    if (
-      ordinal === undefined ||
-      whitespace === undefined ||
-      introduction === undefined
-    ) {
-      throw new Error("ordered list item is invalid");
-    }
-    return {
-      contentIndentation: ordinal.length + 1 + whitespace.length,
-      introduction: introduction.trim(),
-      ordinal: Math.trunc(Number(ordinal)),
-    };
-  }
-
-  const unordered = /^[-+*]([ \t]+)(.*)$/.exec(line);
-  const whitespace = unordered?.[1];
-  const introduction = unordered?.[2];
-  if (whitespace === undefined || introduction === undefined) {
-    return null;
-  }
-  return {
-    contentIndentation: 1 + whitespace.length,
-    introduction: introduction.trim(),
-    ordinal: null,
-  };
-}
-
-function updateListItem(
-  line: string,
-  listItem: ListItem | null,
-  nextListItem: ListItem | null
-): ListItem | null {
-  if (nextListItem !== null) {
-    return nextListItem;
-  }
-  if (line.trim() === "" || listItem === null) {
-    return listItem;
-  }
-  const indentation = line.length - line.trimStart().length;
-  return indentation < listItem.contentIndentation ? null : listItem;
-}
-
-function matchesCommandScopeListItem(
-  listItem: ListItem,
-  commandScope: FacetCommandScope
-): boolean {
-  return (
-    commandScope.container === "ordered-list-item" &&
-    listItem.ordinal === commandScope.ordinal &&
-    listItem.introduction === commandScope.introduction
-  );
-}
-
-function matchesCommandScopeOrdinal(
-  listItem: ListItem,
-  commandScope: FacetCommandScope
-): boolean {
-  return (
-    commandScope.container === "ordered-list-item" &&
-    listItem.ordinal === commandScope.ordinal
-  );
-}
-
-function isFenceInCommandScope(
-  fence: Fence,
-  listItem: ListItem | null,
-  commandScope: FacetCommandScope
-): boolean {
-  if (commandScope.container === "root") {
-    return listItem === null && fence.indentation === 0;
-  }
-  return (
-    listItem !== null &&
-    matchesCommandScopeListItem(listItem, commandScope) &&
-    fence.indentation === listItem.contentIndentation
-  );
-}
-
-function shouldCollectCommands(
-  inSection: boolean,
-  fence: Fence,
-  listItem: ListItem | null,
-  commandScope: FacetCommandScope
-): boolean {
-  return (
-    inSection &&
-    fence.containsCommands &&
-    isFenceInCommandScope(fence, listItem, commandScope)
-  );
-}
-
-function appendCommandBlock(
-  commandBlocks: string[][],
-  commandLines: string[] | null
-): string[][] {
-  if (commandLines === null) {
-    return commandBlocks;
-  }
-  return [...commandBlocks, commandLines.filter((command) => command !== "")];
-}
-
-function countCommandScopeListItem(
-  inSection: boolean,
-  listItem: ListItem | null,
-  commandScope: FacetCommandScope
-): { items: number; ordinals: number } {
-  if (!inSection || listItem === null) {
-    return { items: 0, ordinals: 0 };
-  }
-  return {
-    items: matchesCommandScopeListItem(listItem, commandScope) ? 1 : 0,
-    ordinals: matchesCommandScopeOrdinal(listItem, commandScope) ? 1 : 0,
-  };
-}
-
-function validateFacetCommandScope(
-  sectionHeading: string,
-  commandScope: FacetCommandScope,
-  matchingItems: number,
-  matchingOrdinals: number
-): void {
-  if (commandScope.container === "root") {
-    return;
-  }
-  if (matchingItems !== 1 || matchingOrdinals !== 1) {
-    throw new Error(
-      `${sectionHeading} must contain exactly one command instruction item`
-    );
-  }
-}
-
-function extractFacetCommandBlocks(
+function readFacetInstructionSection(
   source: string,
-  sectionHeading: string,
-  commandScope: FacetCommandScope
-): string[][] {
-  const lines = source.split(/\r?\n/);
-  const expectedHeading = readHeading(sectionHeading);
-  if (expectedHeading === null) {
-    throw new Error("facet section heading is invalid");
+  sectionHeading: string
+): string {
+  const section = readSection(source, sectionHeading);
+  const exampleHeading = section.search(/^### /m);
+  return exampleHeading === -1 ? section : section.slice(0, exampleHeading);
+}
+
+function escapeRegularExpression(value: string): string {
+  return value.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function canonicalCheckBlock(commandScope: FacetCommandScope): string {
+  if (commandScope.container === "root") {
+    return "```\nbun run check\n```";
   }
+  return [
+    `${commandScope.ordinal}. ${commandScope.introduction}`,
+    "   ```",
+    "   bun run check",
+    "   ```",
+  ].join("\n");
+}
 
-  let commandBlocks: string[][] = [];
-  let commandLines: string[] | null = null;
-  let fence: Fence | null = null;
-  let inComment = false;
-  let inSection = false;
-  let listItem: ListItem | null = null;
-  let matchingCommandScopeItems = 0;
-  let matchingCommandScopeOrdinals = 0;
-  for (const line of lines) {
-    if (inComment) {
-      if (line.includes("-->")) {
-        inComment = false;
-      }
-      continue;
-    }
-
-    if (fence !== null && isFenceClosing(line, fence)) {
-      commandBlocks = appendCommandBlock(commandBlocks, commandLines);
-      commandLines = null;
-      fence = null;
-      continue;
-    }
-    if (fence !== null) {
-      if (commandLines !== null) {
-        commandLines.push(line.trim());
-      }
-      continue;
-    }
-
-    if (line.includes("<!--")) {
-      inComment = !line.includes("-->");
-      continue;
-    }
-
-    const nextListItem = readListItem(line);
-    listItem = updateListItem(line, listItem, nextListItem);
-    const scopeCounts = countCommandScopeListItem(
-      inSection,
-      nextListItem,
-      commandScope
-    );
-    matchingCommandScopeItems += scopeCounts.items;
-    matchingCommandScopeOrdinals += scopeCounts.ordinals;
-
-    const opening = readFenceOpening(line);
-    if (opening !== null) {
-      fence = opening;
-      commandLines = shouldCollectCommands(
-        inSection,
-        opening,
-        listItem,
-        commandScope
-      )
-        ? []
-        : null;
-      continue;
-    }
-
-    const heading = readHeading(line);
-    if (heading === null) {
-      continue;
-    }
-    if (
-      heading.level === expectedHeading.level &&
-      heading.text === expectedHeading.text
-    ) {
-      inSection = true;
-      continue;
-    }
-    if (inSection) {
-      break;
-    }
-  }
-
-  if (fence !== null) {
-    throw new Error(`facet section ${sectionHeading} has an unclosed fence`);
-  }
-  if (!inSection) {
-    throw new Error(`facet section ${sectionHeading} is missing`);
-  }
-  validateFacetCommandScope(
-    sectionHeading,
-    commandScope,
-    matchingCommandScopeItems,
-    matchingCommandScopeOrdinals
+function canonicalCheckBlockPattern(commandScope: FacetCommandScope): RegExp {
+  return new RegExp(
+    `^${escapeRegularExpression(canonicalCheckBlock(commandScope))}$`,
+    "m"
   );
-  return commandBlocks;
+}
+
+function extractCanonicalShellCommandBlocks(source: string): string[][] {
+  return [
+    ...source.matchAll(
+      /^( *)```(?:bash|sh|shell|zsh)?[ \t]*\n([\s\S]*?)^\1```[ \t]*$/gm
+    ),
+  ].map((match) => (match[2] ?? "").split(/\r?\n/).map((line) => line.trim()));
 }
 
 function validateFacetGate(
@@ -639,18 +387,11 @@ function validateFacetGate(
   sectionHeading: string,
   commandScope: FacetCommandScope
 ): void {
-  const commandBlocks = extractFacetCommandBlocks(
-    source,
-    sectionHeading,
-    commandScope
-  );
-  if (
-    !commandBlocks.some(
-      (commands) => commands.length === 1 && commands[0] === "bun run check"
-    )
-  ) {
+  const section = readFacetInstructionSection(source, sectionHeading);
+  if (!canonicalCheckBlockPattern(commandScope).test(section)) {
     throw new Error(`${sectionHeading} must run bun run check`);
   }
+  const commandBlocks = extractCanonicalShellCommandBlocks(section);
   for (const command of enumeratedGateCommands) {
     if (
       commandBlocks.some((commands) =>
@@ -664,20 +405,6 @@ function validateFacetGate(
 
 function withCheckFixture(run: (directory: string) => void): void {
   withTemporaryDirectory("tayk-check-", run);
-}
-
-function readSection(markdown: string, heading: string): string {
-  const start = markdown.indexOf(`${heading}\n`);
-  if (start === -1) {
-    throw new Error(`missing section: ${heading}`);
-  }
-
-  const contentStart = start + heading.length + 1;
-  const nextHeading = markdown.indexOf("\n## ", contentStart);
-  return markdown.slice(
-    contentStart,
-    nextHeading === -1 ? markdown.length : nextHeading
-  );
 }
 
 function normalizeMarkdownText(value: string): string {
@@ -1570,6 +1297,25 @@ describe("check command", () => {
     }
   });
 
+  test("should reject every canonical facet when its check block is removed", () => {
+    for (const facetContract of gateInstructingFacets) {
+      const facet = readRepositoryFile(facetContract.path);
+      const mutatedFacet = facet.replace(
+        canonicalCheckBlock(facetContract.commandScope),
+        ""
+      );
+
+      expect(mutatedFacet).not.toBe(facet);
+      expect(() => {
+        validateFacetGate(
+          mutatedFacet,
+          facetContract.sectionHeading,
+          facetContract.commandScope
+        );
+      }).toThrow();
+    }
+  });
+
   // REQ-82-05
   test("should keep fix scripts on the rule set of their checking counterpart", () => {
     const scripts = readPackageScripts();
@@ -2225,11 +1971,25 @@ describe("check entry structure", () => {
   });
 
   // REQ-115-04 / TC-115-04B
-  test("should reject a facet when check appears only before its instruction section", () => {
+  test("should accept the canonical facet command block", () => {
+    const facet = createFacetFixture("## 手順", [
+      "```",
+      "bun run check",
+      "```",
+    ]);
+
+    expect(() => {
+      validateFacetGate(facet, "## 手順", rootFacetCommandScope);
+    }).not.toThrow();
+  });
+
+  // REQ-115-04 / TC-115-04C
+  test("should reject a facet when check appears only in another section", () => {
     const facet = createFacetFixture(
       "## 手順",
       ["説明だけです。"],
-      ["bun run check"]
+      [],
+      ["```", "bun run check", "```"]
     );
 
     expect(() => {
@@ -2237,30 +1997,11 @@ describe("check entry structure", () => {
     }).toThrow();
   });
 
-  // REQ-115-04 / TC-115-04C
-  test.each([
-    ["plain prose", createFacetFixture("## 手順", ["実行する: bun run check"])],
-    [
-      "inline code",
-      createFacetFixture("## 手順", ["実行する: `bun run check`"]),
-    ],
-  ])(
-    "should reject a facet when check appears only as %s in its instruction section",
-    (_condition, facet) => {
-      expect(() => {
-        validateFacetGate(facet, "## 手順", rootFacetCommandScope);
-      }).toThrow();
-    }
-  );
-
   // REQ-115-04 / TC-115-04D
-  test("should reject a facet when check appears after the next peer section", () => {
-    const facet = createFacetFixture(
-      "## 手順",
-      ["説明だけです。"],
-      [],
-      ["```sh", "bun run check", "```"]
-    );
+  test("should reject a facet when check appears only in prose", () => {
+    const facet = createFacetFixture("## 手順", [
+      "完了前に bun run check を実行する。",
+    ]);
 
     expect(() => {
       validateFacetGate(facet, "## 手順", rootFacetCommandScope);
@@ -2268,400 +2009,36 @@ describe("check entry structure", () => {
   });
 
   // REQ-115-04 / TC-115-04E
-  test.each([
-    ["the instruction heading is missing", "# Fixture\nbun run check\n"],
-    ["the instruction section is empty", createFacetFixture("## 手順", [])],
-    [
-      "the command fence is not closed",
-      createFacetFixture("## 手順", ["```sh", "bun run check"]),
-    ],
-  ])("should reject a facet when %s", (_condition, facet) => {
+  test("should reject a facet when check appears only in an example", () => {
+    const facet = createFacetFixture("## 手順", [
+      "説明だけです。",
+      "### 例",
+      "```",
+      "bun run check",
+      "```",
+    ]);
+
     expect(() => {
       validateFacetGate(facet, "## 手順", rootFacetCommandScope);
     }).toThrow();
   });
 
   // REQ-115-04 / TC-115-04F
-  test.each([
-    ["echo bun run check"],
-    ["bun run check && echo done"],
-    ["bun run check --flag"],
-  ])("should reject a facet when its fenced command is only %s", (command) => {
-    const facet = createFacetFixture("## 手順", ["```sh", command, "```"]);
-
-    expect(() => {
-      validateFacetGate(facet, "## 手順", rootFacetCommandScope);
-    }).toThrow();
-  });
-
-  // REQ-115-04 / TC-115-04G
-  test("should contain no individual gate commands in any facet command block", () => {
-    for (const facetContract of gateInstructingFacets) {
-      const commandBlocks = extractFacetCommandBlocks(
-        readRepositoryFile(facetContract.path),
-        facetContract.sectionHeading,
-        facetContract.commandScope
-      );
-
-      for (const command of enumeratedGateCommands) {
-        for (const commandLines of commandBlocks) {
-          for (const commandLine of commandLines) {
-            expect(commandLine).not.toMatch(command);
-          }
-        }
-      }
-    }
-  });
-
-  // REQ-115-04 / TC-115-04H
-  test("should reject the toolchain facet when check remains only in prose", () => {
-    const facet = createFacetFixture("## 検査ゲート", [
-      "説明では bun run check に言及するだけです。",
-    ]);
-
-    expect(() => {
-      validateFacetGate(facet, "## 検査ゲート", rootFacetCommandScope);
-    }).toThrow();
-  });
-
-  // REQ-115-04 / TC-115-04I
-  test("should reject a facet when check appears only in a text fence", () => {
+  test("should reject individual gates in a facet command block", () => {
     const facet = createFacetFixture("## 手順", [
-      "```text",
-      "bun run check",
       "```",
-    ]);
-
-    expect(() => {
-      validateFacetGate(facet, "## 手順", rootFacetCommandScope);
-    }).toThrow();
-  });
-
-  // REQ-115-04 / TC-115-04J
-  test.each([
-    [
-      "fenced example",
-      [
-        "# Fixture",
-        "```markdown",
-        "## 手順",
-        "```",
-        "## 別の節",
-        "```sh",
-        "bun run check",
-        "```",
-        "",
-      ].join("\n"),
-    ],
-    [
-      "HTML comment",
-      [
-        "# Fixture",
-        "<!--",
-        "## 手順",
-        "-->",
-        "## 別の節",
-        "```sh",
-        "bun run check",
-        "```",
-        "",
-      ].join("\n"),
-    ],
-  ])(
-    "should reject a facet when the instruction heading appears only in a %s",
-    (_place, facet) => {
-      expect(() => {
-        validateFacetGate(facet, "## 手順", rootFacetCommandScope);
-      }).toThrow();
-    }
-  );
-
-  // REQ-115-04 / TC-115-04K
-  test.each([
-    [
-      "an indented backtick delimiter",
-      [
-        "# Fixture",
-        "```markdown",
-        "    ```",
-        "## 手順",
-        "```sh",
-        "bun run check",
-        "```",
-        "",
-      ].join("\n"),
-    ],
-    [
-      "an indented tilde delimiter",
-      [
-        "# Fixture",
-        "~~~markdown",
-        "    ~~~",
-        "## 手順",
-        "~~~sh",
-        "bun run check",
-        "~~~",
-        "",
-      ].join("\n"),
-    ],
-  ])(
-    "should reject a facet when the instruction heading follows %s inside an example fence",
-    (_delimiter, facet) => {
-      expect(() => {
-        validateFacetGate(facet, "## 手順", rootFacetCommandScope);
-      }).toThrow();
-    }
-  );
-
-  // REQ-115-04 / TC-115-04L
-  test("should reject a facet when the instruction heading has an attached closing sequence", () => {
-    const facet = [
-      "# Fixture",
-      "## 手順###",
-      "```sh",
       "bun run check",
       "```",
       "",
-    ].join("\n");
+      "```",
+      "bun run typecheck",
+      "```",
+    ]);
 
     expect(() => {
       validateFacetGate(facet, "## 手順", rootFacetCommandScope);
     }).toThrow();
   });
-
-  // REQ-115-04 / TC-115-04M
-  test.each([
-    [
-      "a longer backtick delimiter with three leading spaces",
-      ["````sh", "bun run check", "   `````"],
-    ],
-    [
-      "a longer tilde delimiter with trailing whitespace",
-      ["~~~~sh", "bun run check", "~~~~~ \t"],
-    ],
-  ])(
-    "should accept a standalone check command closed by %s",
-    (_delimiter, sectionBody) => {
-      const facet = createFacetFixture("## 手順", sectionBody);
-
-      expect(() => {
-        validateFacetGate(facet, "## 手順", rootFacetCommandScope);
-      }).not.toThrow();
-    }
-  );
-
-  // REQ-115-04 / TC-115-04N
-  test.each([
-    ["the other marker", ["````sh", "bun run check", "~~~~"]],
-    ["a shorter marker", ["````sh", "bun run check", "```"]],
-    [
-      "a delimiter with trailing content",
-      ["```sh", "bun run check", "``` comment"],
-    ],
-  ])(
-    "should reject a facet when a command fence is followed only by %s",
-    (_delimiter, sectionBody) => {
-      const facet = createFacetFixture("## 手順", sectionBody);
-
-      expect(() => {
-        validateFacetGate(facet, "## 手順", rootFacetCommandScope);
-      }).toThrow();
-    }
-  );
-
-  // REQ-115-04 / TC-115-04O
-  test("should accept an instruction heading with a whitespace-separated closing sequence", () => {
-    const facet = createFacetFixture("## 手順 ###", [
-      "```sh",
-      "bun run check",
-      "```",
-    ]);
-
-    expect(() => {
-      validateFacetGate(facet, "## 手順", rootFacetCommandScope);
-    }).not.toThrow();
-  });
-
-  // REQ-115-04 / TC-115-04P
-  test("should accept a standalone check command surrounded only by blank lines", () => {
-    const facet = createFacetFixture("## 手順", [
-      "```sh",
-      "",
-      "bun run check",
-      "   ",
-      "```",
-    ]);
-
-    expect(() => {
-      validateFacetGate(facet, "## 手順", rootFacetCommandScope);
-    }).not.toThrow();
-  });
-
-  // REQ-115-04 / TC-115-04Q
-  test.each([
-    ["a heredoc body", ["```sh", "cat <<EOF", "bun run check", "EOF", "```"]],
-    [
-      "a continued command",
-      ["```sh", "printf '%s\\n' \\", "bun run check", "```"],
-    ],
-  ])(
-    "should reject a facet when check appears only as a line within %s",
-    (_context, sectionBody) => {
-      const facet = createFacetFixture("## 手順", sectionBody);
-
-      expect(() => {
-        validateFacetGate(facet, "## 手順", rootFacetCommandScope);
-      }).toThrow();
-    }
-  );
-
-  // REQ-115-04 / TC-115-04R
-  test.each(["###", "####", "#####", "######"])(
-    "should reject a facet when check appears only under the %s explanation subsection",
-    (headingMarker) => {
-      const facet = createFacetFixture("## 手順", [
-        `${headingMarker} 説明例`,
-        "```sh",
-        "bun run check",
-        "```",
-      ]);
-
-      expect(() => {
-        validateFacetGate(facet, "## 手順", rootFacetCommandScope);
-      }).toThrow();
-    }
-  );
-
-  // REQ-115-04 / TC-115-04S
-  test.each([
-    [
-      "unordered list",
-      [
-        "# Fixture",
-        "- 説明例",
-        "  ## 手順",
-        "  ```sh",
-        "  bun run check",
-        "  ```",
-        "## 次の節",
-        "",
-      ].join("\n"),
-    ],
-    [
-      "ordered list",
-      [
-        "# Fixture",
-        "1. 説明例",
-        "   ## 手順",
-        "   ```sh",
-        "   bun run check",
-        "   ```",
-        "## 次の節",
-        "",
-      ].join("\n"),
-    ],
-  ])(
-    "should reject a facet when its instruction heading is nested in an %s",
-    (_container, facet) => {
-      expect(() => {
-        validateFacetGate(facet, "## 手順", rootFacetCommandScope);
-      }).toThrow();
-    }
-  );
-
-  // REQ-115-04 / TC-115-04T
-  test.each([
-    ["unordered list", ["- 説明例", "  ```sh", "  bun run check", "  ```"]],
-    ["ordered list", ["1. 説明例", "   ```sh", "   bun run check", "   ```"]],
-  ])(
-    "should reject a facet when check appears only in an %s below the instruction heading",
-    (_container, sectionBody) => {
-      const facet = createFacetFixture("## 手順", sectionBody);
-
-      expect(() => {
-        validateFacetGate(facet, "## 手順", rootFacetCommandScope);
-      }).toThrow();
-    }
-  );
-
-  // REQ-115-04 / TC-115-04U
-  test.each([
-    ["implement", 4],
-    ["repair", 6],
-  ])(
-    "should reject the %s facet when check appears only in a same-numbered explanation item",
-    (_facet, ordinal) => {
-      const source = createFacetFixture("## 手順", [
-        `${ordinal}. 説明用の手順例`,
-        "   ```sh",
-        "   bun run check",
-        "   ```",
-      ]);
-      const commandScope = {
-        container: "ordered-list-item",
-        introduction: completionGateInstruction,
-        ordinal,
-      } as const;
-
-      expect(() => {
-        validateFacetGate(source, "## 手順", commandScope);
-      }).toThrow();
-    }
-  );
-
-  // REQ-115-04 / TC-115-04V
-  test.each([
-    ["implement", 4],
-    ["repair", 6],
-  ])(
-    "should reject the %s facet when its command instruction item is duplicated",
-    (_facet, ordinal) => {
-      const source = createFacetFixture("## 手順", [
-        `${ordinal}. ${completionGateInstruction}`,
-        "   説明だけです。",
-        `${ordinal}. ${completionGateInstruction}`,
-        "   ```sh",
-        "   bun run check",
-        "   ```",
-      ]);
-      const commandScope = {
-        container: "ordered-list-item",
-        introduction: completionGateInstruction,
-        ordinal,
-      } as const;
-
-      expect(() => {
-        validateFacetGate(source, "## 手順", commandScope);
-      }).toThrow();
-    }
-  );
-
-  // REQ-115-04 / TC-115-04W
-  test.each([
-    ["implement", 4],
-    ["repair", 6],
-  ])(
-    "should reject the %s facet when another item aliases the command ordinal",
-    (_facet, ordinal) => {
-      const source = createFacetFixture("## 手順", [
-        `${ordinal}. 説明用の手順例`,
-        "   説明だけです。",
-        `${ordinal}. ${completionGateInstruction}`,
-        "   ```sh",
-        "   bun run check",
-        "   ```",
-      ]);
-      const commandScope = {
-        container: "ordered-list-item",
-        introduction: completionGateInstruction,
-        ordinal,
-      } as const;
-
-      expect(() => {
-        validateFacetGate(source, "## 手順", commandScope);
-      }).toThrow();
-    }
-  );
 });
 
 describe("GitHub Actions execution constraints", () => {
