@@ -22,6 +22,7 @@
     "*.config.ts",
     "bin/**/*.js",
     "bin/**/*.ts",
+    ".takt/scripts/**/*.ts",
     "src/**/*.ts",
     "test/**/*.ts"
   ],

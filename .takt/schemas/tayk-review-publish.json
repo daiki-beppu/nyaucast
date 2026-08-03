@@ -1,0 +1,45 @@
+{
+  "type": "object",
+  "description": "publish の結果。posted は validate-review-publication.ts が検証済み identity から生成した場合だけ返す",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["posted", "failed"],
+      "description": "posted=投稿証跡の相互一致を検証済み / failed=投稿または検証に失敗"
+    },
+    "pr_number": {
+      "type": "integer",
+      "description": "review-target.md から検証した PR 番号。failed で特定不能なら 0"
+    },
+    "round": {
+      "type": "integer",
+      "description": "review-target.md から検証した round。failed で特定不能なら 0"
+    },
+    "publication_identity": {
+      "type": "string",
+      "description": "validator が生成する github:{owner}/{repo}:pull:{PR}:round:{round}:comment:{id}:run:{run} 形式の正規 identity。failed なら空文字列"
+    },
+    "comment_url": {
+      "type": "string",
+      "description": "validator が対象 PR と照合した github.com の pull request comment URL。failed なら空文字列"
+    },
+    "publication_marker": {
+      "type": "string",
+      "description": "validator が review-target の PR 番号・round と照合した marker。failed なら空文字列"
+    },
+    "failure_reason": {
+      "type": "string",
+      "description": "failed の理由。posted なら空文字列"
+    }
+  },
+  "required": [
+    "status",
+    "pr_number",
+    "round",
+    "publication_identity",
+    "comment_url",
+    "publication_marker",
+    "failure_reason"
+  ],
+  "additionalProperties": false
+}

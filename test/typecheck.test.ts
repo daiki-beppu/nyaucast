@@ -25,6 +25,7 @@ const includedFixtures = [
   { content: invalidTypeScript, path: "fixture.config.ts" },
   { content: invalidJavaScript, path: "bin/fixture.js" },
   { content: invalidTypeScript, path: "bin/typescript/fixture.ts" },
+  { content: invalidTypeScript, path: ".takt/scripts/fixture.ts" },
   { content: invalidTypeScript, path: "src/fixture.ts" },
   { content: invalidTypeScript, path: "test/fixture.ts" },
 ] as const;
@@ -32,6 +33,7 @@ const expectedIncludes = [
   "*.config.ts",
   "bin/**/*.js",
   "bin/**/*.ts",
+  ".takt/scripts/**/*.ts",
   "src/**/*.ts",
   "test/**/*.ts",
 ] as const;

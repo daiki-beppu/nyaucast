@@ -16,3 +16,5 @@
 !facets/**
 !schemas/
 !schemas/**
+!scripts/
+!scripts/**
