@@ -71,14 +71,18 @@ steps:
       report:
         - name: review-target.md
           format: tayk-review-target
+    structured_output:
+      schema_ref: tayk-review-gather
     rules:
-      - condition: レビュー対象の情報収集完了
+      - condition: when(structured.gather.status == "ready")
         next: reviewers
-      - condition: PR を特定できない、diff を取得できない
+      - condition: when(structured.gather.status == "failed")
         next: ABORT
         appendix: |
           確認事項:
-          - {何が取得できなかったか}
+          - {structured.gather.failure_reason}
+      - condition: when(true)
+        next: ABORT
 
   # ── Phase 2: 5 並列レビュー ───────────────────────────────────────
   # 観点の選定基準は「PR の出自を問わず適用できるか」。tayk-feature の impl_review が

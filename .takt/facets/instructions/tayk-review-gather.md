@@ -47,12 +47,23 @@ gh pr list --state open --json number,headRefName,baseRefName
 gh pr view {番号} --comments
 ```
 
-コメントのうち、`# tayk-review — PR #<番号> / round <N>` で始まるものを探します。
+コメントのうち、`# tayk-review — PR #<番号> / round <N>` で始まるものを探します。見出しの PR 番号と round が不正な候補は理由を記録してスキップし、最新の有効コメントを採用します。
 
-- **見つからない場合** — 今回は round 1 です
-- **見つかった場合** — 最新のものを読み、round を +1 します。そのコメントの「ブロッキング指摘」表を**そのまま引き継いでレポートに転記します**
+- **候補がない場合** — `previous_review` は `none`、今回は round 1 です
+- **不正な候補しかない場合** — `previous_review` は `malformed`、今回は round 1 です
+- **有効なコメントがある場合** — `previous_review` は `valid`。最新のものを読み、round を +1 します。そのコメントの「ブロッキング指摘」表を**そのまま引き継いでレポートに転記します**
 
 引き継いだ指摘は、各レビュアーが「前回の指摘が解消されたか」を判定する基準になります（`tayk-review-rescan` policy の 2 回目以降の義務）。**転記を省略すると、レビュアーは前回の指摘を知る手段を持ちません** — 台帳は run 内で閉じており、前の run のものは残っていないためです。
+
+## structured output
+
+report 作成後、次を返します。
+
+- `status`: PR 番号、差分、report を確定できた場合は `ready`、それ以外は `failed`
+- `pr_number`: 対象 PR 番号。特定不能なら 0
+- `round`: 今回の round。確定不能なら 0
+- `previous_review`: `none | valid | malformed` のいずれか
+- `failure_reason`: `failed` の具体的理由。`ready` では空文字
 
 ## 禁止
 
