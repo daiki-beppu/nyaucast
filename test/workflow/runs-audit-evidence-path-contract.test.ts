@@ -1,8 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
 
-const packageRoot = resolve(import.meta.dirname, "../..");
+import { readRepositoryFile } from "../helpers";
+
 const repositoryRunsPath = "/Users/mba/02-yt/tayk/.takt/runs";
 const cloneMetaPath = "/Users/mba/02-yt/tayk/.takt/clone-meta/*.json";
 const paths = {
@@ -20,10 +19,6 @@ const paths = {
 interface EvidenceSection {
   name: string;
   text: string;
-}
-
-function readRepositoryFile(relativePath: string): string {
-  return readFileSync(join(packageRoot, relativePath), "utf-8");
 }
 
 function extractBetween(

@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
-const packageRoot = resolve(import.meta.dirname, "../..");
+import { readRepositoryFile } from "../helpers";
+
 const contractPath = ".takt/facets/output-contracts/tayk-review-summary.md";
 const instructionPath = ".takt/facets/instructions/tayk-review-publish.md";
 
@@ -11,10 +12,6 @@ interface PullRequestComment {
   author: { login: string };
   body: string;
   url: string;
-}
-
-function readRepositoryFile(relativePath: string): string {
-  return readFileSync(join(packageRoot, relativePath), "utf-8");
 }
 
 function extractMarkerTemplate(): string {

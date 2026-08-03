@@ -1,10 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
 
-import { parse } from "yaml";
+import { parseYamlRecord, readRepositoryFile } from "../helpers";
 
-const packageRoot = resolve(import.meta.dirname, "../..");
 const parentStepName = "impl_review";
 const receptacleCondition = "when(true)";
 const backtrackAlias = "<backtrack>";
@@ -63,10 +60,6 @@ interface ImplReviewContract {
   subStepVerdicts: SubStepVerdicts[];
 }
 
-function readRepositoryFile(relativePath: string): string {
-  return readFileSync(join(packageRoot, relativePath), "utf-8");
-}
-
 /**
  * 括弧・引用符を尊重してトップレベルの区切りで分割する。takt の
  * `splitTopLevelClauses` と同じトークナイズでないと `all(...) && when(...)` の
@@ -107,12 +100,11 @@ function splitTopLevel(expression: string, separator: string): string[] {
 }
 
 function parseWorkflow(relativePath: string): WorkflowDefinition {
-  const value: unknown = parse(readRepositoryFile(relativePath));
-
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new TypeError(`${relativePath} must contain a workflow object`);
-  }
-  return value;
+  return parseYamlRecord(
+    readRepositoryFile(relativePath),
+    relativePath,
+    "a workflow object"
+  );
 }
 
 function requireParentStep(workflowPath: string): WorkflowStep {

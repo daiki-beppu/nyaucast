@@ -1,13 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
-const packageRoot = resolve(import.meta.dirname, "../..");
-const instructionPath = join(
-  packageRoot,
-  ".takt/facets/instructions/tayk-review-gather.md"
-);
+import { readRepositoryFile } from "../helpers";
+
+const instructionPath = ".takt/facets/instructions/tayk-review-gather.md";
 const temporaryDirectories: string[] = [];
 
 interface ContractResult {
@@ -16,7 +14,7 @@ interface ContractResult {
 }
 
 function readHardCapContract(): string {
-  const instruction = readFileSync(instructionPath, "utf-8");
+  const instruction = readRepositoryFile(instructionPath);
   const match =
     /<!-- executable-contract: gather-hard-cap -->\s*```bash\n([\s\S]*?)```/.exec(
       instruction

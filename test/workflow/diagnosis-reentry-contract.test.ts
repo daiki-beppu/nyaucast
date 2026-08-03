@@ -1,10 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
 
-import { parse } from "yaml";
+import { parseYamlRecord, readRepositoryFile } from "../helpers";
 
-const packageRoot = resolve(import.meta.dirname, "../..");
 const workflowPath = ".takt/workflows/tayk-fix.yaml";
 
 interface WorkflowRule {
@@ -41,20 +38,16 @@ interface WorkflowDefinition {
   steps?: WorkflowStep[];
 }
 
-function readRepositoryFile(relativePath: string): string {
-  return readFileSync(join(packageRoot, relativePath), "utf-8");
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function parseWorkflow(): WorkflowDefinition {
-  const value: unknown = parse(readRepositoryFile(workflowPath));
-  if (!isRecord(value)) {
-    throw new TypeError(`${workflowPath} must contain a workflow object`);
-  }
-  return value;
+  return parseYamlRecord(
+    readRepositoryFile(workflowPath),
+    workflowPath,
+    "a workflow object"
+  );
 }
 
 function requireSteps(workflow: WorkflowDefinition): WorkflowStep[] {

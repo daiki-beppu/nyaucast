@@ -1,8 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
 
-const packageRoot = resolve(import.meta.dirname, "../..");
+import { readRepositoryFile } from "../helpers";
+
 const facetPaths = [
   ".takt/facets/instructions/findings-manager.md",
   ".takt/facets/output-contracts/findings-manager.md",
@@ -20,10 +19,6 @@ interface OutcomeOwnerRow {
   idKind: string;
   outputField: string;
   rawOutcome: string;
-}
-
-function readRepositoryFile(relativePath: string): string {
-  return readFileSync(join(packageRoot, relativePath), "utf-8");
 }
 
 function readDecisionRows(source: string): DecisionRow[] {
