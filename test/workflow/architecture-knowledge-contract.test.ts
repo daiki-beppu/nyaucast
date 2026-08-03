@@ -1,10 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
 
-import { parse } from "yaml";
+import { packageRoot, parseYamlRecord, readRepositoryFile } from "../helpers";
 
-const packageRoot = resolve(import.meta.dirname, "../..");
 const facetPath = ".takt/facets/knowledge/architecture.md";
 const adrPath = "docs/adr/0001-thin-architecture.md";
 const workflowPaths = {
@@ -88,10 +87,6 @@ interface WorkflowStep {
 
 interface WorkflowDefinition {
   steps?: WorkflowStep[];
-}
-
-function readRepositoryFile(relativePath: string): string {
-  return readFileSync(join(packageRoot, relativePath), "utf-8");
 }
 
 function readMarkdownSection(source: string, heading: string): string {
@@ -185,11 +180,11 @@ function expectNormContract(expected: readonly NormContract[]): void {
 }
 
 function parseWorkflowSource(source: string, path: string): WorkflowDefinition {
-  const value: unknown = parse(source);
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new TypeError(`${path} must contain a workflow object`);
-  }
-  return value;
+  return parseYamlRecord({
+    expectedShape: "a workflow object",
+    relativePath: path,
+    source,
+  });
 }
 
 function parseWorkflow(path: string): WorkflowDefinition {

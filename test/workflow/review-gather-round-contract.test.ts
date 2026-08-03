@@ -1,12 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
 
 import Ajv from "ajv";
 
-const packageRoot = resolve(import.meta.dirname, "../..");
-const schemaPath = join(packageRoot, ".takt/schemas/tayk-review-gather.json");
-const schema = JSON.parse(readFileSync(schemaPath, "utf-8")) as Record<
+import { readRepositoryFile } from "../helpers";
+
+const schemaPath = ".takt/schemas/tayk-review-gather.json";
+const schema = JSON.parse(readRepositoryFile(schemaPath)) as Record<
   string,
   unknown
 >;

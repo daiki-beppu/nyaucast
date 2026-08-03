@@ -1,10 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
 
-import { parse } from "yaml";
+import { parseYamlRecord, readRepositoryFile } from "../helpers";
 
-const packageRoot = resolve(import.meta.dirname, "../..");
 const instructionPaths = {
   review: ".takt/facets/instructions/review-merge-readiness.md",
   supervise: ".takt/facets/instructions/supervise-finding-contract.md",
@@ -31,12 +28,12 @@ interface WorkflowStep {
   rules?: WorkflowRule[];
 }
 
-function readRepositoryFile(relativePath: string): string {
-  return readFileSync(join(packageRoot, relativePath), "utf-8");
-}
-
 function requireFinalGate(path: string): WorkflowStep {
-  const workflow = parse(readRepositoryFile(path)) as WorkflowDefinition;
+  const workflow = parseYamlRecord({
+    expectedShape: "a workflow object",
+    relativePath: path,
+    source: readRepositoryFile(path),
+  }) as WorkflowDefinition;
   const finalGate = workflow.steps?.find((step) => step.name === "final_gate");
   if (finalGate === undefined) {
     throw new Error(`${path} must declare final_gate`);

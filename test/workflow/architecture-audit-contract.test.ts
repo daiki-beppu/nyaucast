@@ -1,8 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
 
-const packageRoot = resolve(import.meta.dirname, "../..");
+import { readRepositoryFile } from "../helpers";
+
 const contractPath = ".takt/facets/output-contracts/tayk-architecture-audit.md";
 const supervisorPath =
   ".takt/facets/instructions/tayk-architecture-audit-supervise.md";
@@ -26,10 +25,6 @@ const requiredFindingFields = [
 interface ReportContract {
   format: string;
   name: string;
-}
-
-function readRepositoryFile(relativePath: string): string {
-  return readFileSync(join(packageRoot, relativePath), "utf-8");
 }
 
 function readMarkdownSection(source: string, heading: string): string {

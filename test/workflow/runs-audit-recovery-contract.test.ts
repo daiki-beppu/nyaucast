@@ -1,10 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
 
-import { parse } from "yaml";
+import { parseYamlRecord, readRepositoryFile } from "../helpers";
 
-const packageRoot = resolve(import.meta.dirname, "../..");
 const paths = {
   analyze: ".takt/facets/instructions/tayk-audit-runs-analyze.md",
   auditContract: ".takt/facets/output-contracts/tayk-runs-audit.md",
@@ -51,16 +48,12 @@ interface WorkflowDefinition {
   steps?: WorkflowStep[];
 }
 
-function readRepositoryFile(relativePath: string): string {
-  return readFileSync(join(packageRoot, relativePath), "utf-8");
-}
-
 function parseWorkflow(relativePath: string): WorkflowDefinition {
-  const value: unknown = parse(readRepositoryFile(relativePath));
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new TypeError(`${relativePath} must contain a workflow object`);
-  }
-  return value;
+  return parseYamlRecord({
+    expectedShape: "a workflow object",
+    relativePath,
+    source: readRepositoryFile(relativePath),
+  });
 }
 
 function requireSteps(
