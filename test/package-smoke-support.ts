@@ -4,24 +4,19 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
   realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
-import {
-  delimiter,
-  dirname,
-  isAbsolute,
-  join,
-  relative,
-  resolve,
-  sep,
-} from "node:path";
+import { delimiter, dirname, isAbsolute, join, relative, sep } from "node:path";
 
-const packageRoot = resolve(import.meta.dirname, "..");
+import {
+  packageRoot,
+  requireCompletedSubprocess,
+  withTemporaryDirectory as withSharedTemporaryDirectory,
+} from "./helpers";
+
 const packageJsonPath = join(packageRoot, "package.json");
 const dependencyProbeFixturePath = join(
   import.meta.dirname,
@@ -63,13 +58,7 @@ export interface DependencyProbeOutcome {
 }
 
 export function withTemporaryDirectory(run: (directory: string) => void): void {
-  const directory = realpathSync(mkdtempSync(join(tmpdir(), "tayk-smoke-")));
-
-  try {
-    run(directory);
-  } finally {
-    rmSync(directory, { force: true, recursive: true });
-  }
+  withSharedTemporaryDirectory("tayk-smoke-", run, realpathSync);
 }
 
 export function readJsonRecord(path: string): JsonRecord {
@@ -114,17 +103,6 @@ stdout:
 ${result.stdout}
 stderr:
 ${result.stderr}`;
-}
-
-export function requireCompletedSubprocess(
-  label: string,
-  result: SubprocessResult
-): void {
-  if (result.error !== undefined) {
-    throw new Error(subprocessDiagnostic(label, result), {
-      cause: result.error,
-    });
-  }
 }
 
 export function requireSuccessfulSubprocess(

@@ -1,11 +1,15 @@
 {
   "$schema": "./node_modules/fallow/schema.json",
-  "entry": ["bin/tayk.js", "src/index.ts", "test/helpers.ts"],
+  "entry": [
+    "bin/tayk.js",
+    "src/index.ts",
+    "test/helpers.ts",
+    "test/package-smoke-support.ts",
+    "test/fixtures/package-dependency-probe.ts"
+  ],
   "ignorePatterns": [
     "bin/**/*.test.ts",
     "test/**/*.test.ts",
-    "test/package-smoke-support.ts",
-    "test/fixtures/**",
     "*.config.ts",
     "prototype/**",
     "scripts/**"
@@ -17,12 +21,14 @@
     "minTokens": 10,
     "minLines": 1,
     "minOccurrences": 2,
-    "threshold": 50
+    "threshold": 50,
+    "ignore": ["test/package-smoke-support.ts", "test/fixtures/**"]
   },
   "health": {
     "maxCyclomatic": 5,
     "maxCognitive": 5,
     "maxCrap": 30,
-    "maxUnitSize": 60
+    "maxUnitSize": 60,
+    "ignore": ["test/package-smoke-support.ts", "test/fixtures/**"]
   }
 }

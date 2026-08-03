@@ -1,7 +1,7 @@
 import type { SpawnSyncReturns } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 
 export const packageRoot = resolve(import.meta.dirname, "..");
 export const installationGuidePattern =
@@ -9,14 +9,17 @@ export const installationGuidePattern =
 
 export function withTemporaryDirectory(
   prefix: string,
-  run: (directory: string) => void,
+  execute: (directory: string) => void,
   normalize: (directory: string) => string = (directory) => directory
 ): void {
-  const createdDirectory = mkdtempSync(join(tmpdir(), prefix));
+  const temporaryPathPrefix = isAbsolute(prefix)
+    ? prefix
+    : join(tmpdir(), prefix);
+  const createdDirectory = mkdtempSync(temporaryPathPrefix);
   const directory = normalize(createdDirectory);
 
   try {
-    run(directory);
+    execute(directory);
   } finally {
     rmSync(directory, { force: true, recursive: true });
   }
