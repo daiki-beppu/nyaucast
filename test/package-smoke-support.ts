@@ -26,13 +26,24 @@ const dependencyProbeFixturePath = join(
 const subprocessTimeoutMilliseconds = 60_000;
 const bunPath = Bun.which("bun");
 const nodePath = Bun.which("node");
+export const packageSmokePrerequisitesUnavailable =
+  bunPath === null || nodePath === null;
+const runningInCi = process.env["CI"] !== undefined && process.env["CI"] !== "";
 
-if (bunPath === null || nodePath === null) {
+if (packageSmokePrerequisitesUnavailable && runningInCi) {
   throw new Error("The package smoke tests require Bun and Node on PATH");
 }
 
-export const bunExecutablePath = realpathSync(bunPath);
-export const nodeExecutablePath = realpathSync(nodePath);
+function availableExecutablePath(path: string | null): string {
+  if (path === null) {
+    throw new Error("A skipped package smoke test attempted to run");
+  }
+  return realpathSync(path);
+}
+
+export const bunExecutablePath = (): string => availableExecutablePath(bunPath);
+export const nodeExecutablePath = (): string =>
+  availableExecutablePath(nodePath);
 
 type JsonRecord = Record<string, unknown>;
 export type SubprocessResult = SpawnSyncReturns<string>;
@@ -154,7 +165,7 @@ export function installProductionPackage(directory: string): InstalledPackage {
   const environment = createIsolatedEnvironment(directory);
   const tarballPath = join(directory, "tayk-production.tgz");
   const packed = spawnSync(
-    bunExecutablePath,
+    bunExecutablePath(),
     ["pm", "pack", "--ignore-scripts", "--filename", tarballPath],
     {
       cwd: packageRoot,
@@ -188,7 +199,7 @@ export function installProductionPackage(directory: string): InstalledPackage {
   );
 
   const installed = spawnSync(
-    bunExecutablePath,
+    bunExecutablePath(),
     ["install", "--production", "--ignore-scripts", "--backend=copyfile"],
     {
       cwd: consumerRoot,
@@ -217,8 +228,8 @@ export function runInstalledShim(
   markerEnvironment: NodeJS.ProcessEnv
 ): SubprocessResult {
   const executablePath = [
-    dirname(nodeExecutablePath),
-    dirname(bunExecutablePath),
+    dirname(nodeExecutablePath()),
+    dirname(bunExecutablePath()),
   ].join(delimiter);
 
   return spawnSync(installed.shimPath, [], {

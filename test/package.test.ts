@@ -25,15 +25,24 @@ const packageJsonPath = join(packageRoot, "package.json");
 const subprocessTimeoutMilliseconds = 20_000;
 const nodePath = Bun.which("node");
 const npmPath = Bun.which("npm");
+const prerequisitesUnavailable = nodePath === null || npmPath === null;
+const runningInCi = process.env["CI"] !== undefined && process.env["CI"] !== "";
 
 setDefaultTimeout(90_000);
 
-if (nodePath === null || npmPath === null) {
+if (prerequisitesUnavailable && runningInCi) {
   throw new Error("The package integration tests require Node and npm on PATH");
 }
 
-const nodeExecutablePath = nodePath;
-const npmExecutablePath = npmPath;
+function availableExecutablePath(path: string | null): string {
+  if (path === null) {
+    throw new Error("A skipped package integration test attempted to run");
+  }
+  return path;
+}
+
+const nodeExecutablePath = (): string => availableExecutablePath(nodePath);
+const npmExecutablePath = (): string => availableExecutablePath(npmPath);
 
 function withPackageFixture(run: (directory: string) => void): void {
   withTemporaryDirectory("tayk-package-", run);
@@ -164,7 +173,7 @@ function packPackage(
   npmEnvironment: NpmEnvironment
 ): PackResult {
   const result = spawnSync(
-    npmExecutablePath,
+    npmExecutablePath(),
     ["pack", "--json", "--ignore-scripts"],
     {
       cwd: fixtureRoot,
@@ -214,7 +223,7 @@ function createFakeBun(directory: string): {
   mkdirSync(binDirectory);
   writeFileSync(
     fakeBunPath,
-    `#!${nodeExecutablePath}
+    `#!${nodeExecutablePath()}
 const { appendFileSync } = require("node:fs");
 appendFileSync(process.env.TAYK_FAKE_BUN_RECORD, JSON.stringify(process.argv.slice(2)) + "\\n");
 process.stdout.write("installed-stdout");
@@ -226,7 +235,7 @@ process.exit(42);
   return { binDirectory, recordPath };
 }
 
-describe("package foundation", () => {
+describe.skipIf(prerequisitesUnavailable)("package foundation", () => {
   // REQ-75-01 / TC-75-01 / P-75-01
   // REQ-75-01 / TC-75-04 / existing behavior regression
   // REQ-75-02 / TC-75-05 / existing behavior regression
@@ -253,7 +262,7 @@ describe("package foundation", () => {
       mkdirSync(consumerRoot);
       writeFileSync(join(consumerRoot, "package.json"), '{"private":true}\n');
       const install = spawnSync(
-        npmExecutablePath,
+        npmExecutablePath(),
         [
           "install",
           "--ignore-scripts",
@@ -281,7 +290,7 @@ describe("package foundation", () => {
         encoding: "utf-8",
         env: {
           ...process.env,
-          PATH: `${fakeBun.binDirectory}:${dirname(nodeExecutablePath)}`,
+          PATH: `${fakeBun.binDirectory}:${dirname(nodeExecutablePath())}`,
           TAYK_FAKE_BUN_RECORD: fakeBun.recordPath,
         },
         killSignal: "SIGKILL",
@@ -311,7 +320,7 @@ describe("package foundation", () => {
       const withoutBun = spawnSync(shimPath, [], {
         cwd: consumerRoot,
         encoding: "utf-8",
-        env: { ...process.env, PATH: dirname(nodeExecutablePath) },
+        env: { ...process.env, PATH: dirname(nodeExecutablePath()) },
         killSignal: "SIGKILL",
         timeout: subprocessTimeoutMilliseconds,
       });

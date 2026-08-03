@@ -19,19 +19,27 @@ const installationUrlPattern = /https:\/\/bun\.sh/i;
 const subprocessTimeoutMilliseconds = 20_000;
 const nodePath = Bun.which("node");
 const bunPath = Bun.which("bun");
+const prerequisitesUnavailable = nodePath === null || bunPath === null;
+const runningInCi = process.env["CI"] !== undefined && process.env["CI"] !== "";
 
 setDefaultTimeout(30_000);
 
-if (nodePath === null) {
-  throw new Error("The launcher integration tests require Node on PATH");
+if (prerequisitesUnavailable && runningInCi) {
+  throw new Error(
+    "The launcher integration tests require Node and Bun on PATH"
+  );
 }
 
-if (bunPath === null) {
-  throw new Error("The launcher integration tests require Bun on PATH");
+function availableExecutablePath(path: string | null): string {
+  if (path === null) {
+    throw new Error("A skipped launcher integration test attempted to run");
+  }
+  return path;
 }
 
-const nodeExecutablePath = nodePath;
-const realBunDirectory = dirname(bunPath);
+const nodeExecutablePath = (): string => availableExecutablePath(nodePath);
+const realBunDirectory = (): string =>
+  dirname(availableExecutablePath(bunPath));
 
 function withLauncherFixture(run: (directory: string) => void): void {
   withTemporaryDirectory("tayk-launcher-", run);
@@ -48,7 +56,7 @@ function createFakeBun(directory: string): {
   mkdirSync(binDirectory);
   writeFileSync(
     fakeBunPath,
-    `#!${nodeExecutablePath}
+    `#!${nodeExecutablePath()}
 const { appendFileSync } = require("node:fs");
 
 const recordPath = process.env.TAYK_FAKE_BUN_RECORD;
@@ -110,7 +118,7 @@ function runLauncher(options: {
         };
 
   const result = spawnSync(
-    nodeExecutablePath,
+    nodeExecutablePath(),
     [options.launcher ?? launcherPath, ...options.args],
     {
       cwd: options.cwd,
@@ -136,7 +144,7 @@ function readInvocations(recordPath: string): unknown[] {
     .map((line) => JSON.parse(line) as unknown);
 }
 
-describe("tayk launcher", () => {
+describe.skipIf(prerequisitesUnavailable)("tayk launcher", () => {
   test("should delegate exactly once to Bun independently of cwd", () => {
     withLauncherFixture((directory) => {
       const fakeBun = createFakeBun(directory);
@@ -258,7 +266,7 @@ describe("tayk launcher", () => {
         args: [],
         cwd: directory,
         launcher: isolatedLauncherPath,
-        path: realBunDirectory,
+        path: realBunDirectory(),
       });
 
       expect(result.status).not.toBe(0);
@@ -274,7 +282,7 @@ describe("tayk launcher", () => {
       const result = runLauncher({
         args: [],
         cwd: directory,
-        path: realBunDirectory,
+        path: realBunDirectory(),
       });
 
       expect(result.status).toBe(0);

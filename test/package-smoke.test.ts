@@ -10,6 +10,7 @@ import {
   instrumentRuntimeMarkers,
   isWithinDirectory,
   nodeExecutablePath,
+  packageSmokePrerequisitesUnavailable,
   readJsonRecord,
   removeDependencyAndCreateAncestorFixture,
   replaceDependencyExportsWithInvalidShape,
@@ -27,7 +28,11 @@ import {
 
 setDefaultTimeout(180_000);
 
-describe("production package smoke", () => {
+const describeProductionPackageSmoke = describe.skipIf(
+  packageSmokePrerequisitesUnavailable
+);
+
+describeProductionPackageSmoke("production package smoke", () => {
   test("[REQ-116-01] should install unchanged production dependencies and import every direct dependency when packed for a consumer (TC-116-01)", () => {
     withTemporaryDirectory((directory) => {
       const installed = installProductionPackage(directory);
@@ -156,7 +161,7 @@ describe("production package smoke", () => {
         realpathSync(
           requireString(launcherMarker["executable"], "launcher executable")
         )
-      ).toBe(nodeExecutablePath);
+      ).toBe(nodeExecutablePath());
       expect(
         realpathSync(requireString(launcherMarker["script"], "launcher script"))
       ).toBe(realpathSync(launcherPath));
@@ -164,7 +169,7 @@ describe("production package smoke", () => {
         realpathSync(
           requireString(entrypointMarker["executable"], "entrypoint executable")
         )
-      ).toBe(bunExecutablePath);
+      ).toBe(bunExecutablePath());
       expect(
         realpathSync(
           requireString(entrypointMarker["script"], "entrypoint script")
