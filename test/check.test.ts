@@ -723,6 +723,26 @@ function readDefinitionRows(
   );
 }
 
+interface TextContract {
+  keywords: readonly string[];
+  marker: string;
+}
+
+function expectTextContracts(
+  lines: readonly string[],
+  contracts: readonly TextContract[]
+): void {
+  for (const contract of contracts) {
+    const line = lines.find((candidate) => candidate.includes(contract.marker));
+    expect(line, `missing contract marker: ${contract.marker}`).toBeDefined();
+    for (const keyword of contract.keywords) {
+      expect(line, `${contract.marker} must include ${keyword}`).toContain(
+        keyword
+      );
+    }
+  }
+}
+
 function readNumberedDecision(markdown: string, number: number): string {
   const prefix = `${number}. `;
   const line = markdown
@@ -759,122 +779,73 @@ function listAdrPaths(): string[] {
 function assertDomainArchitectureContract(markdown: string): void {
   const terms = readSection(markdown, "## 中核用語");
   const avoidedTerms = readSection(markdown, "## 禁止語（`_Avoid_`）");
+  const definitions = readDefinitionRows(terms);
+  const definitionLines = definitions.map(
+    ({ definition, term }) => `${term}: ${definition}`
+  );
 
-  expect(readDefinitionRows(terms)).toEqual([
+  expectTextContracts(definitionLines, [
     {
-      definition:
-        "tayk が expose する型付き操作。agent が直接呼ぶ第一級インターフェース。primitive tool 1 層と、local store への読み口で構成される。ドット表記 (`benchmark.collect`) が正書で、MCP wire 名はアンダースコア変換した `benchmark_collect`。",
-      term: "MCP tool",
+      keywords: ["型付き", "primitive tool", "local store"],
+      marker: "MCP tool:",
     },
+    { keywords: ["単一操作", "細粒度"], marker: "primitive tool:" },
+    { keywords: ["廃止", "knowledge codec"], marker: "workflow tool:" },
+    { keywords: ["core", "MCP", "CLI"], marker: "adapter:" },
+    { keywords: ["MCP tool", "WHEN/HOW"], marker: "knowledge codec:" },
+    { keywords: ["YouTube", "楽曲", "成果物"], marker: "collection:" },
+    { keywords: ["TTP", "企画", "upload"], marker: "collection lifecycle:" },
+    { keywords: ["benchmark", "分析", "転写"], marker: "TTP:" },
+    { keywords: ["local.db", "libSQL", "SSOT"], marker: "local store:" },
+    { keywords: ["local store", "読み取り", "SSOT"], marker: "read model:" },
+    { keywords: ["ADR-0001", "end-to-end", "plan"], marker: "tracer:" },
+    { keywords: ["first-party", "collection", "v0.1.0"], marker: "dogfood:" },
     {
-      definition:
-        "単一操作の細粒度 tool。`audio.master` / `thumbnail.generate` 等",
-      term: "primitive tool",
-    },
-    {
-      definition:
-        "廃止された粗粒度の MCP tool。区間を歩くのは knowledge codec を読んだ agent であり、tool ではない",
-      term: "workflow tool",
-    },
-    {
-      definition:
-        "core の MCP tool を各プロトコルへ橋渡しする薄いラッパ。MCP (primary) と CLI (`tayk <cmd>`) の 2 本。",
-      term: "adapter",
-    },
-    {
-      definition:
-        "「いつ・どの MCP tool を・どう使うか」の知識パッケージ。tool の description が WHAT、codec が WHEN/HOW。5 本構成。",
-      term: "knowledge codec",
-    },
-    {
-      definition:
-        "1 本の YouTube 動画としてまとめられる楽曲群とその成果物一式。",
-      term: "collection",
-    },
-    {
-      definition:
-        "`TTP 収集・分析 → 企画 →[GO/NO-GO]→ サムネ生成 →[GO/NO-GO]→ 音源生成 → MIX/マスタリング → 動画生成 → upload → 公開後運用`。",
-      term: "collection lifecycle",
-    },
-    {
-      definition:
-        "「徹底的にパクる」。benchmark チャンネルの当たりパターンを分析し自チャンネルの企画へ転写する戦略。分析に留まらず転写までを含む。",
-      term: "TTP",
-    },
-    {
-      definition:
-        "`<CHANNEL_DIR>/data/local.db` の libSQL embedded DB。時系列データとコレクション状態 (②) の SSOT。",
-      term: "local store",
-    },
-    {
-      definition:
-        "local store が兼ねる読み取り専用クエリ面。① ④ のミラーを含むが SSOT ではない。",
-      term: "read model",
-    },
-    {
-      definition:
-        "ADR-0001 を確定させるために最初に end-to-end で通す垂直スライス = plan 区間。",
-      term: "tracer",
-    },
-    {
-      definition:
-        "first-party 2 リポで collection フルライフサイクル 1 周を tayk だけで実走させる受け入れ検証。`v0.1.0` の唯一のリリースゲート。",
-      term: "dogfood",
-    },
-    {
-      definition:
-        "リリースをブロックする欠陥は 3 種のみ — ①誤公開・誤メタデータ ②データ破壊 ③auth 破壊。これ以外はブロックせず issue 化する。",
-      term: "critical regression",
+      keywords: ["誤公開", "データ破壊", "auth"],
+      marker: "critical regression:",
     },
   ]);
   expect(
-    readMarkdownTableRows(avoidedTerms).filter((row) =>
-      row.some((cell) => cell.includes("tool"))
-    )
-  ).toEqual([["workflow tool", "primitive tool"]]);
+    definitions.some(({ term }) => term.includes("orchestration"))
+  ).toBeFalse();
+
+  const avoidedRows = readMarkdownTableRows(avoidedTerms).map((row) =>
+    row.join(" ")
+  );
+  expectTextContracts(avoidedRows, [
+    { keywords: ["primitive tool"], marker: "workflow tool" },
+  ]);
 }
 
 function assertAdrReviewTerminologyContract(markdown: string): void {
   const terminology = readSection(markdown, "## 用語（CONTEXT.md）");
+  const rows = readMarkdownTableRows(terminology).map((row) => row.join(" "));
 
-  expect(readMarkdownTableRows(terminology)).toEqual([
-    [
-      "`<対象ファイル>`",
-      "workflow tool",
-      "廃止済み。primitive tool 1 層と事実だけを返す読み口を使う",
-    ],
+  expectTextContracts(rows, [
+    {
+      keywords: ["廃止", "primitive tool", "事実"],
+      marker: "workflow tool",
+    },
   ]);
+  expect(rows.some((row) => row.includes("orchestration tool"))).toBeFalse();
 }
 
 function assertDesignArchitectureContract(markdown: string): void {
   const procedure = readSection(markdown, "## 手順");
+  const rows = readMarkdownTableRows(procedure).map((row) => row.join(" "));
 
-  expect(readMarkdownTableRows(procedure)).toEqual([
-    [
-      "要求の充足",
-      "要件 ID ごとの方針が、その要件を実際に満たすか。方針が抽象すぎて実装が一意に決まらない箇所はないか",
-    ],
-    [
-      "責務の配置",
-      "業務ロジックが core にあり、adapter が薄いままか。MCP tool が primitive tool 1 層で、読み口が事実だけを返すか",
-    ],
-    [
-      "データの流れ",
-      "入出力の型が決まっているか。SSOT が データ 4 分類 のどれに当たるかが明示されているか",
-    ],
-    [
-      "失敗の設計",
-      "失敗経路が設計されているか。エラーが内部 throw → 境界変換になっているか",
-    ],
-    [
-      "変更の広がり",
-      "1 要件の実装が想定外に多くのファイルへ波及していないか。波及するなら、その必然性が説明されているか",
-    ],
-    [
-      "未来への負債",
-      "いま入れると後で剥がしにくくなる構造（暗黙の状態・グローバル・双方向依存）がないか",
-    ],
+  expectTextContracts(rows, [
+    { keywords: ["要件 ID", "方針", "実装"], marker: "要求の充足" },
+    { keywords: ["core", "adapter", "primitive tool"], marker: "責務の配置" },
+    { keywords: ["入出力", "SSOT", "データ 4 分類"], marker: "データの流れ" },
+    { keywords: ["失敗経路", "throw", "境界変換"], marker: "失敗の設計" },
+    { keywords: ["要件", "ファイル", "波及"], marker: "変更の広がり" },
+    {
+      keywords: ["暗黙の状態", "グローバル", "双方向依存"],
+      marker: "未来への負債",
+    },
   ]);
+  expect(rows.some((row) => row.includes("orchestration tool"))).toBeFalse();
 }
 
 function assertAgentCodecReleaseContract(markdown: string): void {
@@ -1645,6 +1616,32 @@ describe("Issue #84 agent-facing architecture contracts", () => {
     assertDomainArchitectureContract(knowledge);
   });
 
+  test("should allow domain definitions to be rephrased without losing their meaning", () => {
+    const knowledge = readRepositoryFile(
+      ".takt/facets/knowledge/tayk-domain.md"
+    );
+    const rephrasedKnowledge = knowledge.replace(
+      /^\*\*knowledge codec\*\*:.*$/m,
+      "**knowledge codec**: MCP tool の選択時期と利用法を示す WHEN/HOW の知識。"
+    );
+
+    assertDomainArchitectureContract(rephrasedKnowledge);
+  });
+
+  test("should reject a missing domain term", () => {
+    const knowledge = readRepositoryFile(
+      ".takt/facets/knowledge/tayk-domain.md"
+    );
+    const missingTermKnowledge = knowledge.replace(
+      /^\*\*knowledge codec\*\*:.*\n/m,
+      ""
+    );
+
+    expect(() => {
+      assertDomainArchitectureContract(missingTermKnowledge);
+    }).toThrow();
+  });
+
   // REQ-84-04 / TC-04
   test("should keep ADR-0001 provisional until the plan interval tracer completes", () => {
     const adr = readRepositoryFile("docs/adr/0001-thin-architecture.md");
@@ -1655,8 +1652,14 @@ describe("Issue #84 agent-facing architecture contracts", () => {
       .filter((line) => line.startsWith("- ") && line.includes("tracer"))
       .map((line) => normalizeMarkdownText(line.slice(2)));
 
-    expect(readNumberedDecision(decision, 7)).toBe(
-      "本規約の確定は tracer（plan 区間）の end-to-end 完走をもって行う。tracer 実装中に破綻した項目は本 ADR を改訂して直す（黙って逸脱しない）"
+    expectTextContracts(
+      [readNumberedDecision(decision, 7)],
+      [
+        {
+          keywords: ["plan", "end-to-end", "ADR", "黙って逸脱"],
+          marker: "tracer",
+        },
+      ]
     );
     expect(tracerConsequences).toEqual([
       "tracer（plan 区間）が本規約の最初の適用対象。ディレクトリ規約（`src/tools/<domain>.<name>.ts` 等）は tracer 実装で確定させ、本 ADR に追記する",
@@ -1759,8 +1762,8 @@ describe("Issue #84 agent-facing architecture contracts", () => {
       ".takt/facets/output-contracts/tayk-adr-conformance-review.md"
     );
     const contradictoryContract = contract.replace(
-      "| `<対象ファイル>` | workflow tool | 廃止済み。primitive tool 1 層と事実だけを返す読み口を使う |",
-      "| `<対象ファイル>` | workflow tool | 廃止済み。primitive tool 1 層と事実だけを返す読み口を使う |\n| `<別の対象>` | orchestration tool | primitive tool を束ねる現行推奨層 |"
+      "## データ 4 分類",
+      "| `<別の対象>` | orchestration tool | primitive tool を束ねる現行推奨層 |\n\n## データ 4 分類"
     );
 
     expect(() => {
@@ -1773,8 +1776,8 @@ describe("Issue #84 agent-facing architecture contracts", () => {
       ".takt/facets/instructions/tayk-review-design-arch.md"
     );
     const contradictoryInstruction = instruction.replace(
-      "| データの流れ | 入出力の型が決まっているか。",
-      "| データの流れ | orchestration tool が primitive tool を束ねる現行層か。入出力の型が決まっているか。"
+      /^(\| データの流れ\s+\| )/m,
+      "$1orchestration tool が primitive tool を束ねる現行層か。"
     );
 
     expect(() => {
