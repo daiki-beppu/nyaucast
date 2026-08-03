@@ -5,10 +5,12 @@ import { join } from "node:path";
 import {
   bunExecutablePath,
   installProductionPackage,
+  installProductionPackageWithLocalRuntimeDependency,
   installedDependencies,
   instrumentDependencyProbe,
   instrumentRuntimeMarkers,
   isWithinDirectory,
+  localRuntimeDependencyName,
   nodeExecutablePath,
   packageSmokePrerequisitesUnavailable,
   readJsonRecord,
@@ -201,51 +203,49 @@ describeProductionPackageSmoke("production package smoke", () => {
     });
   });
 
-  // 欠損検証は取り除ける実依存が 1 件以上あるときだけ意味を持つ。実依存が入ると自動で再活性化する
-  test.skipIf(Object.keys(sourceDependencies()).length === 0)(
-    "[REQ-116-05] should fail the smoke verification when one resolved direct dependency is missing (TC-116-05)",
-    () => {
-      withTemporaryDirectory((directory) => {
-        const installed = installProductionPackage(directory);
-        instrumentDependencyProbe(installed);
-        const markerPath = join(directory, "dependency-marker.json");
-        const healthy = runInstalledDependencyProbe(installed, markerPath);
-        requireSuccessfulSubprocess(
-          "healthy installed dependency imports",
-          healthy.result
+  test("[REQ-116-05] should fail the smoke verification when one resolved direct dependency is missing (TC-116-05)", () => {
+    withTemporaryDirectory((directory) => {
+      const installed =
+        installProductionPackageWithLocalRuntimeDependency(directory);
+      instrumentDependencyProbe(installed);
+      const markerPath = join(directory, "dependency-marker.json");
+      const healthy = runInstalledDependencyProbe(installed, markerPath);
+      requireSuccessfulSubprocess(
+        "healthy installed dependency imports",
+        healthy.result
+      );
+      const target = healthy.probes?.[0];
+      if (target === undefined) {
+        throw new Error("At least one direct runtime dependency is required");
+      }
+      expect(target.dependency).toBe(localRuntimeDependencyName);
+      if (!isWithinDirectory(installed.consumerRoot, target.packageRoot)) {
+        throw new Error(
+          `Refusing to remove dependency outside consumer: ${target.packageRoot}`
         );
-        const target = healthy.probes?.[0];
-        if (target === undefined) {
-          throw new Error("At least one direct runtime dependency is required");
-        }
-        if (!isWithinDirectory(installed.consumerRoot, target.packageRoot)) {
-          throw new Error(
-            `Refusing to remove dependency outside consumer: ${target.packageRoot}`
-          );
-        }
+      }
 
-        removeDependencyAndCreateAncestorFixture(directory, target);
-        const missing = runInstalledDependencyProbe(installed, markerPath);
+      removeDependencyAndCreateAncestorFixture(directory, target);
+      const missing = runInstalledDependencyProbe(installed, markerPath);
 
-        requireFailedSubprocess(
-          `installed shim with missing dependency ${target.dependency}`,
+      requireFailedSubprocess(
+        `installed shim with missing dependency ${target.dependency}`,
+        missing.result
+      );
+      expect(missing.probes).toBeNull();
+      expect(existsSync(markerPath)).toBeFalse();
+      expect(missing.result.status).not.toBe(0);
+      expect(missing.result.signal).toBeNull();
+      expect(missing.result.stderr).toContain(target.dependency);
+      expect(readFileSync(installed.entrypointPath, "utf-8")).toContain(
+        "../dependency-probe.ts"
+      );
+      expect(() => {
+        requireSuccessfulSubprocess(
+          "dependency smoke verification",
           missing.result
         );
-        expect(missing.probes).toBeNull();
-        expect(existsSync(markerPath)).toBeFalse();
-        expect(missing.result.status).not.toBe(0);
-        expect(missing.result.signal).toBeNull();
-        expect(missing.result.stderr).toContain(target.dependency);
-        expect(readFileSync(installed.entrypointPath, "utf-8")).toContain(
-          "../dependency-probe.ts"
-        );
-        expect(() => {
-          requireSuccessfulSubprocess(
-            "dependency smoke verification",
-            missing.result
-          );
-        }).toThrow();
-      });
-    }
-  );
+      }).toThrow();
+    });
+  });
 });
