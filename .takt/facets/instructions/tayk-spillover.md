@@ -68,7 +68,7 @@ gh issue create -R daiki-beppu/tayk --title "<種別>: <1 行で問題>" --body 
 
 起票した issue 番号・既存へ追記した issue 番号・破棄した発見を、レポートに残す。
 
-**PR 本文への転記は行わない。** PR は workflow 完了後に takt の auto_pr が作成するため、この時点では存在しない（ADR-0008 決定 7 改訂）。発見から issue への追跡はレポートと、起票した issue 側の「発見の経緯」の記載で担保する。
+**PR 本文への転記は行わない。** PR は workflow 完了後に takt の auto_pr が作成するため、この時点では存在しない（ADR-0008「Git と PR」）。発見から issue への追跡はレポートと、起票した issue 側の「発見の経緯」の記載で担保する。
 
 ## 制約
 

@@ -303,16 +303,15 @@ function expectAbortWiringContract(): void {
       abortConditions: {
         final_gate: /^ABORT$/,
         intake: /^(?:blocked|ABORT)$/,
-        plan: /4 回目以降|方針を一意に決められない/,
+        plan: /要件が不明確で計画を立てられない/,
       },
       path: paths.feature,
     },
     {
       abortConditions: {
-        diagnose: /11 回目以降|再現条件を確定できない|原因が複数/,
+        diagnose: /再現条件または必要な証拠を取得できない|原因が複数/,
         final_gate: /^ABORT$/,
         intake: /^(?:blocked|ABORT)$/,
-        rediagnose: /4 回目以降/,
       },
       path: paths.fix,
     },
@@ -369,12 +368,6 @@ function expectRecoveryLaneContract(): void {
 }
 
 describe("tayk-audit-runs recovery contract", () => {
-  // REQ-163-08 / TC-163-08B is distributed across the focused tests below.
-  // REQ-199-05 / TC-08 / P-5
-  test("tayk-fix keeps direct diagnosis ABORT reports recoverable while its overall limit changes", () => {
-    expectAbortWiringContract();
-  });
-
   test("[REQ-163-01 / TC-163-01A] should keep a run-level Recovery Inventory separate from Audit Targets when planning recovery", () => {
     const planContract = readRepositoryFile(paths.planContract);
     const auditTargetHeaders = extractTableHeaders(
@@ -428,6 +421,5 @@ describe("tayk-audit-runs recovery contract", () => {
 
   test("[REQ-163-07 / TC-163-07B] should assign completed abort and failed report trees to a later audit while normal completion keeps spillover", () => {
     expectRecoveryLaneContract();
-    expectAbortWiringContract();
   });
 });

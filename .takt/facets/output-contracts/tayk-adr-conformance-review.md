@@ -18,7 +18,7 @@
 | ADR-0005 メディア処理基盤 (`docs/adr/0005-media-processing-foundation.md`)                             | 5      | 整合            |
 | ADR-0006 takt を製品 orchestration に採用しない (`docs/adr/0006-no-takt-for-product-orchestration.md`) | 3      | 整合            |
 | ADR-0007 collection lifecycle 実行モデル (`docs/adr/0007-collection-lifecycle-execution-model.md`)     | 8      | 整合            |
-| ADR-0008 tayk 専用開発 workflow (`docs/adr/0008-takt-dedicated-workflow.md`)                           | 13     | 整合            |
+| ADR-0008 tayk 専用開発 workflow (`docs/adr/0008-takt-dedicated-workflow.md`)                           | 12     | 整合            |
 
 ## 機械的カウント（実装レビューのときのみ必須）
 

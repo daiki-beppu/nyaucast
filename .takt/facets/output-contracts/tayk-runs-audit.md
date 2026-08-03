@@ -78,7 +78,7 @@
 - 未着手の対象も ⏳ で行を残す。✅ を ⏳ に戻さない
 - Result が REJECT でも Audit Scope 表・既存の Findings・Targets with No Findings は全行維持する。REJECT はブロッキング指摘を**追加**する状態であって、蓄積した分析結果を削ってよい状態ではない
 - **複数 run にまたがる再発パターンは 1 Finding にまとめ、Runs 列に該当 run をすべて列挙する**（run ごとに Finding を割らない — 起票単位が壊れる）
-- Evidence は `.takt/runs` の実トレース（trace.md / meta.json / monitor.json）の引用、定義監査（#1〜#3。Category `def-*`）では定義ファイルのパス + 該当行の引用（検査 E は両ファイルの差分）だけ。このレポート自身や Report Directory 内のファイルを根拠とする Finding を書かない
+- Evidence は `.takt/runs` の実トレース（trace.md / meta.json / monitor.json）の引用、定義監査（#1〜#3。Category `def-*`）では定義ファイルのパス + 該当行の引用（shared fragment は fragment と参照元の対応）だけ。このレポート自身や Report Directory 内のファイルを根拠とする Finding を書かない
 - **Recovery Coverage 表は計画レポート（01）の Recovery Inventory と run および絶対パスで一対一**（同じ run・同じ絶対パス・同じ行数）を保つ。行の削除・統合・要約は禁止。読めなかった / 解釈できなかったレポートは Failed Paths と Failure Reasons に残し、「発見なし」（Extracted Findings 0 かつ Status 回収済み）へ畳まない — 畳むと未回収と発見なしが区別できなくなる
 - **回収 Finding（Category `recovery`）は Source Run / Source Report / Source Location / Quote / Impact を必ず埋める。** 元レポートの原文へ戻れることが回収の条件であり、要約に置き換えると起票時に出典を示せない。**通常 Finding ではこの 5 列を空欄（`-`）にし、Evidence 列の実トレース引用を根拠とする** — 回収 Finding を通すために通常 Finding の Evidence 制限を緩めない（監査対象 run のレポートは、回収 Finding の出典としてのみ根拠になる）
 - 「Loop Monitor 不発の疑い」節は**該当が 1 件も無くても残し、「該当なし」と明記する**（検査を実行した証明。節が無いレポートは検査未実施として差し戻される）。行は (workflow, step) 単位でまとめ、run ごとに割らない

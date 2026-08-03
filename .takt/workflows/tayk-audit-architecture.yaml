@@ -13,7 +13,7 @@
 #    review 側に 1 サイクル最低 4 対象の前進義務を置いて、max_steps 24 と整合させる。
 #    plan(1) + audit(1) + [supervise+review] ×10 + publish(1) = 23 ≤ 24
 #
-# ループ上限の実効性（ADR-0008 決定 6 / Consequences の手動チェック C）:
+# ループ上限の実効性（ADR-0008「有限停止」）:
 #   cycle [supervise, review] への遷移は audit → supervise（初回のみ）、review → supervise、
 #   supervise → review、loop judge → review / publish の 4 本だけ。cycle の外から再入される
 #   step は無いので、loop monitor だけで上限が保証され、{step_iteration} の自前上限は不要。

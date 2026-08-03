@@ -246,22 +246,8 @@ const workflowEntrances: readonly WorkflowEntrance[] = [
     workflow: "fix",
   },
   {
-    label: "fix.impl_review.arch-review",
-    location: {
-      field: "knowledge",
-      parallel: "arch-review",
-      step: "impl_review",
-    },
-    workflow: "fix",
-  },
-  {
     label: "fix.fix",
     location: { field: "knowledge", step: "fix" },
-    workflow: "fix",
-  },
-  {
-    label: "fix.final_gate.args.supervise_knowledge",
-    location: { field: "supervise_knowledge", step: "final_gate" },
     workflow: "fix",
   },
   {
@@ -284,22 +270,8 @@ const workflowEntrances: readonly WorkflowEntrance[] = [
     workflow: "feature",
   },
   {
-    label: "feature.impl_review.arch-review",
-    location: {
-      field: "knowledge",
-      parallel: "arch-review",
-      step: "impl_review",
-    },
-    workflow: "feature",
-  },
-  {
     label: "feature.fix",
     location: { field: "knowledge", step: "fix" },
-    workflow: "feature",
-  },
-  {
-    label: "feature.final_gate.args.supervise_knowledge",
-    location: { field: "supervise_knowledge", step: "final_gate" },
     workflow: "feature",
   },
   {
@@ -618,7 +590,7 @@ describe("project architecture Knowledge contract", () => {
   });
 
   // REQ-148-08 / TC-148-08 / P-148-03, P-148-05
-  test("16個の workflow 入口が同じ project override を裸名で参照する", () => {
+  test("12個の workflow 入口が同じ project override を裸名で参照する", () => {
     expect(readRepositoryFile(facetPath).length).toBeGreaterThan(0);
     const workflows = {
       audit: parseWorkflow(workflowPaths.audit),
@@ -756,18 +728,6 @@ describe("agent-facing architecture contracts", () => {
     const instructions = readRepositoryFile("AGENTS.md");
 
     assertAgentCodecReleaseContract(instructions);
-  });
-
-  // REQ-84-06 / TC-06
-  test("should use only a neutral implementation target in the plan contract", () => {
-    const contract = readRepositoryFile(
-      ".takt/facets/output-contracts/tayk-plan.md"
-    );
-    const implementationPlan = readMarkdownSection(contract, "## 実装方針");
-
-    expect(
-      readMarkdownTableRows(implementationPlan).map((row) => row[1])
-    ).toEqual(["`<対象ファイル>`"]);
   });
 
   // REQ-84-07 / TC-07

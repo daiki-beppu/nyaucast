@@ -12,6 +12,8 @@
 # レビュー対象の定義ファイルだけを追跡する。
 !workflows/
 !workflows/**
+!steps/
+!steps/**
 !facets/
 !facets/**
 !schemas/
