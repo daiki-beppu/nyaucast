@@ -1,0 +1,65 @@
+{
+  "type": "object",
+  "properties": {
+    "status": { "type": "string", "enum": ["complete", "failed"] },
+    "verdict": { "type": "string", "enum": ["APPROVE", "REJECT"] },
+    "blocking_counts": {
+      "type": "object",
+      "properties": {
+        "spec": { "type": "integer", "minimum": 0 },
+        "adr": { "type": "integer", "minimum": 0 },
+        "antipattern": { "type": "integer", "minimum": 0 },
+        "coding": { "type": "integer", "minimum": 0 },
+        "testing": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["spec", "adr", "antipattern", "coding", "testing"],
+      "additionalProperties": false
+    },
+    "spec_breakdown": {
+      "type": "object",
+      "properties": {
+        "unimplemented": { "type": "integer", "minimum": 0 },
+        "unverified": { "type": "integer", "minimum": 0 },
+        "previously_unresolved": { "type": "integer", "minimum": 0 },
+        "indeterminate": { "type": "boolean" }
+      },
+      "required": [
+        "unimplemented",
+        "unverified",
+        "previously_unresolved",
+        "indeterminate"
+      ],
+      "additionalProperties": false
+    },
+    "non_blocking_count": { "type": "integer", "minimum": 0 },
+    "resolved_count": { "type": "integer", "minimum": 0 },
+    "decision_line": { "type": "string" },
+    "failure_reason": { "type": "string" }
+  },
+  "required": [
+    "status",
+    "verdict",
+    "blocking_counts",
+    "spec_breakdown",
+    "non_blocking_count",
+    "resolved_count",
+    "decision_line",
+    "failure_reason"
+  ],
+  "additionalProperties": false,
+  "oneOf": [
+    {
+      "properties": {
+        "status": { "const": "complete" },
+        "decision_line": { "minLength": 1 },
+        "failure_reason": { "maxLength": 0 }
+      }
+    },
+    {
+      "properties": {
+        "status": { "const": "failed" },
+        "failure_reason": { "minLength": 1 }
+      }
+    }
+  ]
+}

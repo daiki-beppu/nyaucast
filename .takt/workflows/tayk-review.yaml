@@ -245,6 +245,8 @@ steps:
     provider_options:
       extends: review-readonly
     instruction: tayk-review-synthesis
+    structured_output:
+      schema_ref: tayk-review-synthesis
     quality_gates:
       - Report Directory の 5 レビューレポートをすべて読み、収集元として記録していること
       - 観点別のブロッキング件数が、各レポートのブロッキング指摘表の行数と一致していること
@@ -258,8 +260,12 @@ steps:
         - name: review-summary.md
           format: tayk-review-summary
     rules:
-      - condition: when(true)
+      - condition: when(structured.synthesis.status == "complete")
         next: publish
+      - condition: when(structured.synthesis.status == "failed")
+        next: ABORT
+      - condition: when(true)
+        next: ABORT
 
   # ── Phase 4: PR への投稿 ──────────────────────────────────────────
   # この workflow 唯一の外部作用。gh issue create を使う spillover と同じ形
