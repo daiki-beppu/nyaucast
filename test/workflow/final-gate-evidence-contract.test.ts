@@ -29,11 +29,11 @@ interface WorkflowStep {
 }
 
 function requireFinalGate(path: string): WorkflowStep {
-  const workflow = parseYamlRecord(
-    readRepositoryFile(path),
-    path,
-    "a workflow object"
-  ) as WorkflowDefinition;
+  const workflow = parseYamlRecord({
+    expectedShape: "a workflow object",
+    relativePath: path,
+    source: readRepositoryFile(path),
+  }) as WorkflowDefinition;
   const finalGate = workflow.steps?.find((step) => step.name === "final_gate");
   if (finalGate === undefined) {
     throw new Error(`${path} must declare final_gate`);

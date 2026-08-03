@@ -43,11 +43,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function parseWorkflow(): WorkflowDefinition {
-  return parseYamlRecord(
-    readRepositoryFile(workflowPath),
-    workflowPath,
-    "a workflow object"
-  );
+  return parseYamlRecord({
+    expectedShape: "a workflow object",
+    relativePath: workflowPath,
+    source: readRepositoryFile(workflowPath),
+  });
 }
 
 function requireSteps(workflow: WorkflowDefinition): WorkflowStep[] {

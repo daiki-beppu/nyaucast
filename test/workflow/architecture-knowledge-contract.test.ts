@@ -184,7 +184,11 @@ function expectNormContract(expected: readonly NormContract[]): void {
 }
 
 function parseWorkflowSource(source: string, path: string): WorkflowDefinition {
-  return parseYamlRecord(source, path, "a workflow object");
+  return parseYamlRecord({
+    expectedShape: "a workflow object",
+    relativePath: path,
+    source,
+  });
 }
 
 function parseWorkflow(path: string): WorkflowDefinition {

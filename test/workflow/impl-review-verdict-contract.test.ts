@@ -100,11 +100,11 @@ function splitTopLevel(expression: string, separator: string): string[] {
 }
 
 function parseWorkflow(relativePath: string): WorkflowDefinition {
-  return parseYamlRecord(
-    readRepositoryFile(relativePath),
+  return parseYamlRecord({
+    expectedShape: "a workflow object",
     relativePath,
-    "a workflow object"
-  );
+    source: readRepositoryFile(relativePath),
+  });
 }
 
 function requireParentStep(workflowPath: string): WorkflowStep {

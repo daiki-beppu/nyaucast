@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 
-import { parse } from "yaml";
+import { isMap, parseDocument } from "yaml";
 
 export const packageRoot = resolve(import.meta.dirname, "..");
 export const installationGuidePattern =
@@ -13,26 +13,32 @@ export function readRepositoryFile(relativePath: string): string {
   return readFileSync(join(packageRoot, relativePath), "utf-8");
 }
 
-export function parseYamlRecord(
-  source: string,
-  relativePath: string,
-  expectedShape: string
-): Record<string, unknown> {
-  let value: unknown;
+interface YamlRecordRequest {
+  expectedShape: string;
+  relativePath: string;
+  source: string;
+}
 
-  try {
-    value = parse(source);
-  } catch (error) {
-    throw new TypeError(`${relativePath} must contain valid YAML`, {
-      cause: error,
-    });
+export function parseYamlRecord({
+  expectedShape,
+  relativePath,
+  source,
+}: YamlRecordRequest): Record<string, unknown> {
+  const document = parseDocument(source);
+
+  switch (document.errors.length) {
+    case 0: {
+      if (isMap(document.contents)) {
+        return document.toJS() as Record<string, unknown>;
+      }
+      throw new TypeError(`${relativePath} must contain ${expectedShape}`);
+    }
+    default: {
+      throw new TypeError(`${relativePath} must contain valid YAML`, {
+        cause: document.errors[0],
+      });
+    }
   }
-
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new TypeError(`${relativePath} must contain ${expectedShape}`);
-  }
-
-  return value as Record<string, unknown>;
 }
 
 export function withTemporaryDirectory(
@@ -53,14 +59,14 @@ export function withTemporaryDirectory(
   }
 }
 
-export function requireCompletedSubprocess(
+export const requireCompletedSubprocess = (
   label: string,
   result: SpawnSyncReturns<string>
-): void {
+): void => {
   if (result.error !== undefined) {
     throw new Error(
       `${label} failed to complete\nstatus: ${String(result.status)}\nsignal: ${String(result.signal)}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
       { cause: result.error }
     );
   }
-}
+};
