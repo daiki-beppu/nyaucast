@@ -10,7 +10,7 @@
     "prototype/**",
     "scripts/**"
   ],
-  "ignoreDependencies": ["ultracite", "yaml"],
+  "ignoreDependencies": ["ajv", "ultracite", "yaml"],
   "duplicates": {
     "enabled": true,
     "mode": "semantic",

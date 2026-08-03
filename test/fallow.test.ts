@@ -194,6 +194,23 @@ describe("Fallow dependency gate", () => {
     });
   });
 
+  test("should keep Ajv ignored when used only by an ignored contract test", () => {
+    withTemporaryDirectory((directory) => {
+      createFixture(directory, {
+        devDependencies: { ajv: "1.0.0" },
+      });
+      mkdirSync(join(directory, "test"), { recursive: true });
+      writeFileSync(
+        join(directory, "test", "schema.test.ts"),
+        'import "ajv";\n'
+      );
+
+      const result = runFallow(directory, ["--fail-on-issues"]);
+      expect(result.exitCode).toBe(0);
+      expect(combinedOutput(result)).not.toContain('"ajv"');
+    });
+  });
+
   // REQ-112-02 / TC-112-02 / P-112-02
   test("should report an unused runtime dependency outside the ignore list", () => {
     withTemporaryDirectory((directory) => {

@@ -1,0 +1,66 @@
+{
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["ready", "failed"],
+      "description": "ready=PR差分とreview-target.mdを後段で利用できる / failed=PRを特定できない、または差分を取得できない"
+    },
+    "pr_number": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "レビュー対象のPR番号。failedで特定不能の場合は0"
+    },
+    "round": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "今回のレビューround。failedで確定不能の場合は0"
+    },
+    "previous_review": {
+      "type": "string",
+      "enum": ["none", "valid", "malformed"],
+      "description": "none=候補なし / valid=有効な前回コメントを採用 / malformed=不正候補を無視し、有効コメントなしでround 1"
+    },
+    "failure_reason": {
+      "type": "string",
+      "description": "failedの理由。readyでは空文字"
+    }
+  },
+  "required": [
+    "status",
+    "pr_number",
+    "round",
+    "previous_review",
+    "failure_reason"
+  ],
+  "additionalProperties": false,
+  "oneOf": [
+    {
+      "properties": {
+        "status": { "const": "ready" },
+        "pr_number": { "minimum": 1 },
+        "failure_reason": { "maxLength": 0 }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "previous_review": { "enum": ["none", "malformed"] },
+            "round": { "const": 1 }
+          }
+        },
+        {
+          "properties": {
+            "previous_review": { "const": "valid" },
+            "round": { "minimum": 2 }
+          }
+        }
+      ]
+    },
+    {
+      "properties": {
+        "status": { "const": "failed" },
+        "failure_reason": { "minLength": 1 }
+      }
+    }
+  ]
+}
