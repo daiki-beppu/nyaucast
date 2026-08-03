@@ -24,6 +24,7 @@ interface WorkflowStep {
     report?: ReportContract[];
   };
   parallel?: WorkflowStep[];
+  policy?: string[];
   rules?: WorkflowRule[];
 }
 
@@ -32,6 +33,7 @@ interface LoopMonitor {
   judge?: {
     rules?: WorkflowRule[];
   };
+  threshold?: number;
 }
 
 interface WorkflowDefinition {
@@ -136,6 +138,52 @@ function expectRoute(
 }
 
 describe("tayk-fix diagnosis re-entry contract", () => {
+  // REQ-201-01, REQ-201-02, REQ-201-03 / TC-01 / P-1
+  test("diagnosis review aborts on its fourth cumulative visit after the loop monitor gets three continuous cycles", () => {
+    const workflow = parseWorkflow();
+    const review = requireStep(workflow, "diagnose_review");
+    const limit = requireIterationLimit(review);
+    const reviewMonitor = requireLoopMonitors(workflow).find(
+      (monitor) =>
+        monitor.cycle?.[0] === "diagnose_review" &&
+        monitor.cycle.at(-1) === "diagnose_fix"
+    );
+
+    expect(reviewMonitor?.threshold).toBe(3);
+    expect(limit.threshold).toBe(4);
+    expect(limit.rule.next).toBe("ABORT");
+    expect(5).toBeGreaterThanOrEqual(limit.threshold);
+  });
+
+  // REQ-201-01, REQ-201-04 / TC-02 / P-2
+  test("diagnosis review keeps the unclassified retry fallback after its cumulative limit", () => {
+    const workflow = parseWorkflow();
+    const review = requireStep(workflow, "diagnose_review");
+    const rules = requireRules(review);
+    const limitIndex = rules.indexOf(requireIterationLimit(review).rule);
+    const fallback = requireRule(workflow, "diagnose_review", /^when\(true\)$/);
+
+    expect(fallback.next).toBe("diagnose");
+    expect(limitIndex).toBeLessThan(rules.indexOf(fallback));
+  });
+
+  // REQ-201-01 / TC-03 / P-3
+  test("every parallel diagnosis reviewer receives the cumulative visit limit", () => {
+    const review = requireStep(parseWorkflow(), "diagnose_review");
+    const reviewers = review.parallel;
+    if (!Array.isArray(reviewers)) {
+      throw new TypeError("diagnose_review must declare parallel reviewers");
+    }
+
+    expect(reviewers.length).toBeGreaterThan(0);
+    expect(
+      reviewers.every(
+        (reviewer) =>
+          reviewer.policy?.includes("tayk-diagnosis-review-limit") === true
+      )
+    ).toBe(true);
+  });
+
   // REQ-199-01, REQ-199-03 / TC-01 / P-1
   test("cause re-exploration and report correction use structurally distinct entries", () => {
     const workflow = parseWorkflow();
