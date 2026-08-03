@@ -1,5 +1,6 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -10,10 +11,22 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 const packageRoot = resolve(import.meta.dirname, "..");
+const fallowExecutablePath = join(
+  packageRoot,
+  "node_modules",
+  ".bin",
+  "fallow"
+);
+const fallowUnavailable = !existsSync(fallowExecutablePath);
+const runningInCi = process.env["CI"] !== undefined && process.env["CI"] !== "";
 const subprocessTimeoutMilliseconds = 20_000;
 const targetRuntimeDependencies = ["@modelcontextprotocol/sdk", "zod"] as const;
 
 setDefaultTimeout(60_000);
+
+if (fallowUnavailable && runningInCi) {
+  throw new Error("The Fallow dependency tests require fallow to be installed");
+}
 
 interface FallowConfig {
   entry: string[];
@@ -85,7 +98,7 @@ function installFixturePackage(directory: string, dependency: string): void {
 function runFallow(directory: string, args: string[]) {
   const result = Bun.spawnSync(
     [
-      "fallow",
+      fallowExecutablePath,
       "dead-code",
       "--no-cache",
       "--format",
@@ -118,7 +131,7 @@ function combinedOutput(result: ReturnType<typeof runFallow>): string {
   return `${result.stdout.toString()}\n${result.stderr.toString()}`;
 }
 
-describe("Fallow dependency gate", () => {
+describe.skipIf(fallowUnavailable)("Fallow dependency gate", () => {
   // REQ-112-01 / TC-112-01 / P-112-01
   test("should not permanently ignore declared runtime dependencies", () => {
     const manifest = readJsonFile(
