@@ -63,24 +63,32 @@ const nixPath = Bun.which("nix");
 const gitPath = Bun.which("git");
 const direnvPath = Bun.which("direnv");
 const bunPath = Bun.which("bun");
-
-setDefaultTimeout(900_000);
-
-if (
+const prerequisitesUnavailable =
   nixPath === null ||
   gitPath === null ||
   direnvPath === null ||
-  bunPath === null
-) {
+  bunPath === null;
+const runningInCi = process.env["CI"] !== undefined && process.env["CI"] !== "";
+
+setDefaultTimeout(900_000);
+
+if (prerequisitesUnavailable && runningInCi) {
   throw new Error(
     "The devShell integration test requires Nix, Git, direnv, and Bun on PATH"
   );
 }
 
-const nixExecutablePath = nixPath;
-const gitExecutablePath = gitPath;
-const direnvExecutablePath = direnvPath;
-const bunExecutablePath = bunPath;
+function availableExecutablePath(path: string | null): string {
+  if (path === null) {
+    throw new Error("A skipped devShell test attempted to run");
+  }
+  return path;
+}
+
+const nixExecutablePath = (): string => availableExecutablePath(nixPath);
+const gitExecutablePath = (): string => availableExecutablePath(gitPath);
+const direnvExecutablePath = (): string => availableExecutablePath(direnvPath);
+const bunExecutablePath = (): string => availableExecutablePath(bunPath);
 
 function withDevShellFixture(run: (directory: string) => void): void {
   withTemporaryDirectory("tayk-devshell-", run, realpathSync);
@@ -146,7 +154,7 @@ function expectCommandSucceeded(result: CommandResult): void {
 
 function runGit(directory: string, args: string[]): void {
   expectCommandSucceeded(
-    runCommand(gitExecutablePath, args, directory, developerEnvironment)
+    runCommand(gitExecutablePath(), args, directory, developerEnvironment)
   );
 }
 
@@ -193,7 +201,7 @@ function prepareLockfile(root: string): void {
   mkdirSync(temporaryDirectory);
   mkdirSync(cacheDirectory);
   const result = runCommand(
-    bunExecutablePath,
+    bunExecutablePath(),
     ["install", "--lockfile-only", "--ignore-scripts"],
     root,
     {
@@ -261,7 +269,7 @@ function runInDevShell(
   mkdirSync(temporaryDirectory, { recursive: true });
   mkdirSync(cacheDirectory, { recursive: true });
   return runCommand(
-    nixExecutablePath,
+    nixExecutablePath(),
     ["develop", flakeRoot, "--command", ...command],
     cwd,
     {
@@ -287,7 +295,7 @@ function enterFixtureDevShell(fixtureRoot: string, cwd: string): CommandResult {
 
 function enterIsolatedDevShell(flakeRoot: string, cwd: string): CommandResult {
   return runCommand(
-    nixExecutablePath,
+    nixExecutablePath(),
     [
       "develop",
       flakeRoot,
@@ -376,13 +384,13 @@ function enterWithDirenv(
   env: Record<string, string>
 ): { allowed: CommandResult; entered: CommandResult } {
   const allowed = runCommand(
-    direnvExecutablePath,
+    direnvExecutablePath(),
     ["allow", "."],
     fixture,
     env
   );
   const entered = runCommand(
-    direnvExecutablePath,
+    direnvExecutablePath(),
     ["exec", ".", "bun", "--version"],
     fixture,
     env
@@ -404,7 +412,7 @@ function expectRejectedWithoutMutation(
   return entered;
 }
 
-describe.serial("devShell setup", () => {
+describe.serial.skipIf(prerequisitesUnavailable)("devShell setup", () => {
   test("[REQ-105-01] does not create node_modules in an unrelated Git repository", () => {
     withDevShellFixture((directory) => {
       const unrelated = join(directory, "unrelated");
@@ -498,7 +506,7 @@ describe.serial("devShell setup", () => {
       createTaykRepository(taykRoot);
 
       const entered = runCommand(
-        nixExecutablePath,
+        nixExecutablePath(),
         [
           "develop",
           packageRoot,
@@ -631,7 +639,7 @@ describe.serial("devShell setup", () => {
       createRealProjectCheckout(checkout);
       mkdirSync(remote);
       expectCommandSucceeded(
-        runCommand(gitExecutablePath, ["init", "--bare"], remote)
+        runCommand(gitExecutablePath(), ["init", "--bare"], remote)
       );
       runGit(checkout, ["remote", "add", "origin", remote]);
 
@@ -659,7 +667,7 @@ describe.serial("devShell setup", () => {
       expect(existsSync(join(checkout, "node_modules"))).toBeFalse();
 
       const pushed = runCommand(
-        gitExecutablePath,
+        gitExecutablePath(),
         ["push", "--set-upstream", "origin", "main"],
         checkout,
         developerEnvironment
@@ -744,7 +752,7 @@ describe.serial("devShell setup", () => {
       createRealProjectCheckout(checkout);
       mkdirSync(remote);
       expectCommandSucceeded(
-        runCommand(gitExecutablePath, ["init", "--bare"], remote)
+        runCommand(gitExecutablePath(), ["init", "--bare"], remote)
       );
       runGit(checkout, ["remote", "add", "origin", remote]);
       runGit(checkout, ["worktree", "add", installer]);
@@ -766,7 +774,7 @@ describe.serial("devShell setup", () => {
       writeFileSync(join(survivor, "demo.ts"), unformattedSource);
       runGit(survivor, ["add", "demo.ts"]);
       const committed = runCommand(
-        gitExecutablePath,
+        gitExecutablePath(),
         [...gitIdentityArguments, "commit", "-m", "demo"],
         survivor,
         developerEnvironment
@@ -785,7 +793,7 @@ describe.serial("devShell setup", () => {
         'pre-push:\n  commands:\n    path-check:\n      run: "touch .path-check-ran"\n'
       );
       const pushed = runCommand(
-        gitExecutablePath,
+        gitExecutablePath(),
         ["push", "--set-upstream", "origin", "HEAD"],
         survivor,
         developerEnvironment
