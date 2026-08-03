@@ -46,11 +46,12 @@ provider_routing:
       provider: codex
       model: gpt-5.6-luna
 
-# 失敗タスクの自動再投入はグローバル（~/.takt/config.yaml）の 2 回を 1 回に絞る（#169）。
-# 2026-07 のキュー実測で、1 回目の再投入は provider 揺らぎ・一過性の判定ブレを
-# 実際に救った（#114 / #116 / #121）が、2 回目で救えた失敗は 0 件 — BLOCKED /
-# 判断待ち系は同じ状態を再評価して同じ結論に落ちるだけだった（#77 / #105 / #118 / #141）
-auto_requeue_max_attempts: 1
+# 失敗タスクの自動再投入を無効化する（グローバル ~/.takt/config.yaml の 2 回を上書き）。
+# 0 は takt 側で reason: 'disabled' として扱われ、再投入は一切試みられない。
+# 経緯: #169 で 2 回 → 1 回に絞った（2026-07 のキュー実測で 2 回目に救えた失敗は 0 件
+# — BLOCKED / 判断待ち系は同じ状態を再評価して同じ結論に落ちる #77 / #105 / #118 / #141）。
+# 残していた 1 回も止め、失敗タスクは必ず人が状態を見てから再投入する運用にする。
+auto_requeue_max_attempts: 0
 
 # トークン消費の計測。記録先: .takt/runs/<run>/logs/<session>-usage-events.phase.jsonl
 # tayk-feature は default より step が多いため、費用が見合うかをここで観測する（ADR-0008 Consequences）
