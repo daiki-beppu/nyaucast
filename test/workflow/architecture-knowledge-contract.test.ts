@@ -11,6 +11,10 @@ const workflowPaths = {
   feature: ".takt/workflows/tayk-feature.yaml",
   fix: ".takt/workflows/tayk-fix.yaml",
 } as const;
+const stepFragmentPaths = {
+  finalGate: ".takt/steps/finding-contract-final-gate.yaml",
+  reviewers: ".takt/steps/reviewers.yaml",
+} as const;
 
 interface NormContract {
   id: `${string} ${"OK" | "REJECT" | "REQUIRED"}:`;
@@ -83,10 +87,17 @@ interface WorkflowStep {
   knowledge?: unknown;
   name?: string;
   parallel?: WorkflowStep[];
+  uses?: string;
 }
 
 interface WorkflowDefinition {
   steps?: WorkflowStep[];
+}
+
+interface ArchitectureWiring {
+  finalGate: WorkflowStep;
+  reviewers: WorkflowStep;
+  workflows: Record<"feature" | "fix", WorkflowDefinition>;
 }
 
 function readMarkdownSection(source: string, heading: string): string {
@@ -189,6 +200,14 @@ function parseWorkflowSource(source: string, path: string): WorkflowDefinition {
 
 function parseWorkflow(path: string): WorkflowDefinition {
   return parseWorkflowSource(readRepositoryFile(path), path);
+}
+
+function parseStepFragment(path: string): WorkflowStep {
+  return parseYamlRecord({
+    expectedShape: "a step fragment object",
+    relativePath: path,
+    source: readRepositoryFile(path),
+  });
 }
 
 function requireStep(
@@ -362,6 +381,68 @@ function findMissingEntrances(
       );
     })
     .map((entrance) => entrance.label);
+}
+
+function requireFragmentParallelStep(
+  fragment: WorkflowStep,
+  path: string,
+  stepName: string
+): WorkflowStep {
+  if (!Array.isArray(fragment.parallel)) {
+    throw new TypeError(`${path} must declare parallel steps`);
+  }
+  const step = fragment.parallel.find(
+    (candidate) => candidate.name === stepName
+  );
+  if (step === undefined) {
+    throw new TypeError(`${path} must declare ${stepName}`);
+  }
+  return step;
+}
+
+function readArchitectureWiring(): ArchitectureWiring {
+  return {
+    finalGate: parseStepFragment(stepFragmentPaths.finalGate),
+    reviewers: parseStepFragment(stepFragmentPaths.reviewers),
+    workflows: {
+      feature: parseWorkflow(workflowPaths.feature),
+      fix: parseWorkflow(workflowPaths.fix),
+    },
+  };
+}
+
+function findMissingArchitectureWiring(wiring: ArchitectureWiring): string[] {
+  const missing: string[] = [];
+  for (const workflowName of ["feature", "fix"] as const) {
+    const workflow = wiring.workflows[workflowName];
+    if (
+      requireStep(workflow, workflowPaths[workflowName], "reviewers").uses !==
+      "reviewers"
+    ) {
+      missing.push(`${workflowName}.reviewers.uses`);
+    }
+    if (
+      requireStep(workflow, workflowPaths[workflowName], "final_gate").uses !==
+      "finding-contract-final-gate"
+    ) {
+      missing.push(`${workflowName}.final_gate.uses`);
+    }
+  }
+
+  const architectureReview = requireFragmentParallelStep(
+    wiring.reviewers,
+    stepFragmentPaths.reviewers,
+    "arch-review"
+  );
+  if (!hasBareArchitectureReference(architectureReview.knowledge)) {
+    missing.push("reviewers.arch-review.knowledge");
+  }
+  if (
+    !hasBareArchitectureReference(wiring.finalGate.args?.supervise_knowledge)
+  ) {
+    missing.push("final-gate.args.supervise_knowledge");
+  }
+  return missing;
 }
 
 function normalizeMarkdownText(value: string): string {
@@ -641,6 +722,72 @@ describe("project architecture Knowledge contract", () => {
       );
     expect(findMissingGeneralGuidance(inverted)).toEqual([...generalGuidance]);
   });
+});
+
+describe("[REQ-285-01] architecture shared-fragment wiring contract", () => {
+  test("TC-285-01a: both roots reach architecture knowledge through the canonical fragments", () => {
+    expect(findMissingArchitectureWiring(readArchitectureWiring())).toEqual([]);
+  });
+
+  test.each([
+    {
+      label: "reviewers.arch-review.knowledge",
+      mutate: (wiring: ArchitectureWiring) => {
+        const step = requireFragmentParallelStep(
+          wiring.reviewers,
+          stepFragmentPaths.reviewers,
+          "arch-review"
+        );
+        step.knowledge = removeArchitectureReference(step.knowledge);
+      },
+    },
+    {
+      label: "final-gate.args.supervise_knowledge",
+      mutate: (wiring: ArchitectureWiring) => {
+        if (wiring.finalGate.args === undefined) {
+          throw new TypeError("final-gate fragment must declare args");
+        }
+        wiring.finalGate.args.supervise_knowledge = removeArchitectureReference(
+          wiring.finalGate.args.supervise_knowledge
+        );
+      },
+    },
+  ])("TC-285-01b: rejects missing $label", ({ label, mutate }) => {
+    const fixture = structuredClone(readArchitectureWiring());
+    mutate(fixture);
+
+    expect(findMissingArchitectureWiring(fixture)).toEqual([label]);
+  });
+
+  test.each([
+    ["feature", "reviewers", undefined],
+    ["feature", "reviewers", "other-reviewers"],
+    ["fix", "reviewers", undefined],
+    ["fix", "reviewers", "other-reviewers"],
+    ["feature", "final_gate", undefined],
+    ["feature", "final_gate", "other-final-gate"],
+    ["fix", "final_gate", undefined],
+    ["fix", "final_gate", "other-final-gate"],
+  ] as const)(
+    "TC-285-01c: rejects %s.%s.uses set to %s",
+    (workflowName, stepName, uses) => {
+      const fixture = structuredClone(readArchitectureWiring());
+      const step = requireStep(
+        fixture.workflows[workflowName],
+        workflowPaths[workflowName],
+        stepName
+      );
+      if (uses === undefined) {
+        delete step.uses;
+      } else {
+        step.uses = uses;
+      }
+
+      expect(findMissingArchitectureWiring(fixture)).toEqual([
+        `${workflowName}.${stepName}.uses`,
+      ]);
+    }
+  );
 });
 
 describe("agent-facing architecture contracts", () => {

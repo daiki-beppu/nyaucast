@@ -1,11 +1,28 @@
 import { describe, expect, test } from "bun:test";
 
-import { readRepositoryFile } from "../helpers";
+import { parseYamlRecord, readRepositoryFile } from "../helpers";
 
 const facetPaths = [
   ".takt/facets/instructions/findings-manager.md",
   ".takt/facets/output-contracts/findings-manager.md",
 ] as const;
+const workflowPaths = {
+  feature: ".takt/workflows/tayk-feature.yaml",
+  fix: ".takt/workflows/tayk-fix.yaml",
+} as const;
+
+interface FindingsManager {
+  instruction?: string;
+  output_contract?: string;
+}
+
+interface WorkflowDefinition {
+  finding_contract?: {
+    manager?: FindingsManager;
+  };
+}
+
+type FindingsManagerWiring = Record<"feature" | "fix", FindingsManager>;
 
 interface DecisionRow {
   decision: string;
@@ -82,6 +99,43 @@ function readOutcomeOwnerRows(source: string): OutcomeOwnerRow[] {
     });
 }
 
+function requireFindingsManager(
+  workflowName: keyof typeof workflowPaths
+): FindingsManager {
+  const path = workflowPaths[workflowName];
+  const workflow = parseYamlRecord({
+    expectedShape: "a workflow object",
+    relativePath: path,
+    source: readRepositoryFile(path),
+  }) as WorkflowDefinition;
+  const manager = workflow.finding_contract?.manager;
+  if (manager === undefined) {
+    throw new TypeError(`${path} must declare finding_contract.manager`);
+  }
+  return manager;
+}
+
+function readFindingsManagerWiring(): FindingsManagerWiring {
+  return {
+    feature: requireFindingsManager("feature"),
+    fix: requireFindingsManager("fix"),
+  };
+}
+
+function findInvalidFindingsManagerWiring(
+  wiring: FindingsManagerWiring
+): string[] {
+  const invalid: string[] = [];
+  for (const workflowName of ["feature", "fix"] as const) {
+    for (const field of ["instruction", "output_contract"] as const) {
+      if (wiring[workflowName][field] !== "findings-manager") {
+        invalid.push(`${workflowName}.finding_contract.manager.${field}`);
+      }
+    }
+  }
+  return invalid;
+}
+
 describe("findings-manager reconciliation contract", () => {
   test.each([...facetPaths])("%s extends the builtin contract", (facetPath) => {
     expect(readRepositoryFile(facetPath).split("\n", 1)[0]).toBe(
@@ -141,6 +195,66 @@ describe("findings-manager reconciliation contract", () => {
         outputField: "duplicateDecisions",
         rawOutcome: "no",
       });
+    }
+  );
+});
+
+describe("[REQ-285-03] findings-manager root wiring contract", () => {
+  test("TC-285-03a: both roots select the canonical project instruction and output contract", () => {
+    expect(
+      findInvalidFindingsManagerWiring(readFindingsManagerWiring())
+    ).toEqual([]);
+  });
+
+  test.each([
+    ["feature", "instruction"],
+    ["feature", "output_contract"],
+    ["fix", "instruction"],
+    ["fix", "output_contract"],
+  ] as const)(
+    "TC-285-03b: rejects missing %s manager %s override",
+    (workflowName, field) => {
+      const fixture = structuredClone(readFindingsManagerWiring());
+      if (field === "instruction") {
+        delete fixture[workflowName].instruction;
+      } else {
+        delete fixture[workflowName].output_contract;
+      }
+
+      expect(findInvalidFindingsManagerWiring(fixture)).toEqual([
+        `${workflowName}.finding_contract.manager.${field}`,
+      ]);
+    }
+  );
+
+  test.each([
+    ["feature", "instruction"],
+    ["feature", "output_contract"],
+    ["fix", "instruction"],
+    ["fix", "output_contract"],
+  ] as const)(
+    "TC-285-03c: rejects a wrong %s manager %s override",
+    (workflowName, field) => {
+      const fixture = structuredClone(readFindingsManagerWiring());
+      fixture[workflowName][field] = "other-findings-manager";
+
+      expect(findInvalidFindingsManagerWiring(fixture)).toEqual([
+        `${workflowName}.finding_contract.manager.${field}`,
+      ]);
+    }
+  );
+
+  test.each(["instruction", "output_contract"] as const)(
+    "TC-285-03d: rejects the same wrong manager %s on both roots",
+    (field) => {
+      const fixture = structuredClone(readFindingsManagerWiring());
+      fixture.feature[field] = "other-findings-manager";
+      fixture.fix[field] = "other-findings-manager";
+
+      expect(findInvalidFindingsManagerWiring(fixture)).toEqual([
+        `feature.finding_contract.manager.${field}`,
+        `fix.finding_contract.manager.${field}`,
+      ]);
     }
   );
 });
