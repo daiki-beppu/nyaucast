@@ -26,36 +26,36 @@
 
 ## Audit Scope
 
-| # | Audit Target | Audited | Key Files | Boundaries Verified |
-| ---: | --- | :---: | --- | --- |
-| 1 | Test and gate entrances | ✅ | `package.json`, `.github/workflows/ci.yml`, `lefthook.yml` | CI→canonical check、pre-push→check＋doctor、doctorのcheck外所有を照合。現行配線は維持。 |
-| 2 | Source launcher | ✅ | `bin/tayk.test.ts`, `bin/tayk.js`, `src/index.ts` | Node→Bun→entrypoint、引数・stdio・status・signal・失敗経路を実行検証。維持。 |
-| 3 | Canonical gate suite | ✅ | `test/check.test.ts`, `package.json` | gate順序、fail-fast、lockfile、CI/pre-push/facet配線を確認。CI全体でのexactly-once保証が不足。 |
-| 4 | devShell integration | ✅ | `test/devshell.test.ts`, `flake.nix`, `.envrc` | root/worktree/direnv/hook、PATH、install、非対象無変更を確認。Nix daemon接続可能環境で再実行が必要。 |
-| 5 | Fallow gate | ✅ | `test/fallow.test.ts`, `.fallowrc.json`, `package.json` | dependency trace、ignore、manual entryを隔離fixtureで確認。維持。 |
-| 6 | Repository YAML helper | ✅ | `test/helpers.ts`, `test/helpers.test.ts` | repository reader、YAML record validation、temporary cleanup、subprocess境界を確認。ローカル再実装は統合候補。 |
-| 7 | Shared Nix action | ✅ | `test/nix-workflow-setup.test.ts`, `.github/actions/setup-nix/action.yml` | CI/releaseの共有action利用、設定値、SHA pinを確認。維持。 |
-| 8 | npm package/shim | ✅ | `test/package.test.ts`, `package.json`, `bin/tayk.js` | pack→install→npm shim→Node launcher→fake Bunを検証。維持。 |
-| 9 | Package smoke system | ✅ | `test/package-smoke.test.ts`, `test/package-smoke-support.ts`, `test/fixtures/package-dependency-probe.ts` | offline install、実runtime、壊れたentrypoint、依存欠落を検証。休眠export分岐は書き換え候補。 |
-| 10 | Release ancestry | ✅ | `test/release-ancestor.test.ts`, `.github/workflows/release.yml` | ancestry、tag/version不一致、dry-run、権限、隔離を確認。通常publish成功経路が未所有。 |
-| 11 | Repository configuration | ✅ | `test/repository-config.test.ts`, `.github/dependabot.yml` | Dependabot、bot重複防止、trusted-publishing metadataを確認。維持。 |
-| 12 | TypeScript boundary | ✅ | `test/typecheck.test.ts`, `tsconfig.json` | production、bin、config、`.takt/scripts`、test、prototypeの型検査境界を確認。維持。 |
-| 13 | Architecture audit workflow contract | ✅ | `test/workflow/architecture-audit-contract.test.ts`, `.takt/` | 資産実在、一対一表、単調進行、Finding分離、publish条件を確認。issue固有契約として維持。 |
-| 14 | Architecture knowledge contract | ✅ | `test/workflow/architecture-knowledge-contract.test.ts`, `docs/adr/0001-thin-architecture.md`, `CONTEXT.md` | 正書・規範・inline入口を確認。#280でshared fragmentへ移った入口の追跡が不足。 |
-| 15 | Final-gate evidence contract | ✅ | `test/workflow/final-gate-evidence-contract.test.ts`, `.takt/steps/finding-contract-final-gate.yaml` | builtin継承とfeature/fix同値を確認。実fragmentへの肯定的配線が未検査。 |
-| 16 | Findings-manager reconciliation contract | ✅ | `test/workflow/findings-manager-reconciliation-contract.test.ts`, `.takt/facets/` | decision matrixとoutcome ownershipを確認。root workflowからoverrideへの配線が未検査。 |
-| 17 | Runs-audit evidence-path contract | ✅ | `test/workflow/runs-audit-evidence-path-contract.test.ts`, `.takt/`, `docs/agents/` | provenance、supervision、Token Usageを確認。ユーザー固有絶対パスへ過剰結合。 |
-| 18 | Runs-audit recovery contract | ✅ | `test/workflow/runs-audit-recovery-contract.test.ts`, `.takt/` | Recovery Inventory/Coverage、通常証拠との分離、abort回収と正常spilloverを確認。維持。 |
-| 19 | Spillover contract | ✅ | `test/workflow/spillover-contract.test.ts`, `.takt/steps/` | report、収集元、起票失敗、feature/fix re-entryを確認。doctor配線検査はcanonical ownerへ統合候補。 |
-| 20 | AUDIT-243-01 post-state | ✅ | `docs/audits/20260803-test-suite-maintainability.md`, `prototype/takt-collection-plan/`, `docs/adr/0006*` | 退役資産不在と履歴文書の現存を確認。想定どおり維持。 |
-| 21 | AUDIT-243-02 post-state | ✅ | `test/check.test.ts`, `.takt/facets/` | 公開command blockの肯定・否定契約が残る。想定どおり維持。 |
-| 22 | AUDIT-243-03 post-state | ✅ | `test/check.test.ts`, `package.json` | 現行shell grammar、順序、exactly-once、fail-fastを確認。想定どおり維持。 |
-| 23 | AUDIT-243-04 post-state | ✅ | `.gitignore`, `package.json`, `test/package.test.ts` | 内部設定固定を削除し、tarballの可観測契約を維持。過小保証なし。 |
-| 24 | AUDIT-243-05 post-state | ✅ | `test/workflow/architecture-knowledge-contract.test.ts`, `.takt/steps/reviewers.yaml` | 集約後のinline保証は確認。#280で移動したshared入口に対して過小保証。 |
-| 25 | AUDIT-243-06 post-state | ✅ | `test/check.test.ts`, `package.json`, `.github/workflows/ci.yml`, `lefthook.yml` | canonical ownerの保証は維持。spillover suiteで再発した重複は統合候補。 |
-| 26 | AUDIT-243-07 post-state | ✅ | `test/package-smoke.test.ts`, `test/package-smoke-support.ts`, dependency probe | 実install後の依存削除とancestor trap拒否を肯定的に検証。想定どおり維持。 |
-| 27 | AUDIT-243-08 post-state | ✅ | `test/helpers.ts`, `test/helpers.test.ts` | loader/parserのみ共有し、consumer固有validationを局所化。想定どおり維持。 |
-| 28 | #234/#280 contract lineage | ✅ | `.takt/steps/reviewers.yaml`, feature/fix workflows, final-gate/findings-manager suites | 独自式評価器の削除は妥当。reviewer順序、verdict coverage、overlay同値の保証移管が不足。 |
+|   # | Audit Target                             | Audited | Key Files                                                                                                   | Boundaries Verified                                                                                            |
+| --: | ---------------------------------------- | :-----: | ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+|   1 | Test and gate entrances                  |   ✅    | `package.json`, `.github/workflows/ci.yml`, `lefthook.yml`                                                  | CI→canonical check、pre-push→check＋doctor、doctorのcheck外所有を照合。現行配線は維持。                        |
+|   2 | Source launcher                          |   ✅    | `bin/tayk.test.ts`, `bin/tayk.js`, `src/index.ts`                                                           | Node→Bun→entrypoint、引数・stdio・status・signal・失敗経路を実行検証。維持。                                   |
+|   3 | Canonical gate suite                     |   ✅    | `test/check.test.ts`, `package.json`                                                                        | gate順序、fail-fast、lockfile、CI/pre-push/facet配線を確認。CI全体でのexactly-once保証が不足。                 |
+|   4 | devShell integration                     |   ✅    | `test/devshell.test.ts`, `flake.nix`, `.envrc`                                                              | root/worktree/direnv/hook、PATH、install、非対象無変更を確認。Nix daemon接続可能環境で再実行が必要。           |
+|   5 | Fallow gate                              |   ✅    | `test/fallow.test.ts`, `.fallowrc.json`, `package.json`                                                     | dependency trace、ignore、manual entryを隔離fixtureで確認。維持。                                              |
+|   6 | Repository YAML helper                   |   ✅    | `test/helpers.ts`, `test/helpers.test.ts`                                                                   | repository reader、YAML record validation、temporary cleanup、subprocess境界を確認。ローカル再実装は統合候補。 |
+|   7 | Shared Nix action                        |   ✅    | `test/nix-workflow-setup.test.ts`, `.github/actions/setup-nix/action.yml`                                   | CI/releaseの共有action利用、設定値、SHA pinを確認。維持。                                                      |
+|   8 | npm package/shim                         |   ✅    | `test/package.test.ts`, `package.json`, `bin/tayk.js`                                                       | pack→install→npm shim→Node launcher→fake Bunを検証。維持。                                                     |
+|   9 | Package smoke system                     |   ✅    | `test/package-smoke.test.ts`, `test/package-smoke-support.ts`, `test/fixtures/package-dependency-probe.ts`  | offline install、実runtime、壊れたentrypoint、依存欠落を検証。休眠export分岐は書き換え候補。                   |
+|  10 | Release ancestry                         |   ✅    | `test/release-ancestor.test.ts`, `.github/workflows/release.yml`                                            | ancestry、tag/version不一致、dry-run、権限、隔離を確認。通常publish成功経路が未所有。                          |
+|  11 | Repository configuration                 |   ✅    | `test/repository-config.test.ts`, `.github/dependabot.yml`                                                  | Dependabot、bot重複防止、trusted-publishing metadataを確認。維持。                                             |
+|  12 | TypeScript boundary                      |   ✅    | `test/typecheck.test.ts`, `tsconfig.json`                                                                   | production、bin、config、`.takt/scripts`、test、prototypeの型検査境界を確認。維持。                            |
+|  13 | Architecture audit workflow contract     |   ✅    | `test/workflow/architecture-audit-contract.test.ts`, `.takt/`                                               | 資産実在、一対一表、単調進行、Finding分離、publish条件を確認。issue固有契約として維持。                        |
+|  14 | Architecture knowledge contract          |   ✅    | `test/workflow/architecture-knowledge-contract.test.ts`, `docs/adr/0001-thin-architecture.md`, `CONTEXT.md` | 正書・規範・inline入口を確認。#280でshared fragmentへ移った入口の追跡が不足。                                  |
+|  15 | Final-gate evidence contract             |   ✅    | `test/workflow/final-gate-evidence-contract.test.ts`, `.takt/steps/finding-contract-final-gate.yaml`        | builtin継承とfeature/fix同値を確認。実fragmentへの肯定的配線が未検査。                                         |
+|  16 | Findings-manager reconciliation contract |   ✅    | `test/workflow/findings-manager-reconciliation-contract.test.ts`, `.takt/facets/`                           | decision matrixとoutcome ownershipを確認。root workflowからoverrideへの配線が未検査。                          |
+|  17 | Runs-audit evidence-path contract        |   ✅    | `test/workflow/runs-audit-evidence-path-contract.test.ts`, `.takt/`, `docs/agents/`                         | provenance、supervision、Token Usageを確認。ユーザー固有絶対パスへ過剰結合。                                   |
+|  18 | Runs-audit recovery contract             |   ✅    | `test/workflow/runs-audit-recovery-contract.test.ts`, `.takt/`                                              | Recovery Inventory/Coverage、通常証拠との分離、abort回収と正常spilloverを確認。維持。                          |
+|  19 | Spillover contract                       |   ✅    | `test/workflow/spillover-contract.test.ts`, `.takt/steps/`                                                  | report、収集元、起票失敗、feature/fix re-entryを確認。doctor配線検査はcanonical ownerへ統合候補。              |
+|  20 | AUDIT-243-01 post-state                  |   ✅    | `docs/audits/20260803-test-suite-maintainability.md`, `prototype/takt-collection-plan/`, `docs/adr/0006*`   | 退役資産不在と履歴文書の現存を確認。想定どおり維持。                                                           |
+|  21 | AUDIT-243-02 post-state                  |   ✅    | `test/check.test.ts`, `.takt/facets/`                                                                       | 公開command blockの肯定・否定契約が残る。想定どおり維持。                                                      |
+|  22 | AUDIT-243-03 post-state                  |   ✅    | `test/check.test.ts`, `package.json`                                                                        | 現行shell grammar、順序、exactly-once、fail-fastを確認。想定どおり維持。                                       |
+|  23 | AUDIT-243-04 post-state                  |   ✅    | `.gitignore`, `package.json`, `test/package.test.ts`                                                        | 内部設定固定を削除し、tarballの可観測契約を維持。過小保証なし。                                                |
+|  24 | AUDIT-243-05 post-state                  |   ✅    | `test/workflow/architecture-knowledge-contract.test.ts`, `.takt/steps/reviewers.yaml`                       | 集約後のinline保証は確認。#280で移動したshared入口に対して過小保証。                                           |
+|  25 | AUDIT-243-06 post-state                  |   ✅    | `test/check.test.ts`, `package.json`, `.github/workflows/ci.yml`, `lefthook.yml`                            | canonical ownerの保証は維持。spillover suiteで再発した重複は統合候補。                                         |
+|  26 | AUDIT-243-07 post-state                  |   ✅    | `test/package-smoke.test.ts`, `test/package-smoke-support.ts`, dependency probe                             | 実install後の依存削除とancestor trap拒否を肯定的に検証。想定どおり維持。                                       |
+|  27 | AUDIT-243-08 post-state                  |   ✅    | `test/helpers.ts`, `test/helpers.test.ts`                                                                   | loader/parserのみ共有し、consumer固有validationを局所化。想定どおり維持。                                      |
+|  28 | #234/#280 contract lineage               |   ✅    | `.takt/steps/reviewers.yaml`, feature/fix workflows, final-gate/findings-manager suites                     | 独自式評価器の削除は妥当。reviewer順序、verdict coverage、overlay同値の保証移管が不足。                        |
 
 ## Findings
 
