@@ -2,12 +2,103 @@ run 監査を始める前に、証拠パスの読み取りを確認し、対象 
 
 **証拠パス（最初に必ず確認する）:**
 
-run の証拠経路は、本体リポの絶対パス `/Users/mba/02-yt/tayk/.takt/runs` と、本体リポの `/Users/mba/02-yt/tayk/.takt/clone-meta/*.json` を機械的に列挙して得た各 `clonePath` 配下の `.takt/runs` の 2 系統とする。
+この preflight は **linked worktree** 内でだけ実行する。独立 clone / 隔離 clone 内からの実行は対象外である。本体 checkout root は `git rev-parse --git-common-dir` の結果の親から導出し、設定値・注入値・固定 checkout pathへfallbackしない。
 
-1. `ls /Users/mba/02-yt/tayk/.takt/runs` を実行する
-2. **読めない（存在しない・権限がない）、または run が 1 件も無い場合は、計画を作らず ABORT を申告する。** 空のレポートや推測で埋めたレポートを出してはならない。ABORT の申告には実行したコマンドとエラー出力をそのまま含める（サンドボックスの read 制限や本体リポ移動の検出を兼ねる）
-3. `/Users/mba/02-yt/tayk/.takt/clone-meta/*.json` を列挙し、各 meta の `branch` と `clonePath` を取得する。実在する各 `clonePath/.takt/runs` を本体 runs と同じ Run Inventory・Audit Targets・Recovery Inventory へ含め、各 run の絶対パスを記録する
-4. 存在しない `clonePath` は ABORTしない。本体と実在する clone の監査を継続し、欠落を静かに無視しないでカバレッジの欠落として記録する。監査レポート冒頭の対象範囲宣言へ転記できるよう、辿れない meta の件数と各 `branch` 名を計画レポート冒頭に列挙する
+次のmarker間のblockがevidence解決のcanonical preflightである。説明文から別のresolverを組み立てず、このblockをlinked worktreeのcwdでそのまま1回実行する。
+
+<!-- evidence-preflight:start -->
+
+```bash
+bun -e '
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+
+const gitCommand = "git rev-parse --git-common-dir";
+
+function abort(reason, command, diagnostic) {
+  process.stderr.write(`${JSON.stringify({ status: "abort", reason, command, diagnostic })}\n`);
+  process.exit(1);
+}
+
+const gitResult = Bun.spawnSync(gitCommand.split(" "), {
+  stderr: "pipe",
+  stdout: "pipe",
+});
+const gitDiagnostic = gitResult.stderr.toString().trim();
+if (gitResult.exitCode !== 0) {
+  abort("git-common-dir", gitCommand, gitDiagnostic);
+}
+
+const commonDirectory = gitResult.stdout.toString().trim();
+if (commonDirectory.length === 0) {
+  abort("git-common-dir", gitCommand, "git returned an empty common directory");
+}
+
+const repositoryRoot = dirname(resolve(commonDirectory));
+const repositoryRunsPath = join(repositoryRoot, ".takt", "runs");
+let repositoryEntries;
+try {
+  repositoryEntries = readdirSync(repositoryRunsPath, { withFileTypes: true });
+} catch (error) {
+  const detail = error instanceof Error ? error.message : String(error);
+  abort(
+    "repository-runs-unreadable",
+    `read repository runs ${repositoryRunsPath}`,
+    `${repositoryRunsPath}: ${detail}`
+  );
+}
+
+const repositoryRunCount = repositoryEntries.filter((entry) => entry.isDirectory()).length;
+if (repositoryRunCount === 0) {
+  abort(
+    "repository-runs-empty",
+    `read repository runs ${repositoryRunsPath}`,
+    `${repositoryRunsPath}: no run directories found`
+  );
+}
+
+const cloneMetaRoot = join(repositoryRoot, ".takt", "clone-meta");
+const cloneMetaNames = existsSync(cloneMetaRoot)
+  ? readdirSync(cloneMetaRoot)
+    .filter((name) => name.endsWith(".json"))
+    .sort()
+  : [];
+
+const cloneRuns = [];
+const missingClones = [];
+for (const name of cloneMetaNames) {
+  const meta = JSON.parse(readFileSync(join(cloneMetaRoot, name), "utf8"));
+  if (typeof meta.branch !== "string" || typeof meta.clonePath !== "string") {
+    throw new TypeError(`${join(cloneMetaRoot, name)} must contain branch and clonePath strings`);
+  }
+
+  const runsPath = join(meta.clonePath, ".takt", "runs");
+  if (!existsSync(runsPath)) {
+    missingClones.push({ branch: meta.branch, clonePath: meta.clonePath });
+    continue;
+  }
+  const runCount = readdirSync(runsPath, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory()).length;
+  cloneRuns.push({ branch: meta.branch, path: runsPath, runCount });
+}
+
+process.stdout.write(`${JSON.stringify({
+  status: "ok",
+  repositoryRoot,
+  repositoryRuns: { path: repositoryRunsPath, runCount: repositoryRunCount },
+  cloneRuns,
+  missingClones,
+  missingCloneCount: missingClones.length,
+  missingCloneBranches: missingClones.map(({ branch }) => branch),
+})}\n`);
+'
+```
+
+<!-- evidence-preflight:end -->
+
+- `status: "abort"` の場合は計画や成功inventoryを作らず、`reason`、`command`、`diagnostic`を省略せずABORT申告へ渡す。空レポートで継続してはならない
+- `status: "ok"` の場合だけ棚卸しへ進む。本体runsの実pathとrun数、各実在clone runsの`branch`・実path・run数をRun Inventory・Audit Targets・Recovery Inventoryへ引き継ぐ
+- `missingClones` はABORT条件ではない。本体と実在cloneの監査を継続し、監査レポート冒頭の対象範囲宣言へ引き継ぐため、辿れないmetaの件数を`missingCloneCount`に、各`branch`名を`missingCloneBranches`に保持し、カバレッジ欠落として計画レポート冒頭に記録する
 
 **定義監査の固定対象（#1〜#3。毎回必ず含める）:**
 
@@ -19,7 +110,7 @@ run とは別に、workflow 定義そのものを対象とする固定 3 対象�
 | 2   | callable のレポート境界 | `.takt/workflows/tayk-intake.yaml` と参照先 facet                                                                                        | 親レポート・親 Report Directory への参照               |
 | 3   | drift: 工程説明と実配線 | `.takt/workflows/*.yaml` 冒頭コメント / `.takt/config.yaml` コメント / `docs/agents/issue-tracker.md`                                    | 工程説明と YAML 実配線の乖離                           |
 
-- 定義ファイルは**隔離クローン内に git 追跡で存在する**。run の証拠に記録した絶対パスではなく、リポジトリルートからの相対パスで読む（証拠パス確認の対象にもしない）
+- 定義ファイルは**実行中のlinked worktree内にgit追跡で存在する**。run の証拠に記録した絶対パスではなく、linked worktree rootからのrepository-relative pathで読む（証拠パス確認の対象にもしない）
 - 固定対象の # と対象名は毎回この表のとおりにする（監査間の突き合わせ先になる）。Priority は既定 Medium とし、run 対象の緊急度に応じて上下してよい
 - run 対象は **#4 から採番する**
 

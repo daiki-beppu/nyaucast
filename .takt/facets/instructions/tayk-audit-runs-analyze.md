@@ -2,7 +2,7 @@ run 監査を分解し、対象ごとに担当を割り当てて並列分析し�
 
 **重要:** 計画レポートを参照してください: {report:01-runs-audit-plan.md}
 
-証拠は本体リポの絶対パス `/Users/mba/02-yt/tayk/.takt/runs` と、計画が本体リポの `/Users/mba/02-yt/tayk/.takt/clone-meta/*.json` の `clonePath` から列挙した各 `.takt/runs` の 2 系統にある。**各パートの instruction には、担当 run について計画レポートに記録された絶対パスを必ず書き込む。** 存在しない `clonePath` は ABORTしない。本体と実在する clone の監査を継続する。欠落を静かに無視しないでカバレッジの欠落として記録し、監査レポート冒頭の対象範囲宣言に、辿れない meta の件数と各 `branch` 名を列挙する。
+証拠は、計画レポートがcanonical preflightで解決して記録した本体runsと実在clone runsの実パスから読む。ここでGitやclone-metaからrootを再解決しない。**各パートの instruction には、担当 run について計画レポートに記録された絶対パスを必ず書き込む。** 存在しない `clonePath` は ABORTしない。本体と実在する clone の監査を継続する。欠落を静かに無視しないでカバレッジの欠落として記録し、監査レポート冒頭の対象範囲宣言に、辿れない meta の件数と各 `branch` 名を列挙する。
 
 **やること:**
 
@@ -28,7 +28,7 @@ run 監査を分解し、対象ごとに担当を割り当てて並列分析し�
 
 **定義監査の分析手順（#1〜#3。担当パートの instruction に転記する）:**
 
-定義ファイルは隔離クローン内に git 追跡で存在するため、リポジトリルートからの相対パスで読む（run の証拠に記録した絶対パスは使わない）。
+定義ファイルは実行中のlinked worktree内にgit追跡で存在するため、linked worktree rootからのrepository-relative pathで読む（run の証拠に記録した絶対パスは使わない）。
 
 - **#1 shared fragment の配線**: feature / fix の `reviewers` と `spillover` がそれぞれ同じ `.takt/steps/` fragment を `uses:` で参照することを確認する。reviewer の `rules.parallel` が fragment の全 reviewer 名と一対一であること、両 workflow の因果あり spillover の戻し先だけが feature=`plan` / fix=`diagnose` と異なることを照合する。fragment の本文を workflow 側へ複製している、reviewer が欠落する、またはそれ以外の意図しない差分があれば Finding にする
 - **#2 callable のレポート境界**: 親側（`tayk-feature.yaml` / `tayk-fix.yaml`）の output contract 名を集める。唯一の project callable である `tayk-intake.yaml` の各 step が参照するリポ内 instruction facet を走査し、親レポート名への参照（report プレースホルダ記法経由を含む）や、自分の Report Directory の外を探索させる指示を検出する。検出したら ADR-0008 の report namespace 違反として、facet 名と該当行の引用を根拠に Finding にする。`uses:` fragment は root へ展開されるため callable として扱わない
