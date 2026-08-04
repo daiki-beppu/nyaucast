@@ -2,9 +2,11 @@ import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { parse } from "yaml";
-
-import { packageRoot, withTemporaryDirectory } from "./helpers";
+import {
+  parseYamlRecord,
+  readRepositoryFile,
+  withTemporaryDirectory,
+} from "./helpers";
 
 // REQ-70-01 / REQ-70-03 / REQ-70-04 / REQ-70-05 / REQ-70-06
 // TC-70-01A / TC-70-01B / TC-70-03A / TC-70-03B / TC-70-04A / TC-70-04B / TC-70-05A / TC-70-05B / TC-70-06A
@@ -12,6 +14,7 @@ const subprocessTimeoutMilliseconds = 20_000;
 const invalidCheckScriptMessage =
   "check script must contain only bun run commands joined by &&";
 const ciCheckCommand = "nix develop --command bun run check";
+const directTestCommand = "bun run test";
 const prePushCommands = {
   check: "bun run check",
   "workflow-doctor": "takt workflow doctor",
@@ -103,14 +106,6 @@ function requireArrayProperty(
   return value;
 }
 
-function parseYamlRecord(
-  source: string,
-  description: string
-): Record<string, unknown> {
-  const parsed: unknown = parse(source);
-  return requireRecord(parsed, description);
-}
-
 function readStepRun(
   step: Record<string, unknown>,
   description: string
@@ -168,10 +163,6 @@ function readWorkflowJob(
   return job;
 }
 
-function readRepositoryFile(relativePath: string): string {
-  return readFileSync(join(packageRoot, relativePath), "utf-8");
-}
-
 function readCheckoutSteps(
   workflow: Record<string, unknown>
 ): Record<string, unknown>[] {
@@ -187,7 +178,11 @@ function readCheckoutSteps(
         );
       }
       return readCheckoutSteps(
-        parseYamlRecord(readRepositoryFile(delegated.slice(2)), delegated)
+        parseYamlRecord({
+          expectedShape: "a workflow object",
+          relativePath: delegated,
+          source: readRepositoryFile(delegated.slice(2)),
+        })
       );
     }
     return steps.filter(
@@ -198,8 +193,75 @@ function readCheckoutSteps(
   });
 }
 
-function validateCiWorkflow(source: string): void {
-  const workflow = parseYamlRecord(source, "workflow");
+function validateCompositeAction(source: string): number {
+  const action = parseYamlRecord({
+    expectedShape: "action",
+    relativePath: "action",
+    source,
+  });
+  const runs = requireRecordProperty(action, "runs", "runs");
+  const steps = extractJobSteps(
+    requireArrayProperty(runs, "steps", "runs.steps"),
+    "runs.steps"
+  );
+
+  let checkCommandCount = 0;
+  for (const [index, step] of steps.entries()) {
+    const command = readStepRun(step, `runs.steps[${index}]`);
+    if (command === undefined) {
+      continue;
+    }
+    checkCommandCount += command.split(ciCheckCommand).length - 1;
+    if (command.includes(directTestCommand)) {
+      throw new Error(`composite actions must not run ${directTestCommand}`);
+    }
+  }
+  return checkCommandCount;
+}
+
+function validateWorkflowCommands(
+  workflows: readonly ReturnType<typeof extractJobs>[],
+  actionSources: readonly string[]
+): void {
+  let checkCommandCount = 0;
+  for (const [workflowIndex, jobs] of workflows.entries()) {
+    for (const [jobName, job] of jobs) {
+      for (const [stepIndex, step] of job.steps.entries()) {
+        const command = readStepRun(
+          step,
+          `workflows[${workflowIndex}].jobs.${jobName}.steps[${stepIndex}]`
+        );
+        if (command === undefined) {
+          continue;
+        }
+        checkCommandCount += command.split(ciCheckCommand).length - 1;
+        if (command.includes(directTestCommand)) {
+          throw new Error(`CI jobs must not run ${directTestCommand}`);
+        }
+        if (enumeratedGateCommands.some((gate) => gate.test(command))) {
+          throw new Error("CI jobs must not run individual gates");
+        }
+      }
+    }
+  }
+  for (const actionSource of actionSources) {
+    checkCommandCount += validateCompositeAction(actionSource);
+  }
+  if (checkCommandCount !== 1) {
+    throw new Error(`CI jobs must run ${ciCheckCommand} exactly once`);
+  }
+}
+
+function validateCiWorkflow(
+  source: string,
+  relatedWorkflowSources: readonly string[],
+  actionSources: readonly string[]
+): void {
+  const workflow = parseYamlRecord({
+    expectedShape: "workflow",
+    relativePath: "workflow",
+    source,
+  });
   const jobs = requireRecordProperty(workflow, "jobs", "jobs");
   const parsedJobs = extractJobs(jobs);
   const qualityJob = parsedJobs.get("quality");
@@ -217,17 +279,25 @@ function validateCiWorkflow(source: string): void {
     throw new Error(`jobs.quality.steps must run ${ciCheckCommand}`);
   }
 
-  for (const [jobName, job] of parsedJobs) {
-    for (const [index, step] of job.steps.entries()) {
-      const command = readStepRun(step, `jobs.${jobName}.steps[${index}]`);
-      if (command === undefined) {
-        continue;
-      }
-      if (enumeratedGateCommands.some((gate) => gate.test(command))) {
-        throw new Error("CI jobs must not run individual gates");
-      }
-    }
-  }
+  const relatedJobs = relatedWorkflowSources.map((relatedSource, index) => {
+    const relatedWorkflow = parseYamlRecord({
+      expectedShape: "a workflow object",
+      relativePath: `related workflow ${index}`,
+      source: relatedSource,
+    });
+    return extractJobs(requireRecordProperty(relatedWorkflow, "jobs", "jobs"));
+  });
+  validateWorkflowCommands([parsedJobs, ...relatedJobs], actionSources);
+}
+
+function expectInvalidCiConfiguration(
+  source: string,
+  relatedWorkflowSources: readonly string[],
+  compositeActionSources: readonly string[]
+): void {
+  expect(() => {
+    validateCiWorkflow(source, relatedWorkflowSources, compositeActionSources);
+  }).toThrow();
 }
 
 const hookExecutionLimitProperties = [
@@ -289,7 +359,11 @@ function readCommandRun(
 }
 
 function validatePrePushConfiguration(source: string): void {
-  const configuration = parseYamlRecord(source, "lefthook configuration");
+  const configuration = parseYamlRecord({
+    expectedShape: "a Lefthook configuration object",
+    relativePath: "lefthook configuration",
+    source,
+  });
   const prePush = requireRecordProperty(configuration, "pre-push", "pre-push");
   rejectExecutionLimits(prePush, hookExecutionLimitProperties, "pre-push");
   const commands = requireRecordProperty(
@@ -908,21 +982,21 @@ describe("check command", () => {
   });
 
   // REQ-82-02 / REQ-106-01 / REQ-106-02 / REQ-115-01
-  // TC-106-01C / TC-106-02A / TC-115-01A / TC-115-01D
+  // REQ-294-01 / REQ-294-02
+  // TC-106-01C / TC-106-02A / TC-115-01A / TC-115-01D / TC-294-01A / TC-294-02A
   test("should leave the gate set undefined outside package.json", () => {
     const workflow = readRepositoryFile(".github/workflows/ci.yml");
+    const releaseWorkflow = readRepositoryFile(".github/workflows/release.yml");
+    const setupAction = readRepositoryFile(
+      ".github/actions/setup-nix/action.yml"
+    );
 
     expect(() => {
-      validateCiWorkflow(workflow);
+      validateCiWorkflow(workflow, [releaseWorkflow], [setupAction]);
     }).not.toThrow();
     expect(workflow).toContain(ciCheckCommand);
 
-    // ci.yml が呼ぶ composite action も同じ job の中で走る。ここを見ないと、
-    // step を action へ移すだけでゲート列挙と bun install が復活できてしまう。
-    for (const source of [
-      workflow,
-      readRepositoryFile(".github/actions/setup-nix/action.yml"),
-    ]) {
+    for (const source of [workflow, setupAction]) {
       expect(source).not.toMatch(/\bbun\s+install\b/);
       expect(source).not.toContain("--frozen-lockfile");
       for (const command of enumeratedGateCommands) {
@@ -1000,9 +1074,7 @@ describe("check entry structure", () => {
   ])(
     "should reject the CI contract when quality steps %s",
     (_condition, workflow) => {
-      expect(() => {
-        validateCiWorkflow(workflow);
-      }).toThrow();
+      expectInvalidCiConfiguration(workflow, [], []);
     }
   );
 
@@ -1021,9 +1093,7 @@ describe("check entry structure", () => {
   ])(
     "should reject the CI check entry when its run value %s",
     (_condition, workflow) => {
-      expect(() => {
-        validateCiWorkflow(workflow);
-      }).toThrow();
+      expectInvalidCiConfiguration(workflow, [], []);
     }
   );
 
@@ -1041,7 +1111,7 @@ describe("check entry structure", () => {
     ].join("\n");
 
     expect(() => {
-      validateCiWorkflow(workflow);
+      validateCiWorkflow(workflow, [], []);
     }).toThrow();
   });
 
@@ -1057,7 +1127,7 @@ describe("check entry structure", () => {
     ].join("\n");
 
     expect(() => {
-      validateCiWorkflow(workflow);
+      validateCiWorkflow(workflow, [], []);
     }).not.toThrow();
   });
 
@@ -1089,7 +1159,7 @@ describe("check entry structure", () => {
     "should reject check execution limited by if on the %s",
     (_place, workflow) => {
       expect(() => {
-        validateCiWorkflow(workflow);
+        validateCiWorkflow(workflow, [], []);
       }).toThrow();
     }
   );
@@ -1299,7 +1369,7 @@ describe("check entry structure", () => {
     ].join("\n");
 
     expect(() => {
-      validateCiWorkflow(workflow);
+      validateCiWorkflow(workflow, [], []);
     }).toThrow();
   });
 
@@ -1317,7 +1387,7 @@ describe("check entry structure", () => {
     ].join("\n");
 
     expect(() => {
-      validateCiWorkflow(workflow);
+      validateCiWorkflow(workflow, [], []);
     }).toThrow();
   });
 
@@ -1357,23 +1427,95 @@ describe("check entry structure", () => {
     }).toThrow();
   });
 
-  // REQ-115-03 / TC-115-03E
-  test("should accept the CI entry when the same command also appears in a wrong position", () => {
-    const workflow = [
-      "jobs:",
-      "  quality:",
-      "    steps:",
-      "      - run: nix develop --command bun run check",
-      "  other:",
-      "    steps:",
-      "      - run: nix develop --command bun run check",
-      "",
-    ].join("\n");
+  // REQ-115-03 / REQ-294-01 / TC-115-03E / TC-294-01B / TC-294-01C
+  test.each([
+    [
+      "another job",
+      "jobs:\n  quality:\n    steps:\n      - run: nix develop --command bun run check\n  other:\n    steps:\n      - run: nix develop --command bun run check\n",
+    ],
+    [
+      "one run block",
+      "jobs:\n  quality:\n    steps:\n      - run: |\n          nix develop --command bun run check\n          nix develop --command bun run check\n",
+    ],
+  ])("should reject duplicate canonical commands in %s", (_place, workflow) => {
+    expectInvalidCiConfiguration(workflow, [], []);
+  });
+
+  // REQ-294-01 / TC-294-01D
+  test("should ignore a canonical command that appears only in a YAML comment", () => {
+    const workflow =
+      "jobs:\n  quality:\n    steps:\n      # run: nix develop --command bun run check\n      - run: nix develop --command bun run check\n";
 
     expect(() => {
-      validateCiWorkflow(workflow);
+      validateCiWorkflow(workflow, [], []);
     }).not.toThrow();
   });
+
+  // REQ-294-02 / TC-294-02B
+  test("should reject a direct test command in a CI run block", () => {
+    const workflow =
+      "jobs:\n  quality:\n    steps:\n      - run: nix develop --command bun run check\n  other:\n    steps:\n      - run: |\n          echo preparing\n          bun run test\n";
+
+    expectInvalidCiConfiguration(workflow, [], []);
+  });
+
+  // F-0001 / F-0002 / F-0003
+  test.each([
+    ["canonical command", ciCheckCommand],
+    ["direct test command", directTestCommand],
+  ])("should reject a %s added to a release job", (_case, command) => {
+    const ci =
+      "jobs:\n  quality:\n    steps:\n      - run: nix develop --command bun run check\n";
+    const release = `jobs:\n  publish:\n    steps:\n      - run: ${command}\n`;
+
+    expectInvalidCiConfiguration(ci, [release], []);
+  });
+
+  // REQ-294-02 / TC-294-02C
+  test("should reject a direct test command in a composite action run step", () => {
+    const action =
+      "name: Setup Nix\nruns:\n  using: composite\n  steps:\n    - run: bun run test\n      shell: bash\n";
+
+    expect(() => {
+      validateCompositeAction(action);
+    }).toThrow();
+  });
+
+  // F-0004
+  test("should reject a canonical command added to a composite action", () => {
+    const workflow =
+      "jobs:\n  quality:\n    steps:\n      - run: nix develop --command bun run check\n";
+    const action =
+      "name: Setup Nix\nruns:\n  using: composite\n  steps:\n    - run: nix develop --command bun run check\n      shell: bash\n";
+    expectInvalidCiConfiguration(workflow, [], [action]);
+  });
+
+  // REQ-294-02 / TC-294-02D
+  test("should ignore direct test commands that appear only in YAML comments", () => {
+    const workflow =
+      "jobs:\n  quality:\n    steps:\n      # run: bun run test\n      - run: nix develop --command bun run check\n";
+    const action =
+      "name: Setup Nix\nruns:\n  using: composite\n  steps:\n    # - run: bun run test\n    - uses: example/action@0123456789abcdef\n";
+
+    expect(() => {
+      validateCiWorkflow(workflow, [], [action]);
+    }).not.toThrow();
+  });
+
+  // REQ-294-02 / TC-294-02E
+  test.each([
+    ["missing", "runs:\n  using: composite\n"],
+    ["null", "runs:\n  using: composite\n  steps: null\n"],
+    ["object", "runs:\n  using: composite\n  steps: {}\n"],
+    ["non-string run", "runs:\n  using: composite\n  steps:\n    - run: {}\n"],
+  ])(
+    "should reject composite action steps with a %s shape",
+    (_case, action) => {
+      expect(() => {
+        validateCompositeAction(action);
+      }).toThrow();
+    }
+  );
 
   // REQ-115-04 / TC-115-04B
   test("should accept the canonical facet command block", () => {
@@ -1449,10 +1591,11 @@ describe("check entry structure", () => {
 describe("GitHub Actions execution constraints", () => {
   // REQ-187-01 / TC-187-01A
   test("should cancel superseded pull request CI runs without colliding with the release group", () => {
-    const workflow = parseYamlRecord(
-      readRepositoryFile(".github/workflows/ci.yml"),
-      "CI workflow"
-    );
+    const workflow = parseYamlRecord({
+      expectedShape: "a CI workflow object",
+      relativePath: ".github/workflows/ci.yml",
+      source: readRepositoryFile(".github/workflows/ci.yml"),
+    });
 
     // workflow レベルに置くと workflow_call 経由でも評価され、release の group と
     // 衝突して deadlock する。job レベルであることが要件そのもの。
@@ -1467,20 +1610,22 @@ describe("GitHub Actions execution constraints", () => {
   test("should keep the CI concurrency group distinct from the release group", () => {
     const ciGroup = requireRecordProperty(
       readWorkflowJob(
-        parseYamlRecord(
-          readRepositoryFile(".github/workflows/ci.yml"),
-          "CI workflow"
-        ),
+        parseYamlRecord({
+          expectedShape: "a CI workflow object",
+          relativePath: ".github/workflows/ci.yml",
+          source: readRepositoryFile(".github/workflows/ci.yml"),
+        }),
         "quality"
       ).record,
       "concurrency",
       "jobs.quality.concurrency"
     )["group"];
     const releaseGroup = requireRecordProperty(
-      parseYamlRecord(
-        readRepositoryFile(".github/workflows/release.yml"),
-        "release workflow"
-      ),
+      parseYamlRecord({
+        expectedShape: "a release workflow object",
+        relativePath: ".github/workflows/release.yml",
+        source: readRepositoryFile(".github/workflows/release.yml"),
+      }),
       "concurrency",
       "concurrency"
     )["group"];
@@ -1495,10 +1640,11 @@ describe("GitHub Actions execution constraints", () => {
 
   // REQ-187-01 / TC-187-01B
   test("should limit CI quality execution to fifteen minutes", () => {
-    const workflow = parseYamlRecord(
-      readRepositoryFile(".github/workflows/ci.yml"),
-      "CI workflow"
-    );
+    const workflow = parseYamlRecord({
+      expectedShape: "a CI workflow object",
+      relativePath: ".github/workflows/ci.yml",
+      source: readRepositoryFile(".github/workflows/ci.yml"),
+    });
 
     expect(readWorkflowJob(workflow, "quality").record["timeout-minutes"]).toBe(
       15
@@ -1507,10 +1653,11 @@ describe("GitHub Actions execution constraints", () => {
 
   // REQ-187-01 / TC-187-01C
   test("should prevent every CI checkout from persisting credentials", () => {
-    const workflow = parseYamlRecord(
-      readRepositoryFile(".github/workflows/ci.yml"),
-      "CI workflow"
-    );
+    const workflow = parseYamlRecord({
+      expectedShape: "a CI workflow object",
+      relativePath: ".github/workflows/ci.yml",
+      source: readRepositoryFile(".github/workflows/ci.yml"),
+    });
     const checkoutSteps = readCheckoutSteps(workflow);
 
     expect(checkoutSteps).not.toHaveLength(0);
@@ -1526,10 +1673,11 @@ describe("GitHub Actions execution constraints", () => {
 
   // REQ-187-02 / TC-187-02A
   test("should serialize release runs for the same ref without cancellation", () => {
-    const workflow = parseYamlRecord(
-      readRepositoryFile(".github/workflows/release.yml"),
-      "release workflow"
-    );
+    const workflow = parseYamlRecord({
+      expectedShape: "a release workflow object",
+      relativePath: ".github/workflows/release.yml",
+      source: readRepositoryFile(".github/workflows/release.yml"),
+    });
     const concurrency = requireRecordProperty(
       workflow,
       "concurrency",
@@ -1544,10 +1692,11 @@ describe("GitHub Actions execution constraints", () => {
 
   // REQ-187-02 / TC-187-02B
   test("should limit release publishing to fifteen minutes", () => {
-    const workflow = parseYamlRecord(
-      readRepositoryFile(".github/workflows/release.yml"),
-      "release workflow"
-    );
+    const workflow = parseYamlRecord({
+      expectedShape: "a release workflow object",
+      relativePath: ".github/workflows/release.yml",
+      source: readRepositoryFile(".github/workflows/release.yml"),
+    });
 
     expect(readWorkflowJob(workflow, "publish").record["timeout-minutes"]).toBe(
       15
@@ -1556,10 +1705,11 @@ describe("GitHub Actions execution constraints", () => {
 
   // REQ-187-02 / TC-187-02C
   test("should prevent every release checkout from persisting credentials", () => {
-    const workflow = parseYamlRecord(
-      readRepositoryFile(".github/workflows/release.yml"),
-      "release workflow"
-    );
+    const workflow = parseYamlRecord({
+      expectedShape: "a release workflow object",
+      relativePath: ".github/workflows/release.yml",
+      source: readRepositoryFile(".github/workflows/release.yml"),
+    });
     const checkoutSteps = readCheckoutSteps(workflow);
 
     expect(checkoutSteps).not.toHaveLength(0);
