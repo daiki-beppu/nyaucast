@@ -5,7 +5,7 @@
 - 計画レポート: {report:01-runs-audit-plan.md}
 - 分析レポート: {report:02-runs-audit.md}
 
-本体 run と clone run の証拠は、計画レポートに記録された実パスから読む。実パスは本体リポの `/Users/mba/02-yt/tayk/.takt/runs` と、本体リポの `/Users/mba/02-yt/tayk/.takt/clone-meta/*.json` の `clonePath` 配下にある `.takt/runs` の 2 系統である。
+本体 run と clone run の証拠は、計画レポートがcanonical preflightで解決して記録した実パスから読む。Gitやclone-metaからrootを再解決せず、計画時のsnapshotを消費する。
 
 前段の supervise が差し戻し理由（blocking_issues）を出している場合は、それを最優先で解消してください。
 
@@ -20,7 +20,7 @@
 1. 分析レポートの Audit Scope を計画レポートの Audit Targets と突き合わせ、⏳ と根拠不足の対象を特定する
 2. そのうち今回分析する対象を優先度順に選ぶ（**最低 4 対象**。残りが 4 未満なら全部）
 3. 選んだ対象の run 群について meta.json で結末を掴み、trace.md の遷移系列を再構成し、run 名 + トレース引用を根拠として分析結果を記録する。loop monitor 不発の検査（手順と判定は `.takt/facets/instructions/tayk-audit-runs-analyze.md` の「必須の分析手順」3 と同一）も適用し、「Loop Monitor 不発の疑い」節を維持・更新する
-4. 定義監査の対象（#1〜#3）を再分析する場合は、隔離クローン内の定義ファイルを相対パスで読む。観点・意図された差分・根拠の形式は初回分析と同じ（shared fragment: `uses:`・reviewer 対応・spillover 戻し先 / callable: intake facet の親レポート参照 / drift: 工程説明 3 箇所と実配線）。乖離が無い観点は Key Observations に「乖離なし」と何を照合したかを明記する
+4. 定義監査の対象（#1〜#3）を再分析する場合は、実行中のlinked worktree内のgit-tracked定義ファイルをrepository-relative pathで読む。観点・意図された差分・根拠の形式は初回分析と同じ（shared fragment: `uses:`・reviewer 対応・spillover 戻し先 / callable: intake facet の親レポート参照 / drift: 工程説明 3 箇所と実配線）。乖離が無い観点は Key Observations に「乖離なし」と何を照合したかを明記する
 5. Recovery Coverage に「未回収」「一部未回収」の run が残っていれば、その Report Directory を `reports/**/*.md` で再帰走査して回収を前進させる（走査手順・拾う対象・失敗の区別は `.takt/facets/instructions/tayk-audit-runs-analyze.md` の「Recovery Inventory の分析」と同一）
 
 ## 通常 Finding の Evidence

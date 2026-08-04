@@ -3,10 +3,18 @@
 
 ## Evidence Path Check
 
-- Command: `ls /Users/mba/02-yt/tayk/.takt/runs`
-- Result: {読めたこと。run の総数}
-- Clone meta command: {`/Users/mba/02-yt/tayk/.takt/clone-meta/*.json` の `branch` と `clonePath` を列挙したコマンド}
-- Clone runs: {実在する `clonePath/.takt/runs` の絶対パスと run 数}
+- Common directory command: `git rev-parse --git-common-dir`
+- status: {canonical preflightの`ok`または`abort`}
+- reason: {ABORT時の`git-common-dir` / `repository-runs-unreadable` / `repository-runs-empty`。成功時は`-`}
+- command: {canonical preflightが実行または失敗確認に使ったcommand}
+- diagnostic: {ABORT時の元diagnosticを省略せず記載。成功時は`-`}
+- repositoryRoot: {common directoryの親から導出した本体checkout root}
+- repositoryRuns: {本体runsの実pathとrun数}
+- Clone meta command: `{repositoryRoot}/.takt/clone-meta/*.json` の `branch` と `clonePath` を列挙したcommand
+- cloneRuns: {実在する各clone runsの`branch`・実path・run数}
+- missingClones: {辿れない各metaの`branch`と`clonePath`。無ければ空配列}
+- missingCloneCount: {辿れないmetaの件数}
+- missingCloneBranches: {辿れない全branch名。無ければ空配列}
 - 対象範囲宣言: {監査レポート冒頭へ引き継ぐ、本体・実在 clone の範囲。カバレッジの欠落があれば、辿れない meta の件数と各 `branch` 名を列挙する}
 
 ## Enumeration Evidence
@@ -54,7 +62,7 @@
 
 **Audit Targets の契約（後続の全レポートがこの表を骨格として使う）:**
 
-- **#1〜#3 は定義監査の固定対象**（#146）。毎回この #・対象名で置き、Runs 列には run ではなく対象定義ファイル（隔離クローン内・相対パス）を列挙する。run 対象は #4 から採番する
+- **#1〜#3 は定義監査の固定対象**（#146）。毎回この #・対象名で置き、Runs 列には run ではなく実行中linked worktree内の対象定義ファイル（repository-relative path）を列挙する。run 対象は #4 から採番する
 - 対象数は固定 3 対象を含めて **24 以下**（run 対象は 21 以下）。超える場合は優先度の低い run 対象同士を統合する（workflow 容量からの逆算値）
 - 1 対象 = アナリストが 1 回の再分析サイクルで対象 run のトレースを読み切れる粒度（束ねる run は概ね 10 件以内）
 - **# は以降の全レポートで不変**。分析レポートの Audit Scope はこの表と一対一（同じ #・同じ行数）で照合される

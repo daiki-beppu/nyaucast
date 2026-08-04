@@ -6,8 +6,9 @@
 # usage-events のトークン消費集計（#145。子 3）は analyze の統合時に機械集計で行い、
 # レポートの Token Usage 節に載せる。費用の偏りは記録のみで起票しない（ADR-0008 Consequences）。
 #
-# run の証拠経路は、本体リポの絶対パス /Users/mba/02-yt/tayk/.takt/runs と、
-# /Users/mba/02-yt/tayk/.takt/clone-meta/*.json を列挙して得た各 clonePath 配下の .takt/runs の 2 系統とする。
+# linked worktree 内で git rev-parse --git-common-dir の親から本体 checkout root を導出する。
+# run の証拠経路は、その root 配下の .takt/runs と、同 root の .takt/clone-meta/*.json を
+# 列挙して得た各 clonePath 配下の .takt/runs の 2 系統とする。独立 clone / 隔離 clone 内からの実行は対象外。
 # 存在しない clonePath は ABORTしない。本体と実在する clone の監査を継続する。
 # 欠落を静かに無視しないでカバレッジの欠落として記録し、監査レポート冒頭の対象範囲宣言に
 # 辿れない meta の件数と各 branch 名を列挙する。本体 runs が読めない場合は空レポートを
@@ -16,8 +17,8 @@
 # #146: 監査対象には run トレースに加えて workflow 定義そのもの（定義監査）を含む。
 # shared fragment の配線、callable のレポート境界、工程説明と実配線の乖離（drift）を、
 # Audit Targets の固定 3 対象（#1〜#3）と
-# して毎回検査する。定義ファイルは隔離クローン内に git 追跡で存在するため、run の証拠に
-# 記録した絶対パスではなく、リポジトリルートからの相対パスで読む。
+# して毎回検査する。定義ファイルは実行中の linked worktree 内に git 追跡で存在するため、
+# run の証拠に記録した絶対パスではなく repository-relative path で読む。
 #
 # 容量: plan(1) + analyze(1) + [supervise+review]×10(20) + publish(1) + file(1) = 24 ≤ 25。
 # plan 側の対象数上限（24。tayk-audit-runs-plan 参照）と review 側の 1 サイクル最低 4 対象の
@@ -30,8 +31,9 @@
 #   publish / ABORT は cycle から出る一方向。遷移を足すときはこの前提を崩さないこと
 name: tayk-audit-runs
 description: >
-  本体リポの /Users/mba/02-yt/tayk/.takt/runs と /Users/mba/02-yt/tayk/.takt/clone-meta/*.json の clonePath
-  配下にある .takt/runs の実行トレースを run 横断で監査し、併せて workflow 定義そのものを
+  linked worktree 内で Git common-dir の親から導出した本体 checkout の .takt/runs と、
+  同 checkout の clone-meta が記録した clonePath 配下の .takt/runs を run 横断で監査する。
+  独立 clone / 隔離 clone 内からの実行は対象外とし、併せて workflow 定義そのものを
   静的監査する（shared fragment の配線 / callable のレポート境界 / 工程説明 drift。#146）。
   計画（定義監査の固定 3 対象 + 対象 run の列挙・採番）→ 分担分析 → 監督 ⇄ 再分析で
   ABORT 原因・差し戻し経路・loop monitor 発火 / 不発（cycle 外からの再入による上限の
@@ -63,7 +65,7 @@ loop_monitors:
 
 steps:
   - name: plan
-    description: 本体リポの runs と /Users/mba/02-yt/tayk/.takt/clone-meta/*.json の clonePath 配下にある runs の証拠パスを確認し、定義監査の固定 3 対象と対象 run の棚卸しから番号を固定した監査対象表（Audit Targets）を作る
+    description: linked worktreeからcanonical preflightを実行し、Git common-dirの親にある本体runsとclone-meta由来のclone runsを解決して、定義監査の固定3対象と対象runの棚卸しから番号を固定した監査対象表（Audit Targets）を作る
     tags:
       - review
     edit: false
@@ -76,15 +78,27 @@ steps:
         - name: 01-runs-audit-plan.md
           format: tayk-runs-audit-plan
     rules:
-      - condition: 証拠パスを読めることを確認し、対象 run の棚卸しと監査対象表の作成が完了
+      - condition: canonical preflight の status が ok で、対象 run の棚卸しと監査対象表の作成が完了
         next: analyze
-      # 証拠パスが読めない環境では、空レポートや推測で埋めた計画を作らず明示的に止める
-      # （instruction 側にも同じ契約を書いてある。appendix でエラー出力を自己申告させる）
-      - condition: 証拠パス（/Users/mba/02-yt/tayk/.takt/runs）が読めない、または run が 1 件も存在しない
+      # preflight が abort を返したら、空レポートや推測で埋めた計画を作らず明示的に止める
+      - condition: canonical preflight の status が abort、reason が git-common-dir
         next: ABORT
         appendix: |
-          実行したコマンドと、その出力（エラーをそのまま貼る）:
-          - {何を実行し、何が返ったか}
+          canonical preflight が返した command と diagnostic（省略・要約しない）:
+          - command: {実行したコマンド}
+          - diagnostic: {元のエラー出力}
+      - condition: canonical preflight の status が abort、reason が repository-runs-unreadable
+        next: ABORT
+        appendix: |
+          canonical preflight が返した command と diagnostic（省略・要約しない）:
+          - command: {実行したコマンド}
+          - diagnostic: {元のエラー出力}
+      - condition: canonical preflight の status が abort、reason が repository-runs-empty
+        next: ABORT
+        appendix: |
+          canonical preflight が返した command と diagnostic（省略・要約しない）:
+          - command: {実行したコマンド}
+          - diagnostic: {元のエラー出力}
       - condition: スコープが不明確で監査対象を確定できない
         next: ABORT
 
