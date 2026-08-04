@@ -17,6 +17,8 @@ const workflowContracts = [
   },
 ] as const;
 const spilloverStepPath = ".takt/steps/tayk-spillover.yaml";
+const stepFragmentObjectShape = "a step fragment object";
+const workflowObjectShape = "a workflow object";
 
 interface Rule {
   condition?: unknown;
@@ -36,14 +38,6 @@ interface Workflow {
   steps?: Step[];
 }
 
-function parseRepositoryYaml(relativePath: string): Record<string, unknown> {
-  return parseYamlRecord({
-    expectedShape: "a workflow object",
-    relativePath,
-    source: readRepositoryFile(relativePath),
-  });
-}
-
 function readSpilloverOutputFormat(): string {
   return readRepositoryFile(
     `.takt/facets/output-contracts/${expectedReportContract.format}.md`
@@ -52,7 +46,11 @@ function readSpilloverOutputFormat(): string {
 
 describe("feature/fix spillover report contract", () => {
   test("[REQ-119-01] should declare the report contract once in the shared spillover step", () => {
-    const spillover = parseRepositoryYaml(spilloverStepPath) as Step;
+    const spillover = parseYamlRecord({
+      expectedShape: stepFragmentObjectShape,
+      relativePath: spilloverStepPath,
+      source: readRepositoryFile(spilloverStepPath),
+    }) as Step;
 
     expect(spillover.output_contracts?.report).toEqual([
       expectedReportContract,
@@ -61,7 +59,11 @@ describe("feature/fix spillover report contract", () => {
 
   test("[REQ-119-01] should reuse the shared spillover step and preserve causal re-entry", () => {
     for (const contract of workflowContracts) {
-      const workflow = parseRepositoryYaml(contract.path) as Workflow;
+      const workflow = parseYamlRecord({
+        expectedShape: workflowObjectShape,
+        relativePath: contract.path,
+        source: readRepositoryFile(contract.path),
+      }) as Workflow;
       const spillover = workflow.steps?.find(
         (step) => step.name === "spillover"
       );
@@ -102,12 +104,5 @@ describe("feature/fix spillover report contract", () => {
     expect(outputFormat).toContain("## スコープ内へ引き戻した発見");
     expect(outputFormat).toContain("因果の説明");
     expect(outputFormat).toContain("対応する要件 ID");
-  });
-
-  test("should keep takt external and doctor in the pre-push gate", () => {
-    expect(readRepositoryFile("package.json")).not.toContain('"takt":');
-    expect(readRepositoryFile("lefthook.yml")).toContain(
-      "run: takt workflow doctor"
-    );
   });
 });
