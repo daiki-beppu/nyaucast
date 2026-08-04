@@ -177,11 +177,13 @@ function findRunStep(pattern: RegExp): WorkflowStep | undefined {
 
 function initializeReleaseRepository(
   environment: Record<string, string>,
-  directory: string
+  directory: string,
+  releaseTagTarget: "candidate" | "main"
 ): {
   candidate: string;
   main: string;
   remote: string;
+  taggedCommit: string;
 } {
   const remote = join(directory, "remote.git");
   const source = join(directory, "source");
@@ -214,9 +216,18 @@ function initializeReleaseRepository(
   runGit(environment, source, "add", "candidate.txt");
   runGit(environment, source, "commit", "-m", "unreviewed candidate");
   const candidate = gitOutput(environment, source, "rev-parse", "HEAD");
-  runGit(environment, source, "tag", releaseTag);
+  const releaseCommit = releaseTagTarget === "main" ? main : candidate;
+  runGit(environment, source, "tag", releaseTag, releaseCommit);
   runGit(environment, source, "push", "origin", releaseTag);
-  return { candidate, main, remote };
+  const taggedCommit = gitOutput(
+    environment,
+    source,
+    "rev-list",
+    "-n",
+    "1",
+    releaseTag
+  );
+  return { candidate, main, remote, taggedCommit };
 }
 
 function cloneCandidate(
@@ -338,16 +349,25 @@ describe("release ancestor guard", () => {
   test("should stop before npm publish when the tagged commit is outside main", () => {
     withTemporaryDirectory("tayk-release-ancestor-", (directory) => {
       const environment = hermeticGitEnvironment(join(directory, "gitconfig"));
-      const repository = initializeReleaseRepository(environment, directory);
+      const repository = initializeReleaseRepository(
+        environment,
+        directory,
+        "candidate"
+      );
       const runner = cloneCandidate(
         environment,
         directory,
         repository.remote,
-        repository.candidate
+        repository.taggedCommit
       );
       const stub = installNpmStub(directory);
 
-      const guard = runReleaseGuard(environment, runner, repository.candidate);
+      expect(repository.taggedCommit).toBe(repository.candidate);
+      const guard = runReleaseGuard(
+        environment,
+        runner,
+        repository.taggedCommit
+      );
       if (guard.exitCode === 0) {
         runPublishDecision(environment, runner, releaseTag, false, stub);
       }
@@ -392,7 +412,11 @@ describe("release ancestor guard", () => {
     expect(existsSync(ancestorHelperPath)).toBe(true);
     withTemporaryDirectory("tayk-release-ancestor-", (directory) => {
       const environment = hermeticGitEnvironment(join(directory, "gitconfig"));
-      const repository = initializeReleaseRepository(environment, directory);
+      const repository = initializeReleaseRepository(
+        environment,
+        directory,
+        "candidate"
+      );
       const runner = cloneCandidate(
         environment,
         directory,
@@ -416,7 +440,11 @@ describe("release ancestor guard", () => {
     expect(existsSync(ancestorHelperPath)).toBe(true);
     withTemporaryDirectory("tayk-release-ancestor-", (directory) => {
       const environment = hermeticGitEnvironment(join(directory, "gitconfig"));
-      const repository = initializeReleaseRepository(environment, directory);
+      const repository = initializeReleaseRepository(
+        environment,
+        directory,
+        "candidate"
+      );
       const runner = cloneCandidate(
         environment,
         directory,
@@ -446,7 +474,11 @@ describe("release ancestor guard", () => {
   test("should reject a tag and package version mismatch before npm publish", () => {
     withTemporaryDirectory("tayk-release-version-", (directory) => {
       const environment = hermeticGitEnvironment(join(directory, "gitconfig"));
-      const repository = initializeReleaseRepository(environment, directory);
+      const repository = initializeReleaseRepository(
+        environment,
+        directory,
+        "candidate"
+      );
       const runner = cloneCandidate(
         environment,
         directory,
@@ -472,7 +504,11 @@ describe("release ancestor guard", () => {
   test("should run only npm publish dry-run for a manual main release", () => {
     withTemporaryDirectory("tayk-release-dry-run-", (directory) => {
       const environment = hermeticGitEnvironment(join(directory, "gitconfig"));
-      const repository = initializeReleaseRepository(environment, directory);
+      const repository = initializeReleaseRepository(
+        environment,
+        directory,
+        "candidate"
+      );
       const runner = cloneCandidate(
         environment,
         directory,
@@ -496,11 +532,52 @@ describe("release ancestor guard", () => {
     });
   });
 
+  // REQ-287-04 / REQ-287-05 / TC-287-04A / TC-287-05A
+  test("should run npm publish exactly once for a matching tag on main", () => {
+    withTemporaryDirectory("tayk-release-publish-", (directory) => {
+      const environment = hermeticGitEnvironment(join(directory, "gitconfig"));
+      const repository = initializeReleaseRepository(
+        environment,
+        directory,
+        "main"
+      );
+      const runner = cloneCandidate(
+        environment,
+        directory,
+        repository.remote,
+        repository.taggedCommit
+      );
+      const stub = installNpmStub(directory);
+
+      expect(repository.taggedCommit).toBe(repository.main);
+      const guard = runReleaseGuard(
+        environment,
+        runner,
+        repository.taggedCommit
+      );
+      expect(guard.exitCode).toBe(0);
+      const result = runPublishDecision(
+        environment,
+        runner,
+        releaseTag,
+        false,
+        stub
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(npmCalls(stub.callsPath)).toEqual(["publish"]);
+    });
+  });
+
   // REQ-77-07 / TC-77-07 / P-77-02, P-77-03
   test("should leave repository state and ignored artifacts unchanged", () => {
     withTemporaryDirectory("tayk-release-read-only-", (directory) => {
       const environment = hermeticGitEnvironment(join(directory, "gitconfig"));
-      const repository = initializeReleaseRepository(environment, directory);
+      const repository = initializeReleaseRepository(
+        environment,
+        directory,
+        "candidate"
+      );
       const runner = cloneCandidate(
         environment,
         directory,
@@ -549,7 +626,11 @@ describe("release ancestor guard", () => {
         LEFTHOOK: "1",
       });
 
-      const repository = initializeReleaseRepository(environment, directory);
+      const repository = initializeReleaseRepository(
+        environment,
+        directory,
+        "candidate"
+      );
 
       expect(repository.candidate).not.toBe(repository.main);
       expect(existsSync(leakedGitDirectory)).toBe(false);
