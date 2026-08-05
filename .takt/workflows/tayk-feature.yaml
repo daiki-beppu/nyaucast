@@ -236,10 +236,55 @@ steps:
     uses: implementation-high-replan-to-implement
     policy: [design-planning, tayk-traceability, tayk-toolchain]
     knowledge: [architecture, tayk-adr, tayk-domain]
+    instruction: tayk-replan-implementation
+    output_contracts:
+      report:
+        - name: plan.md
+          format: tayk-replan-decision
     rules:
       - condition: プロジェクト内で実行可能な未試行の変更または原因調査と、その検証手順を具体化した
         next: implement
       - condition: 確認済みの根拠により、プロジェクト内の変更や調査では解消できず、外部操作だけが残るか要件が両立不能である
+        next: replan_abort_review
+
+  - name: replan_abort_review
+    description: replan の ABORT 候補と本文・根拠を独立に照合する
+    tags: [review, plan]
+    edit: false
+    session: compact
+    persona: supervisor
+    policy: [review, tayk-traceability, tayk-toolchain]
+    knowledge: [architecture, tayk-adr, tayk-domain]
+    provider_options:
+      extends: review-readonly
+    instruction: tayk-replan-abort-review
+    output_contracts:
+      report:
+        - name: replan-abort-review.md
+          format: tayk-replan-abort-review
+    rules:
+      - condition: ABORT_CONFIRMED
+        next: preserve_abort_worktree
+      - condition: REPLAN_REQUIRED
+        next: implement
+
+  - name: preserve_abort_worktree
+    description: ABORT 前の作業ツリーと回収手順を run report に記録する
+    tags: [report]
+    edit: false
+    session: compact
+    persona: tayk-delivery-operator
+    policy: [tayk-traceability, tayk-toolchain]
+    knowledge: [tayk-domain]
+    provider_options:
+      extends: review-readonly
+    instruction: tayk-preserve-abort-worktree
+    output_contracts:
+      report:
+        - name: abort-worktree-recovery.md
+          format: tayk-abort-worktree-recovery
+    rules:
+      - condition: when(true)
         next: ABORT
 
   - name: reviewers
