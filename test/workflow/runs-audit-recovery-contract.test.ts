@@ -322,7 +322,13 @@ function expectAbortWiringContract(): void {
     const stepNames = requireSteps(workflow, contract.path).map(
       (step) => step.name
     );
-    expect(stepNames.filter((name) => /abort/i.test(name ?? ""))).toEqual([]);
+    const expectedAbortSafetySteps =
+      contract.path === paths.feature
+        ? ["replan_abort_review", "preserve_abort_worktree"]
+        : [];
+    expect(stepNames.filter((name) => /abort/i.test(name ?? ""))).toEqual(
+      expectedAbortSafetySteps
+    );
     expect(
       requireRule(
         requireStep(workflow, contract.path, "final_gate"),
