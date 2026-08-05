@@ -27,6 +27,25 @@ Issues and PRDs for this repo live as GitHub issues. Use the `gh` CLI for all op
 - takt 更新時は clean な一時 Git repository で `takt eject takt-default-high` と `takt eject review-fix-takt-default-high` を実行し、本リポジトリの `.takt/steps/` と比較する。upstream の prompt / output contract 変更を取り込んでから、ADR reviewer と tayk policy / knowledge overlay を再適用する
 - 着手前に main を `git pull --ff-only` で最新化する
 
+## takt に渡す issue の書き方
+
+intake が BLOCKED を返す原因は、文章が曖昧だったことではなく **起票側が決着をつけていない**ことである。監査レポート（`docs/audits/`）は read-only 工程の成果物なので「A するか B する」と選択肢を並べるのが正しい形をしている。それを issue へ写す作業は翻訳ではなく**決定**であり、写経すると未決定がそのまま下流へ漏れる。
+
+**検出器は 1 つ**: 本文を読んだ実装者が「どちらにしますか」と聞き返せる文が 1 つでもあれば、投入せず書き直す。
+
+決められないときは、決めるための実測を先に行う。仕様を書くなら**その仕様が適用される全パターンで実測する** — linked worktree で確認した挙動が独立 clone でも成り立つとは限らない（#288 はこれを見落として 2 度目の BLOCKED を受けた）。
+
+本文に置く節:
+
+- **決定** — 選んだ案と、退けた案を退けた理由。スコープから外したものは「対象外とした理由」として明示する。「検討する」「必要なら」を残さない
+- **設計指針** — 採るべき経路と**禁止事項**。過去の監査で否決された手段があればレポートの原文を引用する。引用がないと実装者は同じ道を再発見して同じ壁に当たる
+- **受け入れ基準** — 数値か機械判定可能な述語で書く。「代表境界へ統合する」は不可、「`test/check.test.ts` の増加が 150 行以内」は可
+- **対象の特定方法** — 行番号を書かない。起票から着手までの間に別 PR がずらす。「現行コードで対象を特定すること」と書く
+
+**1 issue 1 要件系統**。監査 finding を機械的にグルーピングして複数の要件系統を束ねると、実装が発散したときにどちらが原因か切り分けられない。
+
+実証: #287 は 2 要件を束ね、設計指針を書かず、受け入れ基準を定性的な語で書いた結果、3.5 時間で `test/check.test.ts` を 2.7 倍（+2,607 行）に膨張させて中断した。同じ要件をこの節に沿って書き直した #294 は +150 行で完走した。差は issue の書き方だけである。
+
 ## Conventions
 
 - **Create an issue**: `gh issue create --title "..." --body "..."`. Use a heredoc for multi-line bodies.
