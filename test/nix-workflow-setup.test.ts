@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 
-import { parse } from "yaml";
+import { parseYamlRecord, readRepositoryFile } from "./helpers";
 
-import { packageRoot } from "./helpers";
-
-const setupAction = "./.github/actions/setup-nix";
+const setupActionDirectory = ".github/actions/setup-nix";
+const setupAction = `./${setupActionDirectory}`;
+const setupActionPath = `${setupActionDirectory}/action.yml`;
+const compositeActionObjectShape = "a composite action object";
+const workflowObjectShape = "a workflow object";
 
 function requireRecord(
   value: unknown,
@@ -16,11 +16,6 @@ function requireRecord(
     throw new TypeError(`${description} must be an object`);
   }
   return value as Record<string, unknown>;
-}
-
-function readYaml(path: string): Record<string, unknown> {
-  const source = readFileSync(join(packageRoot, path), "utf-8");
-  return requireRecord(parse(source), path);
 }
 
 function readSteps(
@@ -55,7 +50,11 @@ describe("Nix workflow setup", () => {
     "should share upstream Nix and cache setup in %s",
     (_, path, stepsPath) => {
       // Given: a workflow job that enters the Nix development shell
-      const workflow = readYaml(path);
+      const workflow = parseYamlRecord({
+        expectedShape: workflowObjectShape,
+        relativePath: path,
+        source: readRepositoryFile(path),
+      });
 
       // When: its setup steps are resolved
       const steps = readSteps(workflow, stepsPath);
@@ -79,7 +78,11 @@ describe("Nix workflow setup", () => {
 
   test("should configure upstream Nix with the native GitHub Actions cache", () => {
     // Given: the shared Nix setup action
-    const action = readYaml(".github/actions/setup-nix/action.yml");
+    const action = parseYamlRecord({
+      expectedShape: compositeActionObjectShape,
+      relativePath: setupActionPath,
+      source: readRepositoryFile(setupActionPath),
+    });
 
     // When: its composite steps are resolved
     const steps = readSteps(action, ["runs", "steps"]);
@@ -106,7 +109,11 @@ describe("Nix workflow setup", () => {
 
   test("should pin every third-party action in the shared setup to a commit SHA", () => {
     // Given: the shared Nix setup action, which actionlint does not lint
-    const action = readYaml(".github/actions/setup-nix/action.yml");
+    const action = parseYamlRecord({
+      expectedShape: compositeActionObjectShape,
+      relativePath: setupActionPath,
+      source: readRepositoryFile(setupActionPath),
+    });
 
     // When: its third-party step references are resolved
     const references = readSteps(action, ["runs", "steps"])
