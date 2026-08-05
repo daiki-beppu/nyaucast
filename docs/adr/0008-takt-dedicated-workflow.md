@@ -134,7 +134,7 @@ ADR 本文の引用を伴わない指摘は ADR finding として扱わない。
 
 ### 10. Git と PR
 
-workflow は commit、push、PR 作成、merge を行わない。実装 workflow は手動 worktree 内で `takt --auto-pr -w <workflow> "#<issue>"` として実行し、workflow 完了後の commit / push / PR 作成を takt の `auto_pr` に委ねる。
+workflow 自体は commit、push、PR 作成、merge を行わない。実装 workflow は main から作った detached HEAD の手動 worktree 内で `takt --pipeline --auto-pr -b <新規ブランチ名> -w <workflow> -i <issue番号>` として実行する。pipeline が新規ブランチを作成し、workflow 完了後の commit / push / PR 作成を `auto_pr` に委ねるため、`-b` のブランチは実行前に存在してはならない。
 
 push 時の pre-push hook は `bun run check` と `takt workflow doctor` を実行する。merge は人間が判断する。
 
