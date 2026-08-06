@@ -748,7 +748,7 @@ describe.serial.skipIf(prerequisitesUnavailable)("devShell setup", () => {
         );
 
       expect(failureLines).toEqual([
-        "tayk: bun install --frozen-lockfile が失敗しました。Bun の出力を確認してください。",
+        "tayk: bun install --frozen-lockfile が失敗しました。Bun の出力で原因を確認し、lockfile の更新が必要なら bun install を実行してください。",
       ]);
     });
   });
