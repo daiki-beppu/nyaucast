@@ -377,6 +377,7 @@ describe("release ancestor guard", () => {
   });
 
   // REQ-77-02 / TC-77-02 / P-77-01
+  // REQ-304-04 / TC-304-08
   test("should run an unmasked ancestor guard against origin main before publishing", () => {
     const steps = releaseSteps();
     const checkoutIndex = steps.findIndex(
@@ -501,6 +502,7 @@ describe("release ancestor guard", () => {
   });
 
   // REQ-77-05, REQ-77-06 / TC-77-05, TC-77-06 / P-77-01, P-77-02
+  // REQ-304-04 / TC-304-08
   test("should run only npm publish dry-run for a manual main release", () => {
     withTemporaryDirectory("tayk-release-dry-run-", (directory) => {
       const environment = hermeticGitEnvironment(join(directory, "gitconfig"));
@@ -601,6 +603,7 @@ describe("release ancestor guard", () => {
   });
 
   // REQ-77-08 / TC-77-08 / P-77-01
+  // REQ-304-04 / TC-304-08
   test("should preserve the CI dependency and trusted publishing permissions", () => {
     const job = publishJob();
     const permissions = requireRecord(

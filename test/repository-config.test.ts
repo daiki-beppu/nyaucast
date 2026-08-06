@@ -64,6 +64,7 @@ describe("repository configuration", () => {
     }
   });
 
+  // REQ-304-02 / TC-304-05
   test("should let Dependabot reach the pins inside composite actions", () => {
     // Given: the GitHub Actions updater
     const actionsUpdate = readDependabotUpdates().find(
