@@ -257,6 +257,26 @@ function createRealProjectCheckout(root: string): void {
   commitFixture(root);
 }
 
+function createFrozenLockfileMismatch(root: string): void {
+  const packageDirectory = join(root, "fixtures", "unlocked-package");
+  mkdirSync(packageDirectory, { recursive: true });
+  writeJson(join(packageDirectory, "package.json"), {
+    name: "unlocked-package",
+    version: "1.0.0",
+  });
+
+  const packageJsonPath = join(root, "package.json");
+  const manifest = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as Record<
+    string,
+    unknown
+  >;
+  manifest["dependencies"] = {
+    ...(manifest["dependencies"] as Record<string, string>),
+    "unlocked-package": "file:./fixtures/unlocked-package",
+  };
+  writeJson(packageJsonPath, manifest);
+}
+
 function runInDevShell(
   flakeRoot: string,
   cwd: string,
@@ -534,13 +554,12 @@ describe.serial.skipIf(prerequisitesUnavailable)("devShell setup", () => {
       const entered = runFixtureInDevShell(directory, subdirectory, [
         "sh",
         "-c",
-        "printf '%s' \"${PATH%%:*}\"",
+        'test "${PATH%%:*}" = "$1"',
+        "sh",
+        join(taykRoot, "node_modules", ".bin"),
       ]);
 
       expectCommandSucceeded(entered);
-      expect(entered.stdout.toString()).toBe(
-        join(taykRoot, "node_modules", ".bin")
-      );
     });
   });
 
@@ -554,13 +573,12 @@ describe.serial.skipIf(prerequisitesUnavailable)("devShell setup", () => {
       const entered = runFixtureInDevShell(directory, subdirectory, [
         "sh",
         "-c",
-        "printf '%s' \"${PATH%%:*}\"",
+        'test "${PATH%%:*}" = "$1"',
+        "sh",
+        join(taykRoot, "node_modules", ".bin"),
       ]);
 
       expectCommandSucceeded(entered);
-      expect(entered.stdout.toString()).toBe(
-        join(taykRoot, "node_modules", ".bin")
-      );
     });
   });
 
@@ -631,7 +649,44 @@ describe.serial.skipIf(prerequisitesUnavailable)("devShell setup", () => {
     });
   });
 
-  test("[REQ-105-03][REQ-111-01] should keep pre-push blocking when frozen install fails", () => {
+  test("[REQ-305-01][TC-305-01][P-305-01] reports Bun's frozen-lockfile diagnostic on stderr", () => {
+    withDevShellFixture((directory) => {
+      const checkout = join(directory, "checkout");
+      createRealProjectCheckout(checkout);
+      createFrozenLockfileMismatch(checkout);
+
+      const entered = enterFixtureDevShell(directory, checkout);
+      const flake = readFileSync(join(packageRoot, "flake.nix"), "utf-8");
+      const installInvocations = flake
+        .split(/\r?\n/)
+        .filter((line) => line.includes("bun install --cwd"))
+        .map((line) => line.trim());
+
+      expect(entered.stderr.toString()).toContain(
+        "error: lockfile had changes, but lockfile is frozen"
+      );
+      expect(flake).not.toContain(
+        "error: lockfile had changes, but lockfile is frozen"
+      );
+      expect(installInvocations).toEqual([
+        'if ! bun install --cwd "$tayk_root" --frozen-lockfile; then',
+      ]);
+    });
+  });
+
+  test("[REQ-305-02][TC-305-02] keeps frozen install failure non-fatal", () => {
+    withDevShellFixture((directory) => {
+      const checkout = join(directory, "checkout");
+      createRealProjectCheckout(checkout);
+      createFrozenLockfileMismatch(checkout);
+
+      const entered = enterFixtureDevShell(directory, checkout);
+
+      expectCommandSucceeded(entered);
+    });
+  });
+
+  test("[REQ-105-03][REQ-111-01][REQ-305-03][TC-305-03] keeps pre-push blocking when frozen install fails", () => {
     withDevShellFixture((directory) => {
       const checkout = join(directory, "checkout");
       const checkSentinel = join(checkout, ".check-ran");
@@ -643,13 +698,11 @@ describe.serial.skipIf(prerequisitesUnavailable)("devShell setup", () => {
       );
       runGit(checkout, ["remote", "add", "origin", remote]);
 
+      createFrozenLockfileMismatch(checkout);
       const packageJsonPath = join(checkout, "package.json");
       const manifest = JSON.parse(
         readFileSync(packageJsonPath, "utf-8")
       ) as Record<string, unknown>;
-      manifest["dependencies"] = {
-        missing: "file:./fixtures/missing",
-      };
       manifest["scripts"] = {
         ...(manifest["scripts"] as Record<string, string>),
         check:
@@ -676,6 +729,43 @@ describe.serial.skipIf(prerequisitesUnavailable)("devShell setup", () => {
       expect(pushed.exitCode).not.toBe(0);
       expect(existsSync(checkSentinel)).toBeTrue();
     });
+  });
+
+  test("[REQ-305-04][TC-305-04][P-305-02] refers users to Bun's output without diagnosing the cause", () => {
+    withDevShellFixture((directory) => {
+      const checkout = join(directory, "checkout");
+      createRealProjectCheckout(checkout);
+      createFrozenLockfileMismatch(checkout);
+
+      const entered = enterFixtureDevShell(directory, checkout);
+      const failureLines = entered.stderr
+        .toString()
+        .split(/\r?\n/)
+        .filter((line) =>
+          line.startsWith(
+            "tayk: bun install --frozen-lockfile が失敗しました。"
+          )
+        );
+
+      expect(failureLines).toEqual([
+        "tayk: bun install --frozen-lockfile が失敗しました。Bun の出力を確認してください。",
+      ]);
+    });
+  });
+
+  test("[REQ-305-01][TC-305-05][P-305-03] invokes frozen install directly without suppressing its output", () => {
+    const flake = readFileSync(join(packageRoot, "flake.nix"), "utf-8");
+    const installInvocations = flake
+      .split(/\r?\n/)
+      .filter((line) => line.includes("bun install --cwd"))
+      .map((line) => line.trim());
+
+    expect(flake).not.toContain(
+      "error: lockfile had changes, but lockfile is frozen"
+    );
+    expect(installInvocations).toEqual([
+      'if ! bun install --cwd "$tayk_root" --frozen-lockfile; then',
+    ]);
   });
 
   test("[REQ-105-03] should install the actual project dependencies in a fresh checkout", () => {
