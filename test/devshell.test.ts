@@ -747,9 +747,14 @@ describe.serial.skipIf(prerequisitesUnavailable)("devShell setup", () => {
           )
         );
 
-      expect(failureLines).toEqual([
-        "tayk: bun install --frozen-lockfile が失敗しました。Bun の出力で原因を確認し、lockfile の更新が必要なら bun install を実行してください。",
-      ]);
+      // 文言の完全一致では REQ-305-04（原因を断定しない）を検査できない。どんな変更でも
+      // 落ちるので、断定的な文言と断定しない文言を区別せず、変更検知器にしかならない。
+      // 診断が 1 本だけ出ることと、断定していた旧文言へ戻していないことだけを見る。
+      // 診断の中身そのものは TC-305-01 / TC-305-05 が Bun の実出力に対して検査する。
+      expect(failureLines).toHaveLength(1);
+      expect(
+        failureLines.some((line) => line.includes("差分を解消"))
+      ).toBeFalse();
     });
   });
 
