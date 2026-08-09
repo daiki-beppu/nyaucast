@@ -371,6 +371,16 @@ function validatePrePushConfiguration(source: string): void {
     "commands",
     "pre-push.commands"
   );
+  const expectedCommandNames = Object.keys(prePushCommands);
+  const commandNames = Object.keys(commands);
+  if (
+    commandNames.length !== expectedCommandNames.length ||
+    commandNames.some(
+      (commandName) => !Object.hasOwn(prePushCommands, commandName)
+    )
+  ) {
+    throw new Error("pre-push.commands must match the expected command set");
+  }
 
   for (const [commandName, expectedRun] of Object.entries(prePushCommands)) {
     if (
@@ -1005,7 +1015,8 @@ describe("check command", () => {
     }
   });
 
-  // REQ-82-03 / REQ-106-01 / REQ-115-02 / TC-106-01B / TC-115-02A
+  // REQ-82-03 / REQ-106-01 / REQ-115-02 / REQ-308-01
+  // TC-106-01B / TC-115-02A / TC-308-01A
   test("should run the gates before push", () => {
     const configuration = readRepositoryFile("lefthook.yml");
 
@@ -1164,7 +1175,7 @@ describe("check entry structure", () => {
     }
   );
 
-  // REQ-115-02 / TC-115-02B
+  // REQ-115-02 / REQ-308-05 / TC-115-02B / TC-308-05A
   test("should reject pre-push when check and workflow doctor commands are swapped", () => {
     const configuration = [
       "pre-push:",
@@ -1181,7 +1192,26 @@ describe("check entry structure", () => {
     }).toThrow();
   });
 
-  // REQ-115-02 / TC-115-02C
+  // REQ-308-02 / TC-308-02A
+  test("should reject pre-push when an unexpected command is added", () => {
+    const configuration = [
+      "pre-push:",
+      "  commands:",
+      "    check:",
+      "      run: bun run check",
+      "    workflow-doctor:",
+      "      run: takt workflow doctor",
+      "    unexpected-command:",
+      "      run: echo unexpected",
+      "",
+    ].join("\n");
+
+    expect(() => {
+      validatePrePushConfiguration(configuration);
+    }).toThrow();
+  });
+
+  // REQ-115-02 / REQ-308-03 / TC-115-02C / TC-308-03A / TC-308-03B
   test.each([
     [
       "check",
@@ -1212,7 +1242,7 @@ describe("check entry structure", () => {
     }
   );
 
-  // REQ-115-02 / TC-115-02D
+  // REQ-115-02 / REQ-308-05 / TC-115-02D / TC-308-05C
   test.each([
     ["pre-push is null", "pre-push: null\n"],
     ["pre-push is an array", "pre-push: []\n"],
@@ -1274,7 +1304,7 @@ describe("check entry structure", () => {
     }
   );
 
-  // REQ-115-02 / TC-115-02E
+  // REQ-115-02 / REQ-308-05 / TC-115-02E / TC-308-05B
   test.each([
     [
       "check has a suffix",
@@ -1306,7 +1336,7 @@ describe("check entry structure", () => {
     }).toThrow();
   });
 
-  // REQ-115-02 / TC-115-02F
+  // REQ-115-02 / REQ-308-06 / TC-115-02F / TC-308-06A
   test.each([...hookExecutionLimitProperties])(
     "should reject pre-push when the hook has the %s execution limit",
     (property) => {
@@ -1327,7 +1357,7 @@ describe("check entry structure", () => {
     }
   );
 
-  // REQ-115-02 / TC-115-02G
+  // REQ-115-02 / REQ-308-06 / TC-115-02G / TC-308-06B
   test.each(
     Object.keys(prePushCommands).flatMap((commandName) =>
       commandExecutionLimitProperties.map(
