@@ -1,8 +1,7 @@
 # 2 段構え: pre-commit は整形だけ、検査は pre-push が見る（check + workflow-doctor）。
 #
-# 整形はリポジトリ全体を対象にする（script 側が `.` を持つ）。glob は「その種類の
-# ファイルが staged のときだけ走らせる」トリガとしてのみ使い、対象範囲は絞らない。
-# oxfmt は冪等なので、範囲を広げても壊れるものが無い。
+# 整形対象は commit に含める staged files に限定する。冪等性は整形結果の性質であり、
+# commit 対象外の未 staged 差分まで書き換えてよい根拠にはならない。
 #
 # lint はここに置かない。`oxlint --fix .` は修正しきれないエラーが**どこかに**残れば
 # 非 0 で終わるため、commit と無関係なファイルのエラーで commit 自体が止まる。
@@ -11,11 +10,11 @@ pre-commit:
   commands:
     format-fix:
       glob: "*.{js,jsx,ts,tsx,json,jsonc,md,yml,yaml}"
-      run: bun run format:fix
+      run: bun run --no-install oxfmt --write -- {staged_files}
       stage_fixed: true
     format-nix-fix:
       glob: "*.nix"
-      run: bun run format:nix:fix
+      run: nixfmt -- {staged_files}
       stage_fixed: true
 
 # push 前に CI のゲート（check）とローカル専用の workflow-doctor を通す。

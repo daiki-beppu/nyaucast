@@ -334,6 +334,66 @@ function combinedOutput(result: CommandResult): string {
   return result.stdout.toString() + result.stderr.toString();
 }
 
+interface FormatterWorktree {
+  worktree: string;
+}
+
+function createFormatterWorktree(
+  directory: string,
+  trackedFiles: Record<string, string>
+): FormatterWorktree {
+  const checkout = join(directory, "checkout");
+  const worktree = join(directory, "worktree");
+  createRealProjectCheckout(checkout);
+
+  for (const [path, content] of Object.entries(trackedFiles)) {
+    writeFileSync(join(checkout, path), content);
+  }
+  if (Object.keys(trackedFiles).length > 0) {
+    commitFixture(checkout);
+  }
+
+  runGit(checkout, ["worktree", "add", worktree]);
+  expectCommandSucceeded(enterFixtureDevShell(directory, worktree));
+  expect(existsSync(join(checkout, ".git", "hooks", "pre-commit"))).toBeTrue();
+
+  return { worktree };
+}
+
+function commitInDevShell(
+  fixtureRoot: string,
+  worktree: string,
+  message: string
+): CommandResult {
+  return runFixtureInDevShell(fixtureRoot, worktree, [
+    "git",
+    ...gitIdentityArguments,
+    "commit",
+    "-m",
+    message,
+  ]);
+}
+
+function readGitOutput(directory: string, args: string[]): string {
+  const result = runCommand(
+    gitExecutablePath(),
+    args,
+    directory,
+    developerEnvironment
+  );
+  expectCommandSucceeded(result);
+  return result.stdout.toString();
+}
+
+function installFailingFormatterStub(
+  path: string,
+  sentinelVariable: string
+): void {
+  rmSync(path, { force: true });
+  writeFileSync(path, `#!/bin/sh\n: > "\${${sentinelVariable}}"\nexit 91\n`);
+  chmodSync(path, 0o755);
+}
+
 function snapshotTree(root: string): TreeEntry[] {
   const entries: TreeEntry[] = [];
 
@@ -791,49 +851,216 @@ describe.serial.skipIf(prerequisitesUnavailable)("devShell setup", () => {
     });
   });
 
-  test("[REQ-105-03][REQ-186-02] should run the actual pre-commit formatters in a fresh worktree", () => {
+  test("[REQ-105-03][REQ-307-02][TC-307-02A] should format, restage, and commit a staged Oxfmt file", () => {
     withDevShellFixture((directory) => {
-      const checkout = join(directory, "checkout");
-      const worktree = join(directory, "worktree");
-      createRealProjectCheckout(checkout);
-      // worktree の .git はディレクトリではなくファイルで、hook は共有の common dir
-      // 側に入る。この経路を bun install が扱えることが要件 3 の成立条件。
-      runGit(checkout, ["worktree", "add", worktree]);
-
-      const entered = enterFixtureDevShell(directory, worktree);
-      expectCommandSucceeded(entered);
-      const hook = join(checkout, ".git", "hooks", "pre-commit");
-      expect(existsSync(hook)).toBeTrue();
-
+      const { worktree } = createFormatterWorktree(directory, {});
       writeFileSync(join(worktree, "demo.ts"), unformattedSource);
+      runGit(worktree, ["add", "demo.ts"]);
+
+      const committed = commitInDevShell(directory, worktree, "demo");
+
+      expectCommandSucceeded(committed);
+      expect(readFileSync(join(worktree, "demo.ts"), "utf-8")).not.toBe(
+        unformattedSource
+      );
+      runGit(worktree, ["diff", "--exit-code", "HEAD", "--", "demo.ts"]);
+    });
+  });
+
+  test("[REQ-186-02][REQ-307-02][TC-307-02B] should format, restage, and commit a staged Nixfmt file", () => {
+    withDevShellFixture((directory) => {
+      const { worktree } = createFormatterWorktree(directory, {});
       const flakePath = join(worktree, "flake.nix");
       const unformattedFlake = readFileSync(flakePath, "utf-8").replace(
         'description = "tayk development environment";',
         'description    =    "tayk development environment";'
       );
       writeFileSync(flakePath, unformattedFlake);
-      runGit(worktree, ["add", "demo.ts", "flake.nix"]);
-      const committed = runFixtureInDevShell(directory, worktree, [
-        "git",
-        ...gitIdentityArguments,
-        "commit",
-        "-m",
-        "demo",
-      ]);
+      runGit(worktree, ["add", "flake.nix"]);
+
+      const committed = commitInDevShell(directory, worktree, "flake");
 
       expectCommandSucceeded(committed);
-      expect(readFileSync(join(worktree, "demo.ts"), "utf-8")).not.toBe(
-        unformattedSource
-      );
       expect(readFileSync(flakePath, "utf-8")).not.toBe(unformattedFlake);
+      runGit(worktree, ["diff", "--exit-code", "HEAD", "--", "flake.nix"]);
+    });
+  });
+
+  test("[REQ-307-01][TC-307-01A] should preserve an unstaged Oxfmt file and its index entry", () => {
+    withDevShellFixture((directory) => {
+      const draftPath = "draft.ts";
+      const draftBaseline = "export const draft = { a: 1, b: 2 };\n";
+      const { worktree } = createFormatterWorktree(directory, {
+        [draftPath]: draftBaseline,
+      });
+      writeFileSync(join(worktree, draftPath), unformattedSource);
+      writeFileSync(join(worktree, "commit.ts"), unformattedSource);
+      runGit(worktree, ["add", "commit.ts"]);
+      const workingTreeBefore = readFileSync(join(worktree, draftPath));
+      const indexBefore = readGitOutput(worktree, ["show", `:${draftPath}`]);
+
+      const committed = commitInDevShell(directory, worktree, "typescript");
+
+      expectCommandSucceeded(committed);
+      expect(readFileSync(join(worktree, draftPath))).toEqual(
+        workingTreeBefore
+      );
+      expect(readGitOutput(worktree, ["show", `:${draftPath}`])).toBe(
+        indexBefore
+      );
+    });
+  });
+
+  test("[REQ-307-01][TC-307-01B] should preserve an unstaged Nixfmt file and its index entry", () => {
+    withDevShellFixture((directory) => {
+      const draftPath = "draft.nix";
+      const draftBaseline = '{ value = "draft"; }\n';
+      const unformattedDraft = '{value    =    "draft";}\n';
+      const { worktree } = createFormatterWorktree(directory, {
+        [draftPath]: draftBaseline,
+      });
+      writeFileSync(join(worktree, draftPath), unformattedDraft);
+      writeFileSync(
+        join(worktree, "commit.nix"),
+        '{value    =    "commit";}\n'
+      );
+      runGit(worktree, ["add", "commit.nix"]);
+      const workingTreeBefore = readFileSync(join(worktree, draftPath));
+      const indexBefore = readGitOutput(worktree, ["show", `:${draftPath}`]);
+
+      const committed = commitInDevShell(directory, worktree, "nix");
+
+      expectCommandSucceeded(committed);
+      expect(readFileSync(join(worktree, draftPath))).toEqual(
+        workingTreeBefore
+      );
+      expect(readGitOutput(worktree, ["show", `:${draftPath}`])).toBe(
+        indexBefore
+      );
+    });
+  });
+
+  test("[REQ-307-02][TC-307-02C] should preserve staged path argument boundaries for both formatters", () => {
+    withDevShellFixture((directory) => {
+      const { worktree } = createFormatterWorktree(directory, {});
+      const spacedOxfmtPath = "space sample.ts";
+      const leadingHyphenNixfmtPath = "-sample.nix";
+      const quotedOxfmtPath = 'quote"name.ts';
+      const quotedNixfmtPath = 'quote"name.nix';
+      const unformattedNix = '{value    =    "sample";}\n';
+      writeFileSync(join(worktree, spacedOxfmtPath), unformattedSource);
+      writeFileSync(join(worktree, leadingHyphenNixfmtPath), unformattedNix);
+      writeFileSync(join(worktree, quotedOxfmtPath), unformattedSource);
+      writeFileSync(join(worktree, quotedNixfmtPath), unformattedNix);
+      runGit(worktree, [
+        "add",
+        "--",
+        spacedOxfmtPath,
+        leadingHyphenNixfmtPath,
+        quotedOxfmtPath,
+        quotedNixfmtPath,
+      ]);
+
+      const committed = commitInDevShell(directory, worktree, "paths");
+
+      expectCommandSucceeded(committed);
+      for (const path of [spacedOxfmtPath, quotedOxfmtPath]) {
+        expect(readFileSync(join(worktree, path), "utf-8")).not.toBe(
+          unformattedSource
+        );
+      }
+      for (const path of [leadingHyphenNixfmtPath, quotedNixfmtPath]) {
+        expect(readFileSync(join(worktree, path), "utf-8")).not.toBe(
+          unformattedNix
+        );
+      }
       runGit(worktree, [
         "diff",
         "--exit-code",
         "HEAD",
         "--",
-        "demo.ts",
-        "flake.nix",
+        spacedOxfmtPath,
+        leadingHyphenNixfmtPath,
+        quotedOxfmtPath,
+        quotedNixfmtPath,
       ]);
+    });
+  });
+
+  test("[REQ-307-03][TC-307-03A] should stop the commit without changing HEAD or index when Oxfmt fails", () => {
+    withDevShellFixture((directory) => {
+      const { worktree } = createFormatterWorktree(directory, {});
+      const invalidPath = "broken.ts";
+      writeFileSync(join(worktree, invalidPath), "export const = ;\n");
+      runGit(worktree, ["add", invalidPath]);
+      const headBefore = readGitOutput(worktree, ["rev-parse", "HEAD"]);
+      const indexBefore = readGitOutput(worktree, ["show", `:${invalidPath}`]);
+
+      const committed = commitInDevShell(directory, worktree, "broken ts");
+
+      expect(committed.exitCode).not.toBe(0);
+      expect(readGitOutput(worktree, ["rev-parse", "HEAD"])).toBe(headBefore);
+      expect(readGitOutput(worktree, ["show", `:${invalidPath}`])).toBe(
+        indexBefore
+      );
+    });
+  });
+
+  test("[REQ-307-03][TC-307-03B] should stop the commit without changing HEAD or index when Nixfmt fails", () => {
+    withDevShellFixture((directory) => {
+      const { worktree } = createFormatterWorktree(directory, {});
+      const invalidPath = "broken.nix";
+      writeFileSync(join(worktree, invalidPath), "let\n");
+      runGit(worktree, ["add", invalidPath]);
+      const headBefore = readGitOutput(worktree, ["rev-parse", "HEAD"]);
+      const indexBefore = readGitOutput(worktree, ["show", `:${invalidPath}`]);
+
+      const committed = commitInDevShell(directory, worktree, "broken nix");
+
+      expect(committed.exitCode).not.toBe(0);
+      expect(readGitOutput(worktree, ["rev-parse", "HEAD"])).toBe(headBefore);
+      expect(readGitOutput(worktree, ["show", `:${invalidPath}`])).toBe(
+        indexBefore
+      );
+    });
+  });
+
+  test("[REQ-307-04][TC-307-04A] should skip both formatters when no staged file matches their globs", () => {
+    withDevShellFixture((directory) => {
+      const { worktree } = createFormatterWorktree(directory, {});
+      const binaryDirectory = join(worktree, "node_modules", ".bin");
+      const oxfmtSentinel = join(worktree, ".oxfmt-ran");
+      const nixfmtSentinel = join(worktree, ".nixfmt-ran");
+      installFailingFormatterStub(
+        join(binaryDirectory, "oxfmt"),
+        "OXFMT_SENTINEL"
+      );
+      installFailingFormatterStub(
+        join(binaryDirectory, "nixfmt"),
+        "NIXFMT_SENTINEL"
+      );
+      writeFileSync(join(worktree, "notes.txt"), "notes\n");
+      runGit(worktree, ["add", "notes.txt"]);
+      const inheritedPath = developerEnvironment["PATH"];
+      if (inheritedPath === undefined) {
+        throw new Error("The devShell integration test requires PATH");
+      }
+
+      const committed = runCommand(
+        gitExecutablePath(),
+        [...gitIdentityArguments, "commit", "-m", "notes"],
+        worktree,
+        {
+          ...developerEnvironment,
+          NIXFMT_SENTINEL: nixfmtSentinel,
+          OXFMT_SENTINEL: oxfmtSentinel,
+          PATH: `${binaryDirectory}:${inheritedPath}`,
+        }
+      );
+
+      expectCommandSucceeded(committed);
+      expect(existsSync(oxfmtSentinel)).toBeFalse();
+      expect(existsSync(nixfmtSentinel)).toBeFalse();
     });
   });
 
