@@ -299,6 +299,10 @@ function runPublishDecision(
   });
 }
 
+function markDependenciesAvailable(cwd: string): void {
+  mkdirSync(join(cwd, "node_modules"));
+}
+
 function npmCalls(path: string): string[] {
   if (!existsSync(path)) {
     return [];
@@ -487,6 +491,7 @@ describe("release ancestor guard", () => {
         repository.main
       );
       const stub = installNpmStub(directory);
+      markDependenciesAvailable(runner);
 
       const result = runPublishDecision(
         environment,
@@ -518,6 +523,7 @@ describe("release ancestor guard", () => {
         repository.main
       );
       const stub = installNpmStub(directory);
+      markDependenciesAvailable(runner);
 
       const guard = runReleaseGuard(environment, runner, repository.main);
       expect(guard.exitCode).toBe(0);
@@ -550,6 +556,7 @@ describe("release ancestor guard", () => {
         repository.taggedCommit
       );
       const stub = installNpmStub(directory);
+      markDependenciesAvailable(runner);
 
       expect(repository.taggedCommit).toBe(repository.main);
       const guard = runReleaseGuard(
