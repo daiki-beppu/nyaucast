@@ -60,8 +60,8 @@
                   if [ ! -d "$tayk_root/node_modules" ]; then
                     echo "tayk: 依存を導入しています (bun install)…" >&2
                   fi
-                  if ! bun install --cwd "$tayk_root" --frozen-lockfile --silent; then
-                    echo "tayk: bun install --frozen-lockfile が失敗しました。package.json と bun.lock の差分を解消してから bun install を実行してください。" >&2
+                  if ! bun install --cwd "$tayk_root" --frozen-lockfile; then
+                    echo "tayk: bun install --frozen-lockfile が失敗しました。Bun の出力で原因を確認し、lockfile の更新が必要なら bun install を実行してください。" >&2
                   fi
                 else
                   echo "tayk: Git リポジトリの package.json から tayk を識別できないため、依存を導入しません。" >&2
