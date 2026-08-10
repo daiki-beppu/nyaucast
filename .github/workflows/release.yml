@@ -34,14 +34,16 @@ jobs:
         run: bash .github/scripts/check-release-ancestor.sh "$GITHUB_SHA" origin/main
       - name: Setup Nix
         uses: ./.github/actions/setup-nix
-      - name: Install dependencies with frozen-lockfile
-        run: nix develop --command bun install --frozen-lockfile
       - name: Publish package
         env:
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
           # shellcheck disable=SC2016
           nix develop --command bash -euc '
+            if [ ! -d node_modules ]; then
+              echo "node_modules is unavailable after entering the development shell" >&2
+              exit 1
+            fi
             if [ "$DRY_RUN" = "true" ]; then
               npm publish --dry-run
               exit 0

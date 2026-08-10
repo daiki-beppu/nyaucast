@@ -1,5 +1,13 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -288,6 +296,127 @@ function validateCiWorkflow(
     return extractJobs(requireRecordProperty(relatedWorkflow, "jobs", "jobs"));
   });
   validateWorkflowCommands([parsedJobs, ...relatedJobs], actionSources);
+}
+
+function publishRunCommands(source: string): string[] {
+  const workflow = parseYamlRecord({
+    expectedShape: "a release workflow object",
+    relativePath: ".github/workflows/release.yml",
+    source,
+  });
+  return readWorkflowJob(workflow, "publish").steps.flatMap((step, index) => {
+    const run = readStepRun(step, `jobs.publish.steps[${index}]`);
+    return run === undefined ? [] : [run];
+  });
+}
+
+function executableShellLines(command: string): string[] {
+  return command
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line !== "" && !line.startsWith("#"));
+}
+
+function extractPublishInlineScript(commands: readonly string[]): string {
+  const publishCommand = commands.find((command) =>
+    /\bnpm publish\b/.test(command)
+  );
+  if (publishCommand === undefined) {
+    throw new Error("publish job must contain npm publish");
+  }
+  const match = /nix develop --command bash -euc '\n([\s\S]*?)\n\s*'\s*$/.exec(
+    publishCommand
+  );
+  if (match?.[1] === undefined) {
+    throw new Error(
+      "publish must run in a nix develop bash -euc inline script"
+    );
+  }
+  return match[1];
+}
+
+function validateReleasePublishStructure(source: string): string {
+  const commands = publishRunCommands(source);
+  const executableCommands = commands.flatMap(executableShellLines).join("\n");
+  const devShellEntries = executableCommands.match(/\bnix\s+develop\b/g) ?? [];
+  if (devShellEntries.length !== 1) {
+    throw new Error("publish job must enter nix develop exactly once");
+  }
+  if (/\bbun\s+install\b/.test(executableCommands)) {
+    throw new Error("publish job must not install dependencies explicitly");
+  }
+
+  const inlineScript = extractPublishInlineScript(commands);
+  const firstStatement = executableShellLines(inlineScript)[0];
+  if (
+    firstStatement === undefined ||
+    !/^if\s+\[\s+!\s+-d\s+(?:\.\/)?node_modules\s+\];\s+then$/.test(
+      firstStatement
+    )
+  ) {
+    throw new Error(
+      "the node_modules directory guard must be the first statement"
+    );
+  }
+  return inlineScript;
+}
+
+function releasePublishFixture(runCommands: readonly string[]): string {
+  return JSON.stringify({
+    jobs: {
+      publish: {
+        steps: runCommands.map((run) => ({ run })),
+      },
+    },
+  });
+}
+
+function guardedPublishCommand(prefix = ""): string {
+  return `nix develop --command bash -euc '\n${prefix}if [ ! -d node_modules ]; then\n  echo "node_modules is required" >&2\n  exit 1\nfi\nif [ "$DRY_RUN" = "true" ]; then\n  npm publish --dry-run\n  exit 0\nfi\nnpm publish\n'`;
+}
+
+function installCommandStub(directory: string, command: "bun" | "npm"): void {
+  const executable = join(directory, command);
+  writeFileSync(
+    executable,
+    `#!/bin/bash\nprintf "%s\\n" "${command} $*" >> "$COMMAND_CALL_LOG"\n`
+  );
+  chmodSync(executable, 0o755);
+}
+
+interface PublishScriptResult {
+  exitCode: number;
+  stderr: NonNullable<ReturnType<typeof Bun.spawnSync>["stderr"]>;
+}
+
+function runPublishScript(
+  script: string,
+  cwd: string,
+  stubDirectory: string,
+  callLog: string
+): PublishScriptResult {
+  const result = Bun.spawnSync(["/bin/bash", "-euc", script], {
+    cwd,
+    env: {
+      ...process.env,
+      COMMAND_CALL_LOG: callLog,
+      DRY_RUN: "true",
+      GITHUB_REF_NAME: "v0.0.0",
+      PATH: stubDirectory,
+    },
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  if (result.stderr === undefined) {
+    throw new Error("publish script stderr pipe was not available");
+  }
+  return { exitCode: result.exitCode, stderr: result.stderr };
+}
+
+function commandCalls(callLog: string): string[] {
+  return existsSync(callLog)
+    ? readFileSync(callLog, "utf-8").trim().split("\n").filter(Boolean)
+    : [];
 }
 
 function expectInvalidCiConfiguration(
@@ -1615,6 +1744,187 @@ describe("check entry structure", () => {
     expect(() => {
       validateFacetGate(facet, "## 手順", rootFacetCommandScope);
     }).toThrow();
+  });
+});
+
+describe("release publish dependency boundary", () => {
+  const releaseSource = readRepositoryFile(".github/workflows/release.yml");
+
+  // REQ-311-01 / TC-311-01A
+  test("should enter the devShell exactly once in the publish job", () => {
+    expect(() => validateReleasePublishStructure(releaseSource)).not.toThrow();
+  });
+
+  // REQ-311-01 / TC-311-01A
+  test("should reject a publish job without a devShell entry", () => {
+    const missingEntry = releasePublishFixture([
+      guardedPublishCommand().replace("nix develop --command ", ""),
+    ]);
+
+    expect(() => validateReleasePublishStructure(missingEntry)).toThrow();
+  });
+
+  // REQ-311-06 / TC-311-06A
+  test("should reject a second devShell entry", () => {
+    const singleEntry = releasePublishFixture([guardedPublishCommand()]);
+    const duplicateEntry = releasePublishFixture([
+      "nix develop --command true",
+      guardedPublishCommand(),
+    ]);
+
+    expect(() => validateReleasePublishStructure(singleEntry)).not.toThrow();
+    expect(() => validateReleasePublishStructure(duplicateEntry)).toThrow();
+  });
+
+  // REQ-311-02 / TC-311-02A
+  test("should have no explicit bun install command in the publish job", () => {
+    const commands =
+      publishRunCommands(releaseSource).flatMap(executableShellLines);
+
+    expect(commands.join("\n")).not.toMatch(/\bbun\s+install\b/);
+  });
+
+  // REQ-311-02 / TC-311-02B
+  test.each([
+    [
+      "separate step",
+      ["bun install --frozen-lockfile", guardedPublishCommand()],
+    ],
+    [
+      "inline command",
+      [guardedPublishCommand("bun install --frozen-lockfile\n")],
+    ],
+  ] as const)(
+    "should reject an explicit install in a %s",
+    (_case, commands) => {
+      expect(() =>
+        validateReleasePublishStructure(releasePublishFixture(commands))
+      ).toThrow();
+    }
+  );
+
+  // REQ-311-03 / TC-311-03C
+  test("should allow comments and blank lines before the dependency guard", () => {
+    const source = releasePublishFixture([
+      guardedPublishCommand("\n# dependency boundary\n"),
+    ]);
+
+    expect(() => validateReleasePublishStructure(source)).not.toThrow();
+  });
+
+  // REQ-311-03 / TC-311-03C
+  test.each([
+    ["true command", "true\n"],
+    ["diagnostic command", 'echo "preparing" >&2\n'],
+    [
+      "dry-run branch",
+      'if [ "$DRY_RUN" = "true" ]; then\n  npm publish --dry-run\nfi\n',
+    ],
+  ] as const)(
+    "should reject a node_modules guard after a %s",
+    (_case, prefix) => {
+      const source = releasePublishFixture([guardedPublishCommand(prefix)]);
+
+      expect(() => validateReleasePublishStructure(source)).toThrow();
+    }
+  );
+
+  // REQ-311-05e / TC-311-05E
+  test("should require the guard and publish decision in a bash -euc inline script", () => {
+    const changedShell = guardedPublishCommand().replace(
+      "bash -euc",
+      "bash -uc"
+    );
+
+    expect(() =>
+      validateReleasePublishStructure(releasePublishFixture([changedShell]))
+    ).toThrow();
+  });
+
+  // REQ-311-03 / TC-311-03A / TC-311-03D
+  test("should fail without dependencies before commands or workspace mutations", () => {
+    const script = extractPublishInlineScript(
+      publishRunCommands(releaseSource)
+    );
+    withTemporaryDirectory("tayk-release-dependency-", (directory) => {
+      const workspace = join(directory, "workspace");
+      const stubs = join(directory, "bin");
+      const callLog = join(directory, "calls.log");
+      mkdirSync(workspace);
+      mkdirSync(stubs);
+      installCommandStub(stubs, "bun");
+      installCommandStub(stubs, "npm");
+      const before = readdirSync(workspace);
+
+      const result = runPublishScript(script, workspace, stubs, callLog);
+
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr.toString().trim()).not.toBe("");
+      expect(commandCalls(callLog)).toEqual([]);
+      expect(readdirSync(workspace)).toEqual(before);
+    });
+  });
+
+  // REQ-311-03 / TC-311-03B
+  test.each(["file", "broken-symlink"] as const)(
+    "should fail closed when node_modules is a %s",
+    (entryKind) => {
+      const script = extractPublishInlineScript(
+        publishRunCommands(releaseSource)
+      );
+      withTemporaryDirectory("tayk-release-dependency-", (directory) => {
+        const workspace = join(directory, "workspace");
+        const stubs = join(directory, "bin");
+        const callLog = join(directory, "calls.log");
+        mkdirSync(workspace);
+        mkdirSync(stubs);
+        installCommandStub(stubs, "bun");
+        installCommandStub(stubs, "npm");
+        const nodeModules = join(workspace, "node_modules");
+        if (entryKind === "file") {
+          writeFileSync(nodeModules, "not a directory\n");
+        } else {
+          symlinkSync(join(directory, "missing"), nodeModules);
+        }
+
+        const result = runPublishScript(script, workspace, stubs, callLog);
+
+        expect(result.exitCode).not.toBe(0);
+        expect(result.stderr.toString().trim()).not.toBe("");
+        expect(commandCalls(callLog)).toEqual([]);
+      });
+    }
+  );
+
+  // REQ-311-03 / TC-311-03B / F-0004
+  test("should fail closed when node_modules cannot be resolved through its parent", () => {
+    const script = extractPublishInlineScript(
+      publishRunCommands(releaseSource)
+    );
+    withTemporaryDirectory("tayk-release-dependency-", (directory) => {
+      const workspace = join(directory, "workspace");
+      const stubs = join(directory, "bin");
+      const callLog = join(directory, "calls.log");
+      const restricted = join(directory, "restricted");
+      const dependencyDirectory = join(restricted, "dependencies");
+      mkdirSync(workspace);
+      mkdirSync(stubs);
+      mkdirSync(dependencyDirectory, { recursive: true });
+      installCommandStub(stubs, "bun");
+      installCommandStub(stubs, "npm");
+      symlinkSync(dependencyDirectory, join(workspace, "node_modules"));
+      chmodSync(restricted, 0o000);
+
+      try {
+        const result = runPublishScript(script, workspace, stubs, callLog);
+
+        expect(result.exitCode).not.toBe(0);
+        expect(result.stderr.toString().trim()).not.toBe("");
+        expect(commandCalls(callLog)).toEqual([]);
+      } finally {
+        chmodSync(restricted, 0o700);
+      }
+    });
   });
 });
 
