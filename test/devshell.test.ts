@@ -313,6 +313,48 @@ function enterFixtureDevShell(fixtureRoot: string, cwd: string): CommandResult {
   return runFixtureInDevShell(fixtureRoot, cwd, ["bun", "--version"]);
 }
 
+interface FailedLefthookInstall {
+  entered: CommandResult;
+  hooksPath: string;
+  nodeModulesExistedBefore: boolean;
+  originalMode: number;
+  taykRoot: string;
+}
+
+function withFailedLefthookInstall(
+  assertResult: (result: FailedLefthookInstall) => void
+): string {
+  let fixturePath: string | undefined;
+  withDevShellFixture((directory) => {
+    fixturePath = directory;
+    const taykRoot = join(directory, "tayk");
+    createTaykRepository(taykRoot);
+    const hooksPath = join(taykRoot, ".git", "hooks");
+    const nodeModulesExistedBefore = existsSync(join(taykRoot, "node_modules"));
+    const originalMode = lstatSync(hooksPath).mode & 0o777;
+    let entered: CommandResult;
+
+    try {
+      chmodSync(hooksPath, 0o555);
+      expect(lstatSync(hooksPath).mode & 0o777).toBe(0o555);
+      entered = enterFixtureDevShell(directory, taykRoot);
+    } finally {
+      chmodSync(hooksPath, originalMode);
+    }
+    assertResult({
+      entered,
+      hooksPath,
+      nodeModulesExistedBefore,
+      originalMode,
+      taykRoot,
+    });
+  });
+  if (fixturePath === undefined) {
+    throw new Error("The devShell fixture callback did not run");
+  }
+  return fixturePath;
+}
+
 function enterIsolatedDevShell(flakeRoot: string, cwd: string): CommandResult {
   return runCommand(
     nixExecutablePath(),
@@ -493,6 +535,39 @@ function expectRejectedWithoutMutation(
 }
 
 describe.serial.skipIf(prerequisitesUnavailable)("devShell setup", () => {
+  test("[REQ-306-01][TC-306-01] rejects entry when Lefthook installation fails", () => {
+    withFailedLefthookInstall(({ entered }) => {
+      expect(entered.exitCode).not.toBe(0);
+    });
+  });
+
+  test("[REQ-306-02][TC-306-02] diagnoses rejected entry on stderr", () => {
+    withFailedLefthookInstall(({ entered }) => {
+      expect(entered.stderr.toString()).toContain(
+        "無検査の push を防ぐため devShell へ入場できません"
+      );
+    });
+  });
+
+  test("[REQ-306-03][TC-306-03] does not install dependencies after Lefthook failure", () => {
+    withFailedLefthookInstall(({ nodeModulesExistedBefore, taykRoot }) => {
+      expect(nodeModulesExistedBefore).toBeFalse();
+      expect(existsSync(join(taykRoot, "node_modules"))).toBeFalse();
+    });
+  });
+
+  test("[REQ-306-06a][TC-306-06a] restores Git hooks permissions after rejected entry", () => {
+    withFailedLefthookInstall(({ hooksPath, originalMode }) => {
+      expect(lstatSync(hooksPath).mode & 0o777).toBe(originalMode);
+    });
+  });
+
+  test("[REQ-306-06b][TC-306-06b] removes the rejected entry fixture", () => {
+    const fixturePath = withFailedLefthookInstall(() => {});
+
+    expect(existsSync(fixturePath)).toBeFalse();
+  });
+
   test("[REQ-105-01] does not create node_modules in an unrelated Git repository", () => {
     withDevShellFixture((directory) => {
       const unrelated = join(directory, "unrelated");
