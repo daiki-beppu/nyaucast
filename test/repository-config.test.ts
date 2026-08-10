@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { parse } from "yaml";
@@ -8,6 +8,15 @@ const packageRoot = resolve(import.meta.dirname, "..");
 const packageJsonPath = join(packageRoot, "package.json");
 const dependabotPath = join(packageRoot, ".github", "dependabot.yml");
 const expectedRepositoryUrl = "https://github.com/daiki-beppu/tayk.git";
+const renovateConfigPaths = [
+  "renovate.json",
+  "renovate.json5",
+  ".renovaterc",
+  ".renovaterc.json",
+  ".renovaterc.json5",
+  ".github/renovate.json",
+  ".github/renovate.json5",
+];
 
 function requireRecord(
   value: unknown,
@@ -79,10 +88,28 @@ describe("repository configuration", () => {
     expect(directories).toEqual(["/", "/.github/actions/*"]);
   });
 
-  test("should declare exactly one dependency update bot", () => {
+  test.each(renovateConfigPaths)(
+    "should reject Renovate configuration at %s",
+    (renovateConfigPath) => {
+      const absoluteConfigPath = join(packageRoot, renovateConfigPath);
+
+      // Renovate と Dependabot が同じ ecosystem を二重に見ると、同じ更新で PR が
+      // 2 本立ち、片方（Renovate）は automerge で無レビューのまま入る。
+      expect(existsSync(absoluteConfigPath)).toBeFalse();
+    }
+  );
+
+  test("should reject the Renovate key in package.json", () => {
+    const packageJson = requireRecord(
+      JSON.parse(readFileSync(packageJsonPath, "utf-8")),
+      "package.json"
+    );
+
+    const hasRenovateConfig = Object.hasOwn(packageJson, "renovate");
+
     // Renovate と Dependabot が同じ ecosystem を二重に見ると、同じ更新で PR が
     // 2 本立ち、片方（Renovate）は automerge で無レビューのまま入る。
-    expect(readdirSync(packageRoot)).not.toContain("renovate.json");
+    expect(hasRenovateConfig).toBeFalse();
   });
 
   test("should declare the repository used by npm trusted publishing", () => {
