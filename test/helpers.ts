@@ -50,12 +50,12 @@ export function withTemporaryDirectory(
     ? prefix
     : join(tmpdir(), prefix);
   const createdDirectory = mkdtempSync(temporaryPathPrefix);
-  const directory = normalize(createdDirectory);
 
   try {
+    const directory = normalize(createdDirectory);
     execute(directory);
   } finally {
-    rmSync(directory, { force: true, recursive: true });
+    rmSync(createdDirectory, { force: true, recursive: true });
   }
 }
 
