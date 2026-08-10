@@ -4,6 +4,37 @@ Issues and PRDs for this repo live as GitHub issues. Use the `gh` CLI for all op
 
 ## 実装ワークフロー: takt 前提
 
+### host 前提: takt 0.55.1
+
+takt は npm registry で配布される host 所有の開発 orchestration tool である。repository の devShell が供給する npm は、既定の global prefix が読み取り専用の Nix store を指すため、そのままでは global package を導入できない。初回だけ、次の2行を host shell が起動時に読む profile（例: `~/.zprofile` または `~/.profile`）へ追加し、同じ2行を現在の shell でも実行する:
+
+```sh
+export npm_config_prefix="$HOME/.local"
+export PATH="$npm_config_prefix/bin:$PATH"
+```
+
+これは npm の global package と実行ファイルを developer 所有の `~/.local` に置く host 設定であり、repository の `.envrc` へは追加しない。設定後、導入先を作成して npm の解決結果と書き込み可否を確認し、要求版を導入する:
+
+```sh
+mkdir -p "$npm_config_prefix"
+test "$(npm prefix -g)" = "$npm_config_prefix"
+test -w "$(npm prefix -g)"
+npm install -g takt@0.55.1
+```
+
+この npm 操作は host tool の導入だけを対象とし、[ADR-0003](../adr/0003-bun-only-distribution.md) が定める repository の依存管理境界の外にある。tayk repository の dependency install、package script、build、runtime、test runner に npm を使う許可ではなく、これらは引き続き Bun のみを使う。
+
+pipeline を開始する前に、次の preflight を実行する:
+
+```sh
+command -v takt
+takt --version
+```
+
+`command -v takt` が `$npm_config_prefix/bin/takt` を返し、`takt --version` が正確に `0.55.1` を返す場合だけ、後続の pipeline 手順へ進む。不在、別の場所にある takt の解決、または version 不一致の場合は、profile の2行を現在の shell に反映し、`npm prefix -g` が `$npm_config_prefix` を返して書き込み可能であることを確認してから、導入と preflight をやり直す。
+
+[ADR-0008](../adr/0008-takt-dedicated-workflow.md) により、takt は tayk の製品 runtime / package dependency ではなく、host が供給する開発 orchestration tool とする。takt の更新周期を repository の `flake.lock` に拘束しないため、devShell にも含めない。
+
 開発は takt メイン。ただし用途ごとに使う workflow / skill が異なるので、文脈に合わせて選ぶ:
 
 - **新機能・機能拡張の実装** — tayk 専用の **`tayk-feature`** workflow（ADR-0008）。detached HEAD の手動 worktree 内で `takt --pipeline --auto-pr -b issue-<N>-<slug> -w tayk-feature -i <N>`。
