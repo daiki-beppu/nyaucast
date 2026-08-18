@@ -301,8 +301,8 @@ function expectAbortWiringContract(): void {
   const contracts = [
     {
       abortConditions: {
-        final_gate: /^ABORT$/,
         intake: /^(?:blocked|ABORT)$/,
+        peer_review: /^ABORT$/,
         plan: /要件が不明確で計画を立てられない/,
       },
       path: paths.feature,
@@ -310,8 +310,8 @@ function expectAbortWiringContract(): void {
     {
       abortConditions: {
         diagnose: /再現条件または必要な証拠を取得できない|原因が複数/,
-        final_gate: /^ABORT$/,
         intake: /^(?:blocked|ABORT)$/,
+        peer_review: /^ABORT$/,
       },
       path: paths.fix,
     },
@@ -331,7 +331,7 @@ function expectAbortWiringContract(): void {
     );
     expect(
       requireRule(
-        requireStep(workflow, contract.path, "final_gate"),
+        requireStep(workflow, contract.path, "peer_review"),
         /^COMPLETE$/
       ).next
     ).toBe("spillover");

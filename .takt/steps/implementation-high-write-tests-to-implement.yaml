@@ -1,4 +1,5 @@
 name: write_tests
+capabilities: edit
 tags: [coding, test-planning]
 edit: true
 persona: coder
@@ -6,8 +7,8 @@ policy: [coding, testing]
 knowledge:
   [takt, architecture, unit-testing, e2e-testing, implementation-semantics]
 required_permission_mode: edit
-instruction: write-tests-first
+instruction: scenario-based-write-tests-first
 output_contracts:
   report:
     - name: test-report.md
-      format: test-report
+      format: scenario-based-test-report

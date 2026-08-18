@@ -2,10 +2,10 @@
 # provider / model / language はグローバル設定 (~/.takt/config.yaml) を継承する。
 #
 # 実装 workflow は tayk 専用の .takt/workflows/ を使う (ADR-0008):
-#   tayk-feature  — 新機能・機能拡張（intake → 計画 → テスト設計 → 設計レビュー →
-#                   test-first → 実装 → 7観点レビュー → 最終ゲート → spillover）
+#   tayk-feature  — 新機能・機能拡張（intake → scenario 付き計画 → テスト設計 → 設計レビュー →
+#                   test-first → 実装 → peer-review / adjudication / remediation / final-gate → spillover）
 #   tayk-fix      — バグ修正・回帰修正（intake → 診断 → 診断レビュー → 再現テスト →
-#                   原因修正 → 7観点レビュー → 最終ゲート → spillover）
+#                   原因修正 → peer-review / adjudication / remediation / final-gate → spillover）
 #   tayk-intake   — feature / fix 共通の intake（wayfinder map / ticket 対応）
 # 一般の計画・test-first・実装・レビュー・修正 prompt は takt から eject した
 # .takt/steps/ を使い、tayk 固有の gate / policy / knowledge だけを重ねる。

@@ -48,8 +48,7 @@ steps:
       - tayk-domain
     # review-readonly = Read / Glob / Grep / Bash / WebSearch / WebFetch。
     # gh CLI を使うため Bash が要る。編集は edit: false で禁じる。
-    provider_options:
-      extends: review-readonly
+    capabilities: readonly
     instruction: tayk-intake
     quality_gates:
       - 判定の根拠として issue / ticket の該当箇所を引用していること

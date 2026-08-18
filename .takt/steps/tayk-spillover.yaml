@@ -6,8 +6,7 @@ session: compact
 persona: tayk-delivery-operator
 policy: tayk-scope-spillover
 knowledge: tayk-domain
-provider_options:
-  extends: review-readonly
+capabilities: readonly
 instruction: tayk-spillover
 output_contracts:
   report:

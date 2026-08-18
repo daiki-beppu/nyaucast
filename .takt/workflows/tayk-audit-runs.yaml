@@ -70,8 +70,7 @@ steps:
       - review
     edit: false
     persona: planner
-    provider_options:
-      extends: review-readonly
+    capabilities: readonly
     instruction: tayk-audit-runs-plan
     output_contracts:
       report:
@@ -129,8 +128,7 @@ steps:
     edit: false
     persona: supervisor
     policy: review
-    provider_options:
-      extends: review-readonly
+    capabilities: readonly
     instruction: tayk-audit-runs-supervise
     pass_previous_response: false
     structured_output:
@@ -154,8 +152,7 @@ steps:
     edit: false
     persona: architecture-reviewer
     policy: review
-    provider_options:
-      extends: review-readonly
+    capabilities: readonly
     instruction: tayk-audit-runs-review
     output_contracts:
       report:
@@ -172,8 +169,7 @@ steps:
     edit: true
     persona: tayk-delivery-operator
     required_permission_mode: edit
-    provider_options:
-      extends: edit
+    capabilities: edit
     instruction: tayk-audit-runs-publish
     pass_previous_response: false
     quality_gates:
@@ -197,8 +193,7 @@ steps:
     policy:
       - tayk-scope-spillover
     # gh issue create / comment を使うため Bash が要る。ソースは触らないので edit: false
-    provider_options:
-      extends: review-readonly
+    capabilities: readonly
     session: refresh
     pass_previous_response: false
     instruction: tayk-audit-runs-file

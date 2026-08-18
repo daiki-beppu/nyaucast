@@ -2,7 +2,7 @@
 
 ## Status
 
-accepted (2026-08-04。旧 ADR-0008 の決定を、takt の現行 workflow / prompt contract に合わせてゼロベースで再構成)
+accepted (2026-08-18。takt 0.59.1 で廃止された Finding Contract を review-adjudication / verified remediation / final-gate へ移行)
 
 ## Context
 
@@ -13,12 +13,12 @@ tayk の開発 workflow には、汎用的な実装品質だけでなく次の�
 - fix は原因を特定し、修正前の red で診断の予測を検証してから原因を除く
 - issue の要求を安定 ID で計画、テスト、実装、レビューまで追跡する
 - ADR 逸脱を設計時と実装時に検出する
-- 並列レビューの finding を同一性付きで収束させる
+- 並列レビューの finding を family 単位で裁定し、検証付き修正で収束させる
 - スコープ外の発見を「ついで直し」にせず issue へ逃がす
 
 一方、計画、test-first、実装、レビュー、修正、最終判定の一般的な prompt contract を project 側で複製すると、takt 本体の改善から切り離される。実際、旧 workflow は個別修正を積み重ねて feature / fix がそれぞれ 700 行を超え、同じ reviewer と spillover の定義を複製し、loop monitor と step 固有上限を併用する状態になっていた。takt 更新時には callable workflow の step budget contract が変わり、全 workflow が doctor を通る前提も失われた。
 
-現行 takt は、root workflow が子 workflow を含む単一の `max_steps` を所有し、`workflow_call` は非加算の control node として扱う。また、`uses:` による reusable step fragment と `loop_monitors.ignore_steps` を提供する。builtin の開発 prompt は、completion contract の安定 ID、要求の出典、影響経路、test report、実装 report、finding family 単位のレビューと修正を共通契約として持つ。
+takt 0.59.1 は Finding Contract の設定・実行・永続化を廃止した。現行 builtin は reviewer の直後に `review-adjudication` を置き、finding を problem family へ裁定し、`development-remediation` が fix plan・修正・独立検証を行い、`final-gate` が要件充足と未解決 finding だけを最終判定する。feature では requirement scenario を計画とテストの対応表で追跡する。
 
 ## Decision
 
@@ -31,14 +31,14 @@ tayk の開発 workflow には、汎用的な実装品質だけでなく次の�
 
 両方とも linked issue を必須とし、`tayk-intake` callable workflow を最初に呼ぶ。`tayk-intake` は wayfinder map / ticket、未解消依存、未確定事項を検査し、着手不能なら `blocked` を返す。
 
-### 2. builtin を eject した step fragment を基礎にする
+### 2. 現行 builtin と project fragment の境界
 
-計画、再計画、test-first、実装レビュー、修正、Finding Contract final gate は、takt の `takt-default-high` / `review-fix-takt-default-high` から eject した `.takt/steps/` を使う。
+実装後の review・裁定・修正検証・最終判定は builtin `peer-review` callable を直接使う。これにより takt 本体の reviewer selection、review-adjudication、verified remediation、final-gate の改善を追随する。project 側に残す step fragment は、tayk 固有の設計・診断・spillover と、requirement scenario を使う計画 / test-first overlay に限る。
 
 project 側で変更してよいのは tayk 固有差分だけである。
 
 - plan / test / implement step に tayk の policy と knowledge を追加する
-- reviewer fragment に ADR 整合レビューを追加する
+- `peer-review` の policy / knowledge arguments に tayk ADR、domain、traceability を追加する
 - spillover を tayk 固有 fragment として追加する
 - feature の設計ゲート、fix の診断ゲートを workflow 本体に置く
 
@@ -54,8 +54,8 @@ builtin の一般 prompt を全文コピーした独自 facet は作らない。
 4. design review — architecture / ADR / test design の3並列
 5. write tests — takt builtin の test-first contract に従う
 6. implement — takt builtin の implementation contract に従う
-7. reviewers — 7観点の Finding Contract review
-8. final gate
+7. peer review → review-adjudication → verified remediation
+8. requirement-scenario final gate
 9. spillover
 
 設計レビューで実装方針の前提が崩れた場合は plan へ戻す。局所的な指摘は design fix でレポートだけを修正し、プロダクションコードには触れない。
@@ -69,7 +69,7 @@ builtin の一般 prompt を全文コピーした独自 facet は作らない。
 3. diagnosis review — diagnosis / ADR / regression design の3並列
 4. reproduce — 修正前にテストを書き、症状が診断の予測どおり red になることを確認する
 5. repair — maintenance prompt を基礎に、診断で特定した原因を除いて red を green にする
-6. reviewers — 7観点の Finding Contract review
+6. peer review → review-adjudication → verified remediation
 7. final gate
 8. spillover
 
@@ -85,21 +85,13 @@ takt builtin の completion contract ledger を tayk の要件追跡に採用す
 - テスト、実装、レビューは contract ごとの状態と証拠を記録する
 - 現行コードや既存テストは要件の出典ではなく、影響分析または保存すべき既存契約の証拠として扱う
 
+feature は各 completion contract を Given / When / Then の requirement scenario（`SCN-` ID）へ分解する。variant と数値境界を含む scenario を計画 report で列挙し、test report の対応表でテストへ紐付ける。scenario ID はコードやテスト名に埋め込まない。fix は診断固有の予測 ID と red 再現契約を維持する。
+
 ### 6. 実装レビュー
 
-feature / fix の root workflow が Finding Contract を宣言する。reviewer step は共有 fragment `.takt/steps/reviewers.yaml` とし、次の7観点を固定で実行する。
+feature / fix は同じ builtin `peer-review` callable を呼ぶ。既定の architecture、testing、coding、AI antipattern の固定 reviewer と、変更境界に応じて選ばれる security reviewer を使う。ADR 整合は実装前の専用 gate に加え、実装レビュー全体に `tayk-adr` / `tayk-domain` knowledge を注入して確認する。
 
-1. architecture
-2. AI antipattern
-3. coding
-4. implementation semantics
-5. contract lifecycle
-6. robustness
-7. ADR conformance
-
-reviewer は raw finding を報告し、engine の finding manager が同一性、重複、conflict、open / provisional / resolved を管理する。open finding またはレビュー異常がある状態を成功扱いしない。conflict は engine が注入する adjudication step へ送り、解消不能なら ABORT する。
-
-Finding Contract を project callable の内側へ移さない。親 root に ledger を置き、共有したい step 定義は callable ではなく fragment にする。これにより feature / fix の review 定義を1箇所に保ちながら、root の ledger と report namespace を維持する。
+reviewer の各 report はその round の finding 入力であり、`review-adjudication` が actionable / duplicate / false positive / out of scope を裁定して problem family へ集約する。修正対象 family は fix plan → fix → fix verifier を通り、再レビュー後に final-gate が要件充足と指摘解消を判定する。Finding Contract 時代の project ledger、synthetic manager、conflict step は持たない。
 
 ### 7. 有限停止
 
@@ -107,8 +99,8 @@ root workflow の `max_steps: 50` を最終停止保証とする。callable work
 
 局所ループは loop monitor で早期に検出する。
 
-- feature: design review ⇄ design fix、replan → implement、fix ⇄ reviewers
-- fix: diagnosis review ⇄ diagnosis fix、diagnose ⇄ diagnosis review、fix ⇄ reviewers
+- feature: design review ⇄ design fix、replan → implement（peer-review 内部の収束ループは builtin が所有）
+- fix: diagnosis review ⇄ diagnosis fix、diagnose ⇄ diagnosis review（peer-review 内部の収束ループは builtin が所有）
 
 最終ゲートなど任意に挟まる step は `ignore_steps` で論理 cycle から除外する。旧設計の `{step_iteration}` を自然言語 rule に埋め込む二重上限は使わない。
 
@@ -156,9 +148,9 @@ callable workflow の report は子 namespace に属し、親からファイル�
 
 ## Consequences
 
-- feature / fix 本体は旧定義より大幅に小さくなり、共通 reviewer / spillover は fragment 1箇所になる
+- feature / fix 本体は review loop の実装を builtin `peer-review` に委ね、project 側の古い reviewer / final-gate fragment を持たない
 - takt の prompt 改善を受ける基礎面と、tayk 固有契約の境界が明示される
-- eject 済み fragment は upstream builtin の自動更新を受けない。takt 更新時は clean な一時ディレクトリで同じ workflow を eject し、`.takt/steps/` の差分を確認して tayk 固有 overlay を再適用する
+- project に残す eject 済み fragment は upstream の自動更新を受けない。takt 更新時は対応する現行 builtin step / facet と差分を確認する
 - `.takt/steps/` は workflow / facets / schemas と同様に git 管理する
 - workflow の一般構造、facet / fragment 参照、遷移は `takt workflow doctor` を正書とする
 - prompt 合成は `takt prompt tayk-feature` / `takt prompt tayk-fix` で確認する
@@ -169,10 +161,10 @@ callable workflow の report は子 namespace に属し、親からファイル�
 ## Update procedure
 
 1. インストール済み `takt --version` と upstream の最新 tag / changelog を確認する
-2. clean な一時 Git repository で `takt eject takt-default-high` と `takt eject review-fix-takt-default-high` を実行する
-3. eject された `.takt/steps/` と本 repository の `.takt/steps/` を比較する
+2. `takt-experimental`、`peer-review`、`development-remediation` の現行定義と changelog を読む
+3. project の `.takt/steps/` が継承する builtin facet の存在と差分を確認する
 4. upstream の prompt / output contract / rule contract の変更を先に取り込み、その後で ADR reviewer と tayk policy / knowledge overlay を再適用する
-5. callable の budget、report namespace、Finding Contract、condition 構文の breaking change を確認する
+5. callable の budget、report namespace、review-adjudication / final-gate、capabilities、condition 構文の breaking change を確認する
 6. `takt workflow doctor`、両 prompt preview、`bun run check` を実行する
 7. 実 run の結果は `tayk-audit-runs` で観測し、構造問題はこの ADR と workflow を同じ変更で改訂する
 

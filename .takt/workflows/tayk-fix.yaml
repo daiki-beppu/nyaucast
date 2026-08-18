@@ -1,15 +1,8 @@
 name: tayk-fix
 description: >
   tayk の不具合修正 workflow。issue intake、原因診断と独立レビュー、修正前の red 再現、
-  root-cause repair、Finding Contract 付き専門レビュー、最終ゲート、spillover を行う。
-  実装レビューと修正の基礎プロンプトは takt 0.55 の eject 済み step fragment を使う。
-finding_contract:
-  ledger_path: .takt/findings/tayk-fix.json
-  raw_findings_path: .takt/findings/tayk-fix/raw
-  manager:
-    persona: findings-manager
-    instruction: findings-manager
-    output_contract: findings-manager
+  root-cause repair、専門レビューと指摘裁定、検証付き修正、要件充足の最終ゲート、
+  spillover を行う。
 workflow_config:
   provider_options:
     codex:
@@ -43,20 +36,6 @@ loop_monitors:
           next: diagnose
         - condition: 非生産的（同じ仮説と失敗を繰り返している）
           next: ABORT
-  - cycle: [fix, reviewers]
-    ignore_steps: [final_gate]
-    threshold: 3
-    judge:
-      persona: supervisor
-      instruction: loop-monitor-reviewers-fix-fc
-      rules:
-        - condition: 修正進捗があり、報告内容が収束中で、次の修正が実行可能である
-          next: fix
-        - condition: 修正未完了または報告未収束で、再診断により解消できる見込みがある
-          next: diagnose
-        - condition: 試行済みの再診断を踏まえても要件を満たす実現可能な方針がない
-          next: ABORT
-
 steps:
   - name: intake
     kind: workflow_call
@@ -77,8 +56,7 @@ steps:
     persona: planner
     policy: [existing-system-respect, tayk-traceability, tayk-toolchain]
     knowledge: [architecture, implementation-semantics, tayk-adr, tayk-domain]
-    provider_options:
-      extends: review-readonly
+    capabilities: readonly
     instruction: tayk-diagnose
     output_contracts:
       report:
@@ -109,8 +87,7 @@ steps:
             tayk-review-convergence,
           ]
         knowledge: [architecture, implementation-semantics, tayk-domain]
-        provider_options:
-          extends: review-readonly
+        capabilities: readonly
         instruction: tayk-review-diagnosis
         output_contracts:
           report:
@@ -127,8 +104,7 @@ steps:
         persona: tayk-adr-conformance-reviewer
         policy: [review, tayk-review-rescan, tayk-review-convergence]
         knowledge: [tayk-adr, tayk-domain]
-        provider_options:
-          extends: review-readonly
+        capabilities: readonly
         instruction: tayk-review-adr-conformance-gate
         output_contracts:
           report:
@@ -152,8 +128,7 @@ steps:
             tayk-review-convergence,
           ]
         knowledge: [unit-testing, e2e-testing]
-        provider_options:
-          extends: review-readonly
+        capabilities: readonly
         instruction: tayk-review-test-design
         output_contracts:
           report:
@@ -181,8 +156,7 @@ steps:
     policy:
       [existing-system-respect, tayk-traceability, tayk-conflict-escalation]
     knowledge: [architecture, implementation-semantics, tayk-adr]
-    provider_options:
-      extends: review-readonly
+    capabilities: readonly
     instruction: tayk-gate-fix
     rules:
       - condition: 全 finding に対応した
@@ -252,79 +226,78 @@ steps:
           format: maintenance-scope
     rules:
       - condition: 原因を除き、再現テストと既存回帰が green になった
-        next: reviewers
+        next: peer_review
       - condition: 修正が対症療法、ADR 衝突、または予測不一致になった
         next: diagnose
 
-  - name: reviewers
-    uses: reviewers
-    rules:
-      self:
-        - condition: when(findings.conflicts.count > 0 && findings.conflicts.unadjudicated.count > 0)
-          next: finding-conflict-adjudication
-        - condition: when(findings.conflicts.count > 0)
-          next: ABORT
-        - condition: when(findings.provisional.count > 0 && findings.conflicts.count == 0)
-          next: diagnose
-        - condition: all("approved", "AI特有の問題なし", "approved", "approved", "approved", "approved", "APPROVE") && when(findings.open.count == 0 && findings.provisional.count == 0 && findings.conflicts.count == 0)
-          next: final_gate
-        - condition: any("approved", "needs_fix", "AI特有の問題なし", "AI特有の問題あり", "APPROVE", "REJECT", "NEEDS_ADR_REVISION") && when(findings.open.count == 0 && findings.provisional.count == 0 && findings.conflicts.count == 0 && findings.reviewerAnomalies.count > 0)
-          next: final_gate
-        - condition: any("needs_fix", "AI特有の問題あり", "REJECT", "NEEDS_ADR_REVISION") && when(findings.conflicts.count == 0)
-          next: fix
-        - condition: when(findings.conflicts.count == 0 && findings.open.count > 0)
-          next: fix
-      parallel:
-        arch-review: [{ condition: approved }, { condition: needs_fix }]
-        ai-antipattern-review:
-          [{ condition: AI特有の問題なし }, { condition: AI特有の問題あり }]
-        coding-review: [{ condition: approved }, { condition: needs_fix }]
-        implementation-semantics-review:
-          [{ condition: approved }, { condition: needs_fix }]
-        contract-lifecycle-review:
-          [{ condition: approved }, { condition: needs_fix }]
-        robustness-review: [{ condition: approved }, { condition: needs_fix }]
-        adr-conformance-review:
-          [
-            { condition: APPROVE },
-            { condition: REJECT },
-            { condition: NEEDS_ADR_REVISION },
-          ]
-
-  - name: final_gate
-    uses: finding-contract-final-gate
+  - name: peer_review
+    kind: workflow_call
+    call: peer-review
+    args:
+      review_policy_additions:
+        [
+          existing-system-respect,
+          tayk-review-rescan,
+          tayk-review-convergence,
+          tayk-traceability,
+        ]
+      review_knowledge_additions:
+        [
+          architecture,
+          takt,
+          unit-testing,
+          e2e-testing,
+          implementation-semantics,
+          tayk-adr,
+          tayk-domain,
+        ]
+      plan_policy:
+        [
+          coding,
+          testing,
+          review,
+          existing-system-respect,
+          tayk-traceability,
+          tayk-toolchain,
+        ]
+      fix_policy:
+        [
+          coding,
+          testing,
+          existing-system-respect,
+          tayk-traceability,
+          tayk-scope-spillover,
+          tayk-conflict-escalation,
+          tayk-toolchain,
+        ]
+      fix_knowledge:
+        [takt, architecture, implementation-semantics, tayk-adr, tayk-domain]
+      verification_policy:
+        [
+          coding,
+          testing,
+          review,
+          existing-system-respect,
+          tayk-traceability,
+          tayk-toolchain,
+        ]
+      verification_knowledge:
+        [
+          takt,
+          architecture,
+          unit-testing,
+          e2e-testing,
+          implementation-semantics,
+          tayk-adr,
+          tayk-domain,
+        ]
     rules:
       - condition: COMPLETE
         next: spillover
-      - condition: needs_review
-        next: reviewers
       - condition: need_replan
         next: diagnose
-      - condition: needs_fix
-        next: fix
-      - condition: needs_conflict_adjudication
-        next: finding-conflict-adjudication
       - condition: ABORT
         next: ABORT
-
-  - name: fix
-    uses: fix
-    policy:
-      [
-        coding,
-        testing,
-        existing-system-respect,
-        tayk-traceability,
-        tayk-scope-spillover,
-        tayk-conflict-escalation,
-        tayk-toolchain,
-      ]
-    knowledge: [takt, architecture, implementation-semantics, tayk-adr]
-    rules:
-      - condition: 修正完了
-        next: reviewers
-      - condition: 修正を進められない、または原因仮説の再検証が必要
-        next: diagnose
 
   - name: spillover
     uses: tayk-spillover

@@ -30,9 +30,9 @@ run 監査を分解し、対象ごとに担当を割り当てて並列分析し�
 
 定義ファイルは実行中のlinked worktree内にgit追跡で存在するため、linked worktree rootからのrepository-relative pathで読む（run の証拠に記録した絶対パスは使わない）。
 
-- **#1 shared fragment の配線**: feature / fix の `reviewers` と `spillover` がそれぞれ同じ `.takt/steps/` fragment を `uses:` で参照することを確認する。reviewer の `rules.parallel` が fragment の全 reviewer 名と一対一であること、両 workflow の因果あり spillover の戻し先だけが feature=`plan` / fix=`diagnose` と異なることを照合する。fragment の本文を workflow 側へ複製している、reviewer が欠落する、またはそれ以外の意図しない差分があれば Finding にする
+- **#1 review 収束経路の配線**: feature / fix がどちらも builtin `peer-review` callable を呼び、tayk ADR / domain / traceability の overlay、verified remediation に必要な policy / knowledge、COMPLETE / need_replan / ABORT の戻り値を完全に配線することを確認する。feature だけが scenario-based final gate を指定し、need_replan の戻し先だけが feature=`replan` / fix=`diagnose` と異なること、両 workflow が同じ `tayk-spillover` fragment を使い、因果ありの戻し先だけが feature=`plan` / fix=`diagnose` と異なることを照合する。旧 `finding_contract`、project reviewer / final-gate fragment、複製 review loop が残っていれば Finding にする
 - **#2 callable のレポート境界**: 親側（`tayk-feature.yaml` / `tayk-fix.yaml`）の output contract 名を集める。唯一の project callable である `tayk-intake.yaml` の各 step が参照するリポ内 instruction facet を走査し、親レポート名への参照（report プレースホルダ記法経由を含む）や、自分の Report Directory の外を探索させる指示を検出する。検出したら ADR-0008 の report namespace 違反として、facet 名と該当行の引用を根拠に Finding にする。`uses:` fragment は root へ展開されるため callable として扱わない
-- **#3 drift（工程説明と実配線）**: 工程説明 3 箇所 — (a) `.takt/workflows/*.yaml` の冒頭コメントと description、(b) `.takt/config.yaml` の冒頭コメント、(c) `docs/agents/issue-tracker.md` の「実装ワークフロー」節 — を、YAML の実配線（step 名・遷移・loop monitor・callable の呼び出し）と照合する。乖離はすべて Key Observations に記録し、**実体と明確に矛盾する記述**（存在しない step・実在しない遷移・廃止済み要素への言及）だけを Finding にする
+- **#3 drift（工程説明と実配線）**: 工程説明 3 箇所 — (a) `.takt/workflows/*.yaml` の冒頭コメントと description、(b) `.takt/config.yaml` の冒頭コメント、(c) `docs/agents/issue-tracker.md` の「実装ワークフロー」節 — を、YAML の実配線（step 名・遷移・loop monitor・callable の呼び出し）と照合する。乖離はすべて Key Observations に記録し、**実体と明確に矛盾する記述**（存在しない step・実在しない遷移・Finding Contract など廃止済み要素への現行手順としての言及）だけを Finding にする
 
 定義監査の根拠は**ファイルパス + 該当行の引用**（shared fragment は fragment と参照元の対応）。乖離が無かった観点は Key Observations に「乖離なし」と何を照合したかを明記する（無言で省略しない）。監査の過程で決定的に検査できる部分（例: 機械的な diff で足りる照合）が見つかったら、それ自体を Finding として記録する — #104 の 2 分法に従い `bun test` へ切り出す提案として起票される（この workflow に検査を抱え込まない）。
 
