@@ -1,5 +1,5 @@
 name: replan
-capabilities: readonly
+capabilities: [readonly, enable-skills]
 tags: [plan]
 edit: false
 persona: planner

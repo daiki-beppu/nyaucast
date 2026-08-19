@@ -21,7 +21,7 @@ function requireStep(path: string, name: string): Step {
   return step;
 }
 
-describe("takt 0.59 final-gate contract", () => {
+describe("takt 0.60 final-gate contract", () => {
   test("uses requirement scenarios from feature planning through final gate", () => {
     const planPath = ".takt/steps/implementation-high-plan-to-write-tests.yaml";
     const testsPath =
@@ -47,6 +47,8 @@ describe("takt 0.59 final-gate contract", () => {
     expect(review.args?.["final_gate_instruction"]).toBe(
       "scenario-based-supervise-review-resolution"
     );
+    expect(review.args?.["final_gate_policy"]).toContain("tayk-traceability");
+    expect(review.args?.["final_gate_policy"]).toContain("tayk-toolchain");
   });
 
   test("keeps fix on the standard peer-review final gate", () => {
@@ -54,5 +56,8 @@ describe("takt 0.59 final-gate contract", () => {
 
     expect(review.call).toBe("peer-review");
     expect(review.args?.["final_gate_instruction"]).toBeUndefined();
+    expect(review.args?.["final_gate_policy"]).toContain(
+      "existing-system-respect"
+    );
   });
 });

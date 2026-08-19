@@ -2,7 +2,7 @@
 
 ## Status
 
-accepted (2026-08-18。takt 0.59.1 で廃止された Finding Contract を review-adjudication / verified remediation / final-gate へ移行)
+accepted (2026-08-20。takt 0.59.0 で廃止された Finding Contract を review-adjudication / verified remediation / final-gate へ移行し、0.60.0 の capability / final-gate contract に追従)
 
 ## Context
 
@@ -18,7 +18,7 @@ tayk の開発 workflow には、汎用的な実装品質だけでなく次の�
 
 一方、計画、test-first、実装、レビュー、修正、最終判定の一般的な prompt contract を project 側で複製すると、takt 本体の改善から切り離される。実際、旧 workflow は個別修正を積み重ねて feature / fix がそれぞれ 700 行を超え、同じ reviewer と spillover の定義を複製し、loop monitor と step 固有上限を併用する状態になっていた。takt 更新時には callable workflow の step budget contract が変わり、全 workflow が doctor を通る前提も失われた。
 
-takt 0.59.1 は Finding Contract の設定・実行・永続化を廃止した。現行 builtin は reviewer の直後に `review-adjudication` を置き、finding を problem family へ裁定し、`development-remediation` が fix plan・修正・独立検証を行い、`final-gate` が要件充足と未解決 finding だけを最終判定する。feature では requirement scenario を計画とテストの対応表で追跡する。
+takt 0.59.0 は Finding Contract の設定・実行・永続化を廃止した。現行 builtin は reviewer の直後に `review-adjudication` を置き、finding を problem family へ裁定し、`development-remediation` が fix plan・修正・独立検証を行い、`final-gate` が要件充足と未解決 finding だけを最終判定する。feature では requirement scenario を計画とテストの対応表で追跡する。0.60.0 では provider 実行設定が workflow YAML から除かれ、tool・network・skill の必要能力を `capabilities` で宣言し、final gate の policy を `final_gate_policy` で明示できる。
 
 ## Decision
 
@@ -39,6 +39,7 @@ project 側で変更してよいのは tayk 固有差分だけである。
 
 - plan / test / implement step に tayk の policy と knowledge を追加する
 - `peer-review` の policy / knowledge arguments に tayk ADR、domain、traceability を追加する
+- 計画・テスト作成・実装・修正工程だけに `enable-skills` を付け、reviewer と delivery step は環境依存 skill を継承しない
 - spillover を tayk 固有 fragment として追加する
 - feature の設計ゲート、fix の診断ゲートを workflow 本体に置く
 
@@ -89,7 +90,7 @@ feature は各 completion contract を Given / When / Then の requirement scena
 
 ### 6. 実装レビュー
 
-feature / fix は同じ builtin `peer-review` callable を呼ぶ。既定の architecture、testing、coding、AI antipattern の固定 reviewer と、変更境界に応じて選ばれる security reviewer を使う。ADR 整合は実装前の専用 gate に加え、実装レビュー全体に `tayk-adr` / `tayk-domain` knowledge を注入して確認する。
+feature / fix は同じ builtin `peer-review` callable を呼ぶ。既定の architecture、testing、coding、AI antipattern の固定 reviewer と、変更境界に応じて選ばれる security reviewer を使う。ADR 整合は実装前の専用 gate に加え、通常 reviewer と security reviewer の双方へ `tayk-adr` / `tayk-domain` knowledge を注入して確認する。final gate には reviewer と同じ tayk traceability / toolchain policy を渡し、fix では `existing-system-respect` も維持する。
 
 reviewer の各 report はその round の finding 入力であり、`review-adjudication` が actionable / duplicate / false positive / out of scope を裁定して problem family へ集約する。修正対象 family は fix plan → fix → fix verifier を通り、再レビュー後に final-gate が要件充足と指摘解消を判定する。Finding Contract 時代の project ledger、synthetic manager、conflict step は持たない。
 
@@ -154,6 +155,7 @@ callable workflow の report は子 namespace に属し、親からファイル�
 - `.takt/steps/` は workflow / facets / schemas と同様に git 管理する
 - workflow の一般構造、facet / fragment 参照、遷移は `takt workflow doctor` を正書とする
 - prompt 合成は `takt prompt tayk-feature` / `takt prompt tayk-fix` で確認する
+- `enable-skills` を持つ工程は developer 環境の repository / user Codex Skills を利用できるため、再現性に影響する skill 依存を追加するときはこの ADR と契約テストを同じ差分で更新する
 - project 固有の機械契約だけを `bun test` で補う。takt parser や doctor の一般検査を再実装しない
 - takt は dotfiles の profile から供給し、tayk の runtime / package 依存には加えない
 - `.takt/` は開発 orchestration であり、ADR-0006 が禁じる製品 lifecycle orchestration には使わない

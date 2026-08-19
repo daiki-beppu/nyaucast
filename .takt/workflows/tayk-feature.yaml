@@ -189,6 +189,7 @@ steps:
   - name: implement
     tags: [coding]
     edit: true
+    capabilities: [edit, enable-skills]
     session: compact
     persona: coder
     policy:
@@ -273,6 +274,8 @@ steps:
           tayk-adr,
           tayk-domain,
         ]
+      security_review_knowledge_additions:
+        [takt, architecture, tayk-adr, tayk-domain]
       plan_policy: [coding, testing, review, tayk-traceability, tayk-toolchain]
       fix_policy:
         [
@@ -296,6 +299,16 @@ steps:
           implementation-semantics,
           tayk-adr,
           tayk-domain,
+        ]
+      final_gate_policy:
+        [
+          coding,
+          testing,
+          review,
+          architecture,
+          takt,
+          tayk-traceability,
+          tayk-toolchain,
         ]
       final_gate_instruction: scenario-based-supervise-review-resolution
     rules:

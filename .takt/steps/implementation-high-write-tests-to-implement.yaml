@@ -1,5 +1,5 @@
 name: write_tests
-capabilities: edit
+capabilities: [edit, enable-skills]
 tags: [coding, test-planning]
 edit: true
 persona: coder

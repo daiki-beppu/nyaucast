@@ -51,7 +51,7 @@ steps:
     persona: planner
     policy: [existing-system-respect, tayk-traceability, tayk-toolchain]
     knowledge: [architecture, implementation-semantics, tayk-adr, tayk-domain]
-    capabilities: readonly
+    capabilities: [readonly, enable-skills]
     instruction: tayk-diagnose
     output_contracts:
       report:
@@ -163,6 +163,7 @@ steps:
     description: 診断の予測を修正前の red テストで検証する
     tags: [coding, test-planning]
     edit: true
+    capabilities: [edit, enable-skills]
     session: compact
     persona: coder
     policy:
@@ -200,6 +201,7 @@ steps:
     description: 診断で特定した原因を除去し、red を green にする
     tags: [coding]
     edit: true
+    capabilities: [edit, enable-skills]
     session: compact
     persona: coder
     policy:
@@ -246,6 +248,8 @@ steps:
           tayk-adr,
           tayk-domain,
         ]
+      security_review_knowledge_additions:
+        [takt, architecture, tayk-adr, tayk-domain]
       plan_policy:
         [
           coding,
@@ -285,6 +289,17 @@ steps:
           implementation-semantics,
           tayk-adr,
           tayk-domain,
+        ]
+      final_gate_policy:
+        [
+          coding,
+          testing,
+          review,
+          architecture,
+          takt,
+          existing-system-respect,
+          tayk-traceability,
+          tayk-toolchain,
         ]
     rules:
       - condition: COMPLETE

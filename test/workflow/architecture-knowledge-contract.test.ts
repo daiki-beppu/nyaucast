@@ -56,10 +56,14 @@ describe("architecture knowledge contract", () => {
     for (const path of [workflowPaths.feature, workflowPaths.fix]) {
       const review = requireStep(path, "peer_review");
       const knowledge = review.args?.["review_knowledge_additions"];
+      const securityKnowledge =
+        review.args?.["security_review_knowledge_additions"];
 
       expect(hasFacet(knowledge, "architecture")).toBeTrue();
       expect(hasFacet(knowledge, "tayk-adr")).toBeTrue();
       expect(hasFacet(knowledge, "tayk-domain")).toBeTrue();
+      expect(hasFacet(securityKnowledge, "tayk-adr")).toBeTrue();
+      expect(hasFacet(securityKnowledge, "tayk-domain")).toBeTrue();
       expect(hasFacet(review.args?.["fix_knowledge"], "tayk-adr")).toBeTrue();
       expect(
         hasFacet(review.args?.["verification_knowledge"], "tayk-adr")
