@@ -3,12 +3,7 @@ description: >
   tayk の不具合修正 workflow。issue intake、原因診断と独立レビュー、修正前の red 再現、
   root-cause repair、専門レビューと指摘裁定、検証付き修正、要件充足の最終ゲート、
   spillover を行う。
-workflow_config:
-  provider_options:
-    codex:
-      network_access: true
-    opencode:
-      network_access: true
+capabilities: readonly
 max_steps: 50
 initial_step: intake
 

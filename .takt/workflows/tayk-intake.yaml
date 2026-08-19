@@ -11,12 +11,7 @@ subworkflow:
   # 判定手順が丸ごと複製され、「複製された定義は必ず片方だけ更新される」（ADR-0008
   # Considered Options）に自分でぶつかる。着手可能性の判定（未決事項・矛盾・依存・情報不足）は
   # feature / fix で変わらない。fix 固有の入口検査（再現条件が確定できるか）は diagnose が持つ
-workflow_config:
-  provider_options:
-    codex:
-      network_access: true
-    opencode:
-      network_access: true
+capabilities: readonly
 initial_step: read_issue
 steps:
   # system step。issue / task / branch のコンテキストを TAKT 側から受け取り、

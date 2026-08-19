@@ -3,12 +3,7 @@ description: >
   tayk の機能開発 workflow。issue intake、要件と検証契約の計画、実装前の設計ゲート、
   requirement scenario 付き test-first 実装、専門レビューと指摘裁定、検証付き修正、
   要件充足の最終ゲート、spillover を行う。
-workflow_config:
-  provider_options:
-    codex:
-      network_access: true
-    opencode:
-      network_access: true
+capabilities: readonly
 max_steps: 50
 initial_step: intake
 
