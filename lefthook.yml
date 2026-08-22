@@ -1,3 +1,7 @@
+# hook は呼び出し元シェルの環境を継承するため、devShell 供給ツールを rc で自給する
+# （shim が lefthook 解決より前に source する。詳細は .lefthookrc / #334）。
+rc: .lefthookrc
+
 # 2 段構え: pre-commit は整形だけ、検査は pre-push が見る（check + workflow-doctor）。
 #
 # 整形対象は commit に含める staged files に限定する。冪等性は整形結果の性質であり、
