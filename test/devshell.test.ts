@@ -9,6 +9,7 @@ import {
   readFileSync,
   readlinkSync,
   realpathSync,
+  renameSync,
   rmSync,
   unlinkSync,
   writeFileSync,
@@ -332,14 +333,19 @@ function withFailedLefthookInstall(
     const hooksPath = join(taykRoot, ".git", "hooks");
     const nodeModulesExistedBefore = existsSync(join(taykRoot, "node_modules"));
     const originalMode = lstatSync(hooksPath).mode & 0o777;
+    const hooksBackupPath = `${hooksPath}.fixture-backup`;
     let entered: CommandResult;
 
     try {
-      chmodSync(hooksPath, 0o555);
-      expect(lstatSync(hooksPath).mode & 0o777).toBe(0o555);
+      // root は directory の write bit が無くても書き込めるため、chmod では
+      // Lefthook install の失敗を決定的に再現できない。hooks directory を
+      // regular file で塞ぎ、実行ユーザーに依存しない ENOTDIR を起こす。
+      renameSync(hooksPath, hooksBackupPath);
+      writeFileSync(hooksPath, "blocks Lefthook hook installation\n");
       entered = enterFixtureDevShell(directory, taykRoot);
     } finally {
-      chmodSync(hooksPath, originalMode);
+      rmSync(hooksPath, { force: true });
+      renameSync(hooksBackupPath, hooksPath);
     }
     assertResult({
       entered,

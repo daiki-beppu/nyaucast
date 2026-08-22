@@ -10,7 +10,7 @@ run 監査を始める前に、証拠パスの読み取りを確認し、対象 
 
 ```bash
 bun -e '
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
 const gitCommand = "git rev-parse --git-common-dir";
@@ -38,6 +38,10 @@ const repositoryRoot = dirname(resolve(commonDirectory));
 const repositoryRunsPath = join(repositoryRoot, ".takt", "runs");
 let repositoryEntries;
 try {
+  const repositoryRunsMode = statSync(repositoryRunsPath).mode;
+  if ((repositoryRunsMode & 0o444) === 0) {
+    throw new Error("directory has no read permission bits");
+  }
   repositoryEntries = readdirSync(repositoryRunsPath, { withFileTypes: true });
 } catch (error) {
   const detail = error instanceof Error ? error.message : String(error);
