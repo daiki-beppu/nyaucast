@@ -14,7 +14,7 @@ run 監査の完全性と品質を判定してください。**あなたは判�
 3. 分析レポートの Audit Scope 表を Audit Targets と一対一で照合する。同じ run と絶対パスの対応を含め、行の欠落・集約・重複・番号ずれがあれば **table_broken**
 4. Audit Scope で ✅ の行数を数える（= `targets_audited`）
 5. Findings から高 Severity のものをいくつか選び、各 Finding に保持された run の絶対パスが計画レポートの対応と一致することを確認してから trace.md / meta.json を自分でも読み、**引用が実在し、主張を支えているか**を照合する。引用が実トレースに見つからない、または引用と主張が食い違う Finding は分析済みと認めず **rework**
-6. 定義監査の対象（#1〜#3）は、Finding も「乖離なし」判定も、根拠に挙げられた実行中linked worktree内のgit-tracked定義ファイル（repository-relative path）を自分でも読んで照合する。特に #1 は共有 fragment と feature / fix の `uses:`、reviewer 対応、spillover 戻し先を突き合わせる。照合できない判定は **rework**
+6. 定義監査の対象（#1〜#3）は、Finding も「乖離なし」判定も、根拠に挙げられた実行中linked worktree内のgit-tracked定義ファイル（repository-relative path）を自分でも読んで照合する。特に #1 は feature / fix の `peer-review` 呼び出し、policy / knowledge arguments、戻り値、spillover 戻し先を突き合わせる。照合できない判定は **rework**
 7. Findings が Issue 直貼り可能な品質か確認する — 該当 run（定義監査は該当ファイル）の列挙、引用、問題、実害（再発条件）、対処案が揃っているか
 8. 「Loop Monitor 不発の疑い」節が存在するか確認する（該当なしの明記も可。**節自体が無ければ検査未実施として rework**）。「起票対象（高確度）」の行は、trace.md の Iteration 系列で反復と judge 不在を、現行 `.takt/workflows/` と instruction facet で `{step_iteration}` 自前上限の不在を、自分でも照合する。照合が取れない行があれば **rework**
 9. Token Usage 節を確認する — workflow 別（合計・run あたり中央値）と step 別（割合付き）の表が埋まっており、集計対象 / 集計対象外の内訳（件数と理由）が明示されているか。節が無い・表が空なら **rework**（blocking_issues に「Token Usage 節の欠落」と何が足りないかを書く）。費用の偏りが欠陥の根拠なしで Findings に紛れている場合も **rework**（費用の観測は Token Usage の所見に置く）

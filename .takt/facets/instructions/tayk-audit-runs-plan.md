@@ -104,11 +104,11 @@ process.stdout.write(`${JSON.stringify({
 
 run とは別に、workflow 定義そのものを対象とする固定 3 対象を Audit Targets の先頭に置く（#146。共有 fragment、callable の report namespace、工程説明 drift の再発検出）:
 
-| #   | Audit Target            | Runs 列に列挙するもの（run ではなく対象ファイル）                                                                                        | What to Analyze                                        |
-| --- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| 1   | shared fragment の配線  | `.takt/steps/reviewers.yaml` / `.takt/steps/tayk-spillover.yaml` / `.takt/workflows/tayk-feature.yaml` / `.takt/workflows/tayk-fix.yaml` | fragment 不使用、reviewer 対応漏れ、意図しない分岐差分 |
-| 2   | callable のレポート境界 | `.takt/workflows/tayk-intake.yaml` と参照先 facet                                                                                        | 親レポート・親 Report Directory への参照               |
-| 3   | drift: 工程説明と実配線 | `.takt/workflows/*.yaml` 冒頭コメント / `.takt/config.yaml` コメント / `docs/agents/issue-tracker.md`                                    | 工程説明と YAML 実配線の乖離                           |
+| #   | Audit Target            | Runs 列に列挙するもの（run ではなく対象ファイル）                                                         | What to Analyze                                                                                     |
+| --- | ----------------------- | --------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| 1   | review 収束経路の配線   | `.takt/workflows/tayk-feature.yaml` / `.takt/workflows/tayk-fix.yaml` / `.takt/steps/tayk-spillover.yaml` | peer-review 呼び出し・overlay・戻り値の欠落、旧 Finding Contract 資産の残存、spillover 分岐の不整合 |
+| 2   | callable のレポート境界 | `.takt/workflows/tayk-intake.yaml` と参照先 facet                                                         | 親レポート・親 Report Directory への参照                                                            |
+| 3   | drift: 工程説明と実配線 | `.takt/workflows/*.yaml` 冒頭コメント / `.takt/config.yaml` コメント / `docs/agents/issue-tracker.md`     | 工程説明と YAML 実配線の乖離                                                                        |
 
 - 定義ファイルは**実行中のlinked worktree内にgit追跡で存在する**。run の証拠に記録した絶対パスではなく、linked worktree rootからのrepository-relative pathで読む（証拠パス確認の対象にもしない）
 - 固定対象の # と対象名は毎回この表のとおりにする（監査間の突き合わせ先になる）。Priority は既定 Medium とし、run 対象の緊急度に応じて上下してよい

@@ -4,25 +4,9 @@ Issues and PRDs for this repo live as GitHub issues. Use the `gh` CLI for all op
 
 ## 実装ワークフロー: takt 前提
 
-### host 前提: takt 0.55.1
+### host 前提: takt 0.60.0
 
-takt は npm registry で配布される host 所有の開発 orchestration tool である。repository の devShell が供給する npm は、既定の global prefix が読み取り専用の Nix store を指すため、そのままでは global package を導入できない。初回だけ、次の2行を host shell が起動時に読む profile（例: `~/.zprofile` または `~/.profile`）へ追加し、同じ2行を現在の shell でも実行する:
-
-```sh
-export npm_config_prefix="$HOME/.local"
-export PATH="$npm_config_prefix/bin:$PATH"
-```
-
-これは npm の global package と実行ファイルを developer 所有の `~/.local` に置く host 設定であり、repository の `.envrc` へは追加しない。設定後、導入先を作成して npm の解決結果と書き込み可否を確認し、要求版を導入する:
-
-```sh
-mkdir -p "$npm_config_prefix"
-test "$(npm prefix -g)" = "$npm_config_prefix"
-test -w "$(npm prefix -g)"
-npm install -g takt@0.55.1
-```
-
-この npm 操作は host tool の導入だけを対象とし、[ADR-0003](../adr/0003-bun-only-distribution.md) が定める repository の依存管理境界の外にある。tayk repository の dependency install、package script、build、runtime、test runner に npm を使う許可ではなく、これらは引き続き Bun のみを使う。
+takt は host が供給する開発 orchestration tool であり、tayk の runtime / package dependency には含めない。現行の標準導入先は Nix profile である。repository の package 操作と script 実行は引き続き Bun のみを使う。
 
 pipeline を開始する前に、次の preflight を実行する:
 
@@ -31,31 +15,31 @@ command -v takt
 takt --version
 ```
 
-`command -v takt` が `$npm_config_prefix/bin/takt` を返し、`takt --version` が正確に `0.55.1` を返す場合だけ、後続の pipeline 手順へ進む。不在、別の場所にある takt の解決、または version 不一致の場合は、profile の2行を現在の shell に反映し、`npm prefix -g` が `$npm_config_prefix` を返して書き込み可能であることを確認してから、導入と preflight をやり直す。
+`takt --version` が正確に `0.60.0` を返す場合だけ、後続の pipeline 手順へ進む。不在または version 不一致の場合は host 側の Nix profile を更新し、preflight をやり直す。
 
 [ADR-0008](../adr/0008-takt-dedicated-workflow.md) により、takt は tayk の製品 runtime / package dependency ではなく、host が供給する開発 orchestration tool とする。takt の更新周期を repository の `flake.lock` に拘束しないため、devShell にも含めない。
 
 開発は takt メイン。ただし用途ごとに使う workflow / skill が異なるので、文脈に合わせて選ぶ:
 
 - **新機能・機能拡張の実装** — tayk 専用の **`tayk-feature`** workflow（ADR-0008）。detached HEAD の手動 worktree 内で `takt --pipeline --auto-pr -b issue-<N>-<slug> -w tayk-feature -i <N>`。
-  フロー: intake（着手可能性の判定 / wayfinder map・ticket 対応）→ 計画（completion contract / 要件 ID 採番）→ テスト設計 → 設計レビュー（設計 / ADR 整合性 / テスト設計の3並列）→ test-first → 実装 → 実装レビュー（7並列・Finding Contract）→ 最終ゲート → spillover。計画、test-first、実装、レビュー、修正は takt から eject した現行 builtin step fragment を基礎にし、tayk 固有の policy / knowledge を重ねる。
+  フロー: intake → requirement scenario 付き計画 → テスト設計 → 設計レビュー（3並列）→ test-first → 実装 → builtin 専門レビュー → review-adjudication → 検証付き remediation → final-gate → spillover。
 - **バグ修正の実装** — tayk 専用の **`tayk-fix`** workflow（ADR-0008）。detached HEAD の手動 worktree 内で `takt --pipeline --auto-pr -b issue-<N>-<slug> -w tayk-fix -i <N>`。
-  フロー: intake → 診断（原因特定 / 検証可能な予測 / 修正方針 / 回帰 contract）→ 診断レビュー（診断妥当性 / ADR 整合性 / 回帰設計の3並列）→ 再現テスト（**red で診断を検証**）→ 原因修正 → 実装レビュー（feature と同じ共有 fragment）→ 最終ゲート → spillover。maintenance test / implementation prompt は takt builtin を継承し、red→green と原因除去だけを追加契約にする。
+  フロー: intake → 診断（原因特定 / 検証可能な予測 / 修正方針 / 回帰 contract）→ 診断レビュー（3並列）→ 再現テスト（**red で診断を検証**）→ 原因修正 → builtin 専門レビュー → review-adjudication → 検証付き remediation → final-gate → spillover。
   **原因を特定してから直す。** 再現テストが red にならなければ、テストの問題ではなく診断の誤りとして差し戻される（ADR-0008「fix の工程」）。
 - **アーキテクチャ / 構成の全件監査** — tayk 専用の **`tayk-audit-architecture`** workflow（#108）。issue 起点なら detached HEAD の手動 worktree 内で `takt --pipeline --auto-pr -b issue-<N>-<slug> -w tayk-audit-architecture -i <N>`、issue なしなら `takt add` で order.md に監査スコープを書く。
   フロー: 計画（監査対象表の採番。上限 28 対象）→ 分担監査（team leader 3 並列）→ 監督 ⇄ 再監査（structured 判定で決定的に収束）→ publish（`docs/audits/` へレポート配置）。**publish 以外は全 step read-only でコードを変更しない。** Issue の起票はレポートを見た人間の判断。builtin `audit-architecture` はメタレビュー上書きの悪循環と容量不足で完走できないため使わない（fork 理由は workflow 定義冒頭のコメント参照）。
 - **takt 実行トレース・workflow 定義の監査** — tayk 専用の **`tayk-audit-runs`** workflow（#143 / #146）。issue 起点なら detached HEAD の手動 worktree 内で `takt --pipeline --auto-pr -b issue-<N>-<slug> -w tayk-audit-runs -i <N>`、issue なしなら `takt add` で order.md に監査スコープ（対象期間 / 対象 workflow。省略時は全 run）を書く。実行入口は手動で作った **linked worktree** に限定し、独立 clone / 隔離 clone 内からの実行は対象外とする。
   フロー: 計画（定義監査の固定 3 対象 — shared fragment の配線 / callable のレポート境界 / 工程説明 drift — に続けて対象 run の列挙・グループ化・採番。上限 24 対象）→ 分担分析（team leader 3 並列）→ 監督 ⇄ 再分析（structured 判定で決定的に収束。発見の引用を実トレース・定義ファイルと照合）→ publish（`docs/audits/` へレポート配置）→ 起票（実害と根拠 = run 名 + トレース引用、定義監査は定義ファイルのパス + 引用を示せる発見のみ、重複照合の上で。spillover と同じ規約）。計画のcanonical preflightは`git rev-parse --git-common-dir`の親から本体checkout rootを導出し、その`.takt/runs`と、本体`.takt/clone-meta/*.json`が記録した`clonePath`配下の`.takt/runs`を証拠経路とする。存在しない`clonePath`ではABORTせず、本体と実在cloneの監査を継続する。欠落はカバレッジ欠落として、監査レポート冒頭の対象範囲宣言に辿れないmetaの件数と各`branch`名を列挙する。Git導出に失敗する、本体runsを読めない、または本体runが0件なら空レポートをpublishせず明示的にABORTする。workflow定義は実行中linked worktree内のgit-tracked資産をrepository-relative pathで読む。takt#1128対応後に隔離clone実行へ戻す際は、taktの本体path注入有無に応じてcanonical sourceと本導出規則を再検証する。publishと起票以外はread-only。
-- **PR のレビュー** — `takt-review` skill。builtin workflow **`review-takt-default`**（7 観点個別レビュー + supervisor、report ファイル出力）。REJECT なら worktree で fix → 再レビューを 1 回だけ実施。単体起動専用で、`tayk-feature` / `tayk-fix` から自動では呼ばれない。
+- **PR のレビュー** — `takt-review` skill。builtin workflow **`review-takt-default`**（architecture / testing / coding / AI antipattern の固定レビュー + threat model に応じた security review + supervisor、report ファイル出力）。REJECT なら worktree で fix → 再レビューを 1 回だけ実施。単体起動専用で、`tayk-feature` / `tayk-fix` から自動では呼ばれない。
 - **takt を使わない実装** — `issue-direct` skill。ユーザーが明示的に「takt なしで」と指定した場合のみ。Claude Code 単体で worktree 作成 → 実装 → PR 作成 → CI green まで監視。
 
 共通の規約:
 
 - worktree 必須。メイン作業ツリーで直接ブランチを切らない。main を最新化した後、`git worktree add --detach .claude/worktrees/<slug> main` で detached HEAD の worktree を作る。`.worktreeinclude` がある場合、その対象は手動作成では自動コピーされないため自分でコピーしてから `direnv allow` する
-- `tayk-feature` / `tayk-fix` は、main から手動で作った detached HEAD の worktree 内で直接実行する。takt のキューへ `worktree: true` で投入すると、実行 clone の `reportDir` とメイン checkout 基準の `projectCwd` がずれ、Finding Contract の publication が必ず失敗する。手動 worktree を `projectCwd` と `execCwd` の両方にすることで、takt 内部の追加 clone を使わず隔離を維持する。これは [nrslib/takt#1128](https://github.com/nrslib/takt/pull/1128) の修正を含むリリースへ更新するまでの暫定経路であり、更新後は隔離 clone での実走行を再検証して解除する
-- 手動 worktree では `direnv allow` 後に `takt --pipeline --auto-pr -b <新規ブランチ名> -w <workflow> -i <N>` を実行する。takt 0.55.1 では `--auto-pr` は `--pipeline` 専用で、pipeline の issue 指定には `-i` が必要である。pipeline が `git checkout -b` するため、`-b` のブランチ名はまだ存在しないものを指定する。`--auto-pr` により workflow 完了後の commit / push / PR 作成を takt に委ねる
+- `tayk-feature` / `tayk-fix` は main から手動で作った detached HEAD の worktree 内で pipeline 実行する。Finding Contract は廃止済みだが、新しい review-adjudication 経路の隔離 clone 実走行が未検証のため、検証完了までは既知の pipeline 経路を維持する
+- 手動 worktree では `direnv allow` 後に `takt --pipeline --auto-pr -b <新規ブランチ名> -w <workflow> -i <N>` を実行する。`--auto-pr` は `--pipeline` 専用で、pipeline の issue 指定には `-i` が必要である。pipeline が `git checkout -b` するため、`-b` は未作成のブランチ名に限る
 - workflow / step fragments / facets / schemas は `.takt/` 配下に置き git 管理する（ADR-0008）。定義を変えたら `takt workflow doctor` で全件検証する
-- takt 更新時は clean な一時 Git repository で `takt eject takt-default-high` と `takt eject review-fix-takt-default-high` を実行し、本リポジトリの `.takt/steps/` と比較する。upstream の prompt / output contract 変更を取り込んでから、ADR reviewer と tayk policy / knowledge overlay を再適用する
+- takt 更新時は `takt-experimental` / `peer-review` / `development-remediation` と、project の `.takt/steps/` の基礎 facet を比較する。breaking change を先に取り込み、tayk 固有 policy / knowledge overlay を再適用する
 - 着手前に main を `git pull --ff-only` で最新化する
 
 ## takt に渡す issue の書き方

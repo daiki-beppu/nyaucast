@@ -1,4 +1,4 @@
-{extends:write-tests-maintenance}
+{extends:write-tests-first}
 
 診断レポートを、この修正タスクの計画として扱ってください。
 
