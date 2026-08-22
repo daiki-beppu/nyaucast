@@ -2,7 +2,7 @@
 
 ## Status
 
-accepted (2026-07-24) / 改訂 2026-07-31（#178。動画生成工程を「agent が書く HTML composition → Chrome rasterize → mediabunny エンコード」のパイプラインへ載せ替え — 決定 6〜11 を追加。エンコード層の mediabunny + node-av 統一（決定 1）と ffmpeg CLI 不採用（決定 3）は不変。Chrome 依存は `video.render` / `video.preview` の 2 tool に限定して許容する）
+accepted (2026-07-24) / 改訂 2026-07-31（#178。動画生成工程を「agent が書く HTML composition → Chrome rasterize → mediabunny エンコード」のパイプラインへ載せ替え — 決定 6〜11 を追加。エンコード層の mediabunny + node-av 統一（決定 1）と ffmpeg CLI 不採用（決定 3）は不変。Chrome 依存は `video.render` / `video.preview` の 2 tool に限定して許容する）/ 改訂 2026-08-22（#332。Remotion への置き換え検討を不採用として Considered Options に追記 — 決定 1〜11 は不変）
 
 ## Context
 
@@ -73,6 +73,10 @@ accepted (2026-07-24) / 改訂 2026-07-31（#178。動画生成工程を「agent
 - **capture / encode の tool 分割**: 中間フレーム列を agent に見せる価値がなく、#175 は streaming 直結（フレーム列をディスクに置かない）で成立済み。`video.render` 1 tool に内包する。不採用（#176）
 - **validate 単体 tool**: `video.preview` が契約検証を内包し、需要は preview として確定した。不採用（#177）
 
+（以下、改訂 2026-08-22 / #332 で追加）
+
+- **動画生成基盤を Remotion へ置き換え**: 「公式 Agent Skills の充実」と「mediabunny の内部採用」を動機に wayfinder セッションで検討した（#332。地図は作らず撤回で決着）。不採用の理由は 3 点 — (a) mediabunny 採用はブラウザ側スタック限定（`@remotion/web-renderer` と旧 Media Parser / WebCodecs の後継系譜）で、tayk が Bun から叩くサーバーサイドの `renderMedia()` は FFmpeg バイナリ同梱（`@remotion/compositor-*`）のまま。エンコード層を mediabunny にする動機は決定 1・6 が既に満たしている。(b) Remotion のライセンスは頒布ではなく**利用**に有償条件が掛かる（無償は「Remotion を操作する関係者 3 人以下」の組織まで。CLI/API の自動レンダリングは Automators 区分 $0.01/render・最低 $100/月）。tayk には将来的に有償ツールとして公開する意向があり、下流利用者それぞれに free/有償のライセンス判定が波及する構図は配布性を損なう。(c) 公式 Agent Skills（remotion-dev/skills の 12 skill・llms.txt・AI 向けシステムプロンプト文書）は事実として確認できたが、上記 2 点を覆すには足りない。不採用。再検討トリガ: Remotion のサーバーサイドレンダリングの mediabunny 移行が完了し、かつライセンス条件が tayk の利用・配布形態と両立すると判断できたとき（新規の wayfinder 効力として起こし、#332 の記録を出発点にする）。主な根拠（2026-08-22 時点）: ライセンス <https://www.remotion.dev/docs/terms> / <https://www.remotion.pro/license>、mediabunny 移行範囲 <https://www.remotion.dev/blog/mediabunny> / <https://www.remotion.dev/docs/ffmpeg>、公式 skills <https://www.remotion.dev/docs/ai/skills>、Bun <https://www.remotion.dev/docs/bun>、決定論 <https://www.remotion.dev/docs/using-randomness>
+
 ## Consequences
 
 - `audio.master`・動画生成用 primitive tool・アップロード前検証 tool は `@mediabunny/server`（node-av）に直接依存する。node-av の GPLv3 ネイティブバイナリは通常の（optionalDependencies ではない）依存としてインストールされる
@@ -94,6 +98,7 @@ accepted (2026-07-24) / 改訂 2026-07-31（#178。動画生成工程を「agent
 - ADR-0001（内部throw・境界で変換 / 1 tool = 1 file — 決定 10 はその解釈明文化）/ ADR-0003（Bun 必須配布・ビルドレス出荷）/ ADR-0007（決定 9 の鮮度付き冪等はその決定 4 の解釈精緻化。本体は改訂しない）
 - マップ issue #42「メディア処理基盤の技術選定マップ」とその子チケット #43 / #44 / #45 / #46 / #49
 - マップ issue #172「動画生成 HTML パイプライン化マップ」とその子チケット #173 / #174 / #175 / #176 / #177 / #178（改訂 2026-07-31 の出所）
+- issue #332「Remotion 置き換え検討の不採用記録」（改訂 2026-08-22 の出所。wayfinder セッションで検討し、地図は作らず撤回で決着）
 - `docs/research/mediabunny-bun-codec-support.md`（issue #43 / PR #48）/ `docs/research/lufs-pure-ts-normalization.md`（issue #44 / PR #50）/ `docs/research/node-av-ffmpeg-license.md`（issue #49 / PR #53）
 - `docs/research/hyperframes-internals-partial-use.md`（issue #173 / PR #179）/ `docs/research/browser-frame-capture-deterministic.md`（issue #174 / PR #180）
 - `docs/reference/composition-contract.md` — `window.__hf` 契約の正書
