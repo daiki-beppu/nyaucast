@@ -1905,25 +1905,24 @@ describe("release publish dependency boundary", () => {
       const workspace = join(directory, "workspace");
       const stubs = join(directory, "bin");
       const callLog = join(directory, "calls.log");
-      const restricted = join(directory, "restricted");
-      const dependencyDirectory = join(restricted, "dependencies");
+      const unresolvedParent = join(directory, "unresolved-parent");
       mkdirSync(workspace);
       mkdirSync(stubs);
-      mkdirSync(dependencyDirectory, { recursive: true });
       installCommandStub(stubs, "bun");
       installCommandStub(stubs, "npm");
-      symlinkSync(dependencyDirectory, join(workspace, "node_modules"));
-      chmodSync(restricted, 0o000);
+      // root は permission bit を迂回できるため、chmod 000 では解決失敗を
+      // 再現できない。親を自己参照 symlink にして全ユーザーで ELOOP にする。
+      symlinkSync(unresolvedParent, unresolvedParent);
+      symlinkSync(
+        join(unresolvedParent, "dependencies"),
+        join(workspace, "node_modules")
+      );
 
-      try {
-        const result = runPublishScript(script, workspace, stubs, callLog);
+      const result = runPublishScript(script, workspace, stubs, callLog);
 
-        expect(result.exitCode).not.toBe(0);
-        expect(result.stderr.toString().trim()).not.toBe("");
-        expect(commandCalls(callLog)).toEqual([]);
-      } finally {
-        chmodSync(restricted, 0o700);
-      }
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr.toString().trim()).not.toBe("");
+      expect(commandCalls(callLog)).toEqual([]);
     });
   });
 });
