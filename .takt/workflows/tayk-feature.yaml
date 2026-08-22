@@ -42,10 +42,13 @@ steps:
         next: ABORT
 
   - name: plan
-    uses: implementation-high-plan-to-write-tests
-    policy:
-      [contract-change, design-planning, tayk-traceability, tayk-toolchain]
-    knowledge: [architecture, tayk-adr, tayk-domain]
+    uses: development-core-plan
+    with:
+      plan_policy: [design-planning, tayk-traceability, tayk-toolchain]
+      plan_knowledge: [architecture, tayk-adr, tayk-domain]
+      plan_instruction: scenario-based-plan
+      plan_report_format: scenario-based-plan
+    capabilities: [readonly, enable-skills]
     rules:
       - condition: タスク分析と計画が完了した
         next: test_design
@@ -162,18 +165,21 @@ steps:
         next: plan
 
   - name: write_tests
-    uses: implementation-high-write-tests-to-implement
-    policy:
-      [contract-change, coding, testing, tayk-traceability, tayk-toolchain]
-    knowledge:
-      [
-        takt,
-        architecture,
-        unit-testing,
-        e2e-testing,
-        implementation-semantics,
-        tayk-adr,
-      ]
+    uses: development-core-write-tests
+    with:
+      testing_policy: [coding, testing, tayk-traceability, tayk-toolchain]
+      testing_knowledge:
+        [
+          takt,
+          architecture,
+          unit-testing,
+          e2e-testing,
+          implementation-semantics,
+          tayk-adr,
+        ]
+      testing_instruction: scenario-based-write-tests-first
+      testing_report_format: scenario-based-test-report
+    capabilities: [edit, enable-skills]
     rules:
       - condition: テスト作成が完了した
         next: implement
@@ -209,7 +215,8 @@ steps:
     policy:
       [contract-change, design-planning, tayk-traceability, tayk-toolchain]
     knowledge: [architecture, tayk-adr, tayk-domain]
-    instruction: tayk-replan-implementation
+    instruction:
+      [scenario-based-replan-implementation, tayk-replan-implementation]
     output_contracts:
       report:
         - name: plan.md

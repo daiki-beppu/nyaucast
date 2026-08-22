@@ -7,8 +7,9 @@
 #   tayk-fix      — バグ修正・回帰修正（intake → 診断 → 診断レビュー → 再現テスト →
 #                   原因修正 → peer-review / adjudication / remediation / final-gate → spillover）
 #   tayk-intake   — feature / fix 共通の intake（wayfinder map / ticket 対応）
-# 一般の計画・test-first・実装・レビュー・修正 prompt は takt から eject した
-# .takt/steps/ を使い、tayk 固有の gate / policy / knowledge だけを重ねる。
+# 一般の計画・test-first は takt の型付き builtin step fragment を直接参照し、
+# project fragment は builtin に差し込み口がない replan と tayk 固有 spillover だけを持つ。
+# 実装・レビュー・修正 prompt にも builtin を使い、tayk 固有の gate / policy / knowledge だけを重ねる。
 # PR review は project workflow を持たず、takt-review skill から builtin
 # review-takt-default を使う。
 # commit / push / PR 作成は workflow 完了後に takt の auto_pr が行う（ADR-0008「Git と PR」）。

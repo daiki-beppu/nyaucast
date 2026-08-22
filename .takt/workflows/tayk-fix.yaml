@@ -184,7 +184,7 @@ steps:
         tayk-adr,
       ]
     required_permission_mode: edit
-    instruction: tayk-reproduce
+    instruction: [write-tests-first, tayk-reproduce]
     output_contracts:
       report:
         - name: test-report.md
@@ -216,7 +216,7 @@ steps:
     knowledge:
       [takt, architecture, implementation-semantics, tayk-adr, tayk-domain]
     required_permission_mode: edit
-    instruction: tayk-repair
+    instruction: [implement-maintenance, tayk-repair]
     output_contracts:
       report:
         - name: maintenance-scope.md

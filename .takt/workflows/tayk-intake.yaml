@@ -41,7 +41,7 @@ steps:
     persona: tayk-intake-analyst
     knowledge:
       - tayk-domain
-    # review-readonly = Read / Glob / Grep / Bash / WebSearch / WebFetch。
+    # readonly = Read / Glob / Grep / Bash / WebSearch / WebFetch。
     # gh CLI を使うため Bash が要る。編集は edit: false で禁じる。
     capabilities: readonly
     instruction: tayk-intake

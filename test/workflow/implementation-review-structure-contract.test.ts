@@ -8,9 +8,7 @@ const workflowPaths = {
 } as const;
 
 const skillEnabledStepPaths = [
-  ".takt/steps/implementation-high-plan-to-write-tests.yaml",
   ".takt/steps/implementation-high-replan-to-implement.yaml",
-  ".takt/steps/implementation-high-write-tests-to-implement.yaml",
 ] as const;
 
 interface Rule {
@@ -22,10 +20,15 @@ interface Step {
   args?: Record<string, unknown>;
   call?: string;
   capabilities?: unknown;
+  instruction?: string | string[];
   kind?: string;
   name?: string;
+  output_contracts?: {
+    report?: { format?: string; name?: string }[];
+  };
   rules?: Rule[];
   uses?: string;
+  with?: Record<string, unknown>;
 }
 
 function readWorkflow(
@@ -113,7 +116,21 @@ describe("takt 0.60 review convergence wiring", () => {
     ]);
   });
 
-  test("enables skills on planning, diagnosis, and test-writing steps", () => {
+  test("uses parameterized builtin fragments for planning and test writing", () => {
+    const plan = requireStep(workflowPaths.feature, "plan");
+    const writeTests = requireStep(workflowPaths.feature, "write_tests");
+
+    expect(plan.uses).toBe("development-core-plan");
+    expect(plan.with?.["plan_instruction"]).toBe("scenario-based-plan");
+    expect(plan.capabilities).toEqual(["readonly", "enable-skills"]);
+    expect(writeTests.uses).toBe("development-core-write-tests");
+    expect(writeTests.with?.["testing_instruction"]).toBe(
+      "scenario-based-write-tests-first"
+    );
+    expect(writeTests.capabilities).toEqual(["edit", "enable-skills"]);
+  });
+
+  test("enables skills on diagnosis and the remaining local replan fragment", () => {
     expect(requireStep(workflowPaths.fix, "diagnose").capabilities).toEqual([
       "readonly",
       "enable-skills",
@@ -128,6 +145,26 @@ describe("takt 0.60 review convergence wiring", () => {
 
       expect(step["capabilities"]).toContain("enable-skills");
     }
+  });
+
+  test("composes builtin and tayk instructions instead of replacing upstream contracts", () => {
+    expect(requireStep(workflowPaths.feature, "replan").instruction).toEqual([
+      "scenario-based-replan-implementation",
+      "tayk-replan-implementation",
+    ]);
+    expect(requireStep(workflowPaths.fix, "reproduce").instruction).toEqual([
+      "write-tests-first",
+      "tayk-reproduce",
+    ]);
+    expect(requireStep(workflowPaths.fix, "repair").instruction).toEqual([
+      "implement-maintenance",
+      "tayk-repair",
+    ]);
+    expect(
+      readRepositoryFile(
+        ".takt/facets/output-contracts/tayk-replan-decision.md"
+      )
+    ).toStartWith("{extends:scenario-based-plan}");
   });
 
   test("keeps tayk policy at the 0.60 final gate", () => {

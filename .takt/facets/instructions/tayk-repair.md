@@ -1,5 +1,3 @@
-{extends:implement-maintenance}
-
 診断レポートを、この修正タスクの計画として扱ってください。
 
 ## 手順

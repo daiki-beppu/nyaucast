@@ -1,5 +1,3 @@
-{extends:write-tests-first}
-
 診断レポートを、この修正タスクの計画として扱ってください。
 
 この workflow 固有の追加契約:

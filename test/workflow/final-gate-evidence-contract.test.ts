@@ -6,6 +6,8 @@ interface Step {
   args?: Record<string, unknown>;
   call?: string;
   name?: string;
+  uses?: string;
+  with?: Record<string, unknown>;
 }
 
 function requireStep(path: string, name: string): Step {
@@ -23,26 +25,17 @@ function requireStep(path: string, name: string): Step {
 
 describe("takt 0.60 final-gate contract", () => {
   test("uses requirement scenarios from feature planning through final gate", () => {
-    const planPath = ".takt/steps/implementation-high-plan-to-write-tests.yaml";
-    const testsPath =
-      ".takt/steps/implementation-high-write-tests-to-implement.yaml";
-    const plan = parseYamlRecord({
-      expectedShape: "a step fragment object",
-      relativePath: planPath,
-      source: readRepositoryFile(planPath),
-    });
-    const tests = parseYamlRecord({
-      expectedShape: "a step fragment object",
-      relativePath: testsPath,
-      source: readRepositoryFile(testsPath),
-    });
-    const review = requireStep(
-      ".takt/workflows/tayk-feature.yaml",
-      "peer_review"
-    );
+    const workflowPath = ".takt/workflows/tayk-feature.yaml";
+    const plan = requireStep(workflowPath, "plan");
+    const tests = requireStep(workflowPath, "write_tests");
+    const review = requireStep(workflowPath, "peer_review");
 
-    expect(plan["instruction"]).toBe("scenario-based-plan");
-    expect(tests["instruction"]).toBe("scenario-based-write-tests-first");
+    expect(plan.uses).toBe("development-core-plan");
+    expect(plan.with?.["plan_instruction"]).toBe("scenario-based-plan");
+    expect(tests.uses).toBe("development-core-write-tests");
+    expect(tests.with?.["testing_instruction"]).toBe(
+      "scenario-based-write-tests-first"
+    );
     expect(review.call).toBe("peer-review");
     expect(review.args?.["final_gate_instruction"]).toBe(
       "scenario-based-supervise-review-resolution"

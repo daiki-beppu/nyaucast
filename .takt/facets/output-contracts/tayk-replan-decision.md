@@ -1,3 +1,5 @@
+{extends:scenario-based-plan}
+
 ```markdown
 # Replan Decision
 

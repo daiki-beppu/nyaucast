@@ -39,7 +39,7 @@ takt --version
 - `tayk-feature` / `tayk-fix` は main から手動で作った detached HEAD の worktree 内で pipeline 実行する。Finding Contract は廃止済みだが、新しい review-adjudication 経路の隔離 clone 実走行が未検証のため、検証完了までは既知の pipeline 経路を維持する
 - 手動 worktree では `direnv allow` 後に `takt --pipeline --auto-pr -b <新規ブランチ名> -w <workflow> -i <N>` を実行する。`--auto-pr` は `--pipeline` 専用で、pipeline の issue 指定には `-i` が必要である。pipeline が `git checkout -b` するため、`-b` は未作成のブランチ名に限る
 - workflow / step fragments / facets / schemas は `.takt/` 配下に置き git 管理する（ADR-0008）。定義を変えたら `takt workflow doctor` で全件検証する
-- takt 更新時は `takt-experimental` / `peer-review` / `development-remediation` と、project の `.takt/steps/` の基礎 facet を比較する。breaking change を先に取り込み、tayk 固有 policy / knowledge overlay を再適用する
+- takt 更新時は `takt-experimental` / `development-core-plan` / `development-core-write-tests` / `peer-review` / `development-remediation` と、project の `.takt/steps/` に残る基礎 facet を比較する。breaking change を先に取り込み、tayk 固有 policy / knowledge / instruction composition を再適用する
 - 着手前に main を `git pull --ff-only` で最新化する
 
 ## takt に渡す issue の書き方
