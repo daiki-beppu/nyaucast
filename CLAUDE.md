@@ -8,7 +8,7 @@ YouTube チャンネル運営を自動化するツールキット。skill に蓄
 
 ## 環境
 
-- bun / node は Nix flake devShell が供給する。**direnv を通していないシェルには bun が存在しない**（グローバルには入っていない）
+- bun / node は Nix flake devShell が供給し、リポジトリ作業では direnv を通した devShell の bun を使う。**グローバル（nix-darwin per-user profile）にも bun はあるが、flake の pin とは供給元が別で版がずれ得る**。lefthook / nixfmt / `node_modules/.bin` は devShell のみ供給で、direnv を通さないシェルには無い
 - worktree を作ったら毎回 `direnv allow` — devShell 入場時に `bun install --frozen-lockfile` が走る（`node_modules` は worktree ごとに要る）。**lockfile が `package.json` と乖離していると install は失敗するが devShell には入れてしまう** — 警告だけ出て `node_modules` が無い状態になるので、`bun install` で lockfile を更新する
 - パッケージ操作・スクリプト実行は bun のみ。npm / pnpm / yarn とそのラッパを使わない
 - npm CLI は ADR-0003 が定める配布互換境界の限定例外だけに使う。release の `npm publish` / `npm publish --dry-run` と、package 統合テストの `npm pack` / 一時 consumer への `npm install` だけを許可する。後者は npm tarball と生成 shim の互換検証であり、リポジトリの依存管理ではない
