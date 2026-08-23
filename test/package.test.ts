@@ -284,7 +284,7 @@ describe.skipIf(prerequisitesUnavailable)("package foundation", () => {
       const shimPath = join(consumerRoot, "node_modules", ".bin", "tayk");
       expect(statSync(shimPath).mode & 0o111).not.toBe(0);
       const fakeBun = createFakeBun(directory);
-      const args = ["collection.plan", "--name", "空 白", "--", "末尾"];
+      const args = ["mcp", "--name", "空 白", "--", "末尾"];
       const executed = spawnSync(shimPath, args, {
         cwd: consumerRoot,
         encoding: "utf-8",

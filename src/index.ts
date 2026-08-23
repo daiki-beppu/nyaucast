@@ -1,2 +1,9 @@
-// bin ランチャ (bin/tayk.js) の委譲先。MCP tool の実装は #1 (tracer) で入り、
-// ADR-0001 に従ってここは tool のフラットな import 配列だけを持つ entry point になる。
+import { startMcpServer } from "./mcp";
+
+const command = process.argv.at(2);
+
+if (command === "mcp") {
+  await startMcpServer(process.cwd());
+} else if (command !== undefined) {
+  throw new Error(`unsupported tayk command: ${command}`);
+}

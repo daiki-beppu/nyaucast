@@ -1,16 +1,27 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 import {
   bunExecutablePath,
   installProductionPackage,
-  installProductionPackageWithLocalRuntimeDependency,
+  installPackageWithMisclassifiedRuntimeDependency,
   installedDependencies,
   instrumentDependencyProbe,
   instrumentRuntimeMarkers,
   isWithinDirectory,
-  localRuntimeDependencyName,
   nodeExecutablePath,
   packageSmokePrerequisitesUnavailable,
   readJsonRecord,
@@ -34,7 +45,56 @@ const describeProductionPackageSmoke = describe.skipIf(
   packageSmokePrerequisitesUnavailable
 );
 
+function stringEnvironment(
+  environment: NodeJS.ProcessEnv
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(environment).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined
+    )
+  );
+}
+
 describeProductionPackageSmoke("production package smoke", () => {
+  test("starts the installed MCP server from an external channel directory with bundled migrations", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "tayk-package-mcp-"));
+    try {
+      const installed = installProductionPackage(directory);
+      const channelRoot = join(directory, "channel");
+      mkdirSync(channelRoot);
+      const transport = new StdioClientTransport({
+        args: ["mcp"],
+        command: installed.shimPath,
+        cwd: channelRoot,
+        env: stringEnvironment(installed.environment),
+        stderr: "pipe",
+      });
+      const client = new Client({
+        name: "tayk-package-test",
+        version: "1.0.0",
+      });
+
+      await client.connect(transport);
+      try {
+        const tools = await client.listTools();
+        expect(tools.tools.map((tool) => tool.name).toSorted()).toEqual([
+          "plan_check_title",
+          "plan_init",
+        ]);
+        const result = await client.callTool({
+          arguments: { title: "Night Drive" },
+          name: "plan_init",
+        });
+        expect(result.isError).not.toBeTrue();
+        expect(existsSync(join(channelRoot, "data", "local.db"))).toBeTrue();
+      } finally {
+        await client.close();
+      }
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   test("[REQ-116-01] should install unchanged production dependencies and import every direct dependency when packed for a consumer (TC-116-01)", () => {
     withTemporaryDirectory((directory) => {
       const installed = installProductionPackage(directory);
@@ -205,8 +265,7 @@ describeProductionPackageSmoke("production package smoke", () => {
 
   test("[REQ-116-05] should fail the smoke verification when one resolved direct dependency is missing (TC-116-05)", () => {
     withTemporaryDirectory((directory) => {
-      const installed =
-        installProductionPackageWithLocalRuntimeDependency(directory);
+      const installed = installProductionPackage(directory);
       instrumentDependencyProbe(installed);
       const markerPath = join(directory, "dependency-marker.json");
       const healthy = runInstalledDependencyProbe(installed, markerPath);
@@ -214,11 +273,13 @@ describeProductionPackageSmoke("production package smoke", () => {
         "healthy installed dependency imports",
         healthy.result
       );
-      const target = healthy.probes?.[0];
+      const target = healthy.probes?.find(
+        ({ dependency }) => dependency === "zod"
+      );
       if (target === undefined) {
         throw new Error("At least one direct runtime dependency is required");
       }
-      expect(target.dependency).toBe(localRuntimeDependencyName);
+      expect(target.dependency).toBe("zod");
       if (!isWithinDirectory(installed.consumerRoot, target.packageRoot)) {
         throw new Error(
           `Refusing to remove dependency outside consumer: ${target.packageRoot}`
@@ -238,7 +299,7 @@ describeProductionPackageSmoke("production package smoke", () => {
       expect(missing.result.signal).toBeNull();
       expect(missing.result.stderr).toContain(target.dependency);
       expect(readFileSync(installed.entrypointPath, "utf-8")).toContain(
-        "../dependency-probe.ts"
+        'import { startMcpServer } from "./mcp"'
       );
       expect(() => {
         requireSuccessfulSubprocess(
@@ -246,6 +307,20 @@ describeProductionPackageSmoke("production package smoke", () => {
           missing.result
         );
       }).toThrow();
+    });
+  });
+
+  test("fails when a required runtime dependency is classified as development-only", () => {
+    withTemporaryDirectory((directory) => {
+      const installed = installPackageWithMisclassifiedRuntimeDependency(
+        directory,
+        "drizzle-orm"
+      );
+
+      const result = runInstalledShim(installed, {});
+
+      requireFailedSubprocess("misclassified runtime dependency", result);
+      expect(result.stderr).toContain("drizzle-orm");
     });
   });
 });

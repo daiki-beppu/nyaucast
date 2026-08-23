@@ -1,0 +1,150 @@
+{
+  "version": "6",
+  "dialect": "sqlite",
+  "id": "455961b4-498a-4446-8db5-6e3e9c772880",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "tables": {
+    "approvals": {
+      "name": "approvals",
+      "columns": {
+        "collection_id": {
+          "name": "collection_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "gate": {
+          "name": "gate",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "approved_at": {
+          "name": "approved_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "approvals_collection_id_collections_id_fk": {
+          "name": "approvals_collection_id_collections_id_fk",
+          "tableFrom": "approvals",
+          "tableTo": "collections",
+          "columnsFrom": ["collection_id"],
+          "columnsTo": ["id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "approvals_collection_id_gate_approved_at_pk": {
+          "columns": ["collection_id", "gate", "approved_at"],
+          "name": "approvals_collection_id_gate_approved_at_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "approvals_gate_check": {
+          "name": "approvals_gate_check",
+          "value": "\"approvals\".\"gate\" in ('produce', 'publish')"
+        }
+      }
+    },
+    "collections": {
+      "name": "collections",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "collections_title_unique": {
+          "name": "collections_title_unique",
+          "columns": ["title"],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "rejections": {
+      "name": "rejections",
+      "columns": {
+        "collection_id": {
+          "name": "collection_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "gate": {
+          "name": "gate",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "rejected_at": {
+          "name": "rejected_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "rejections_collection_id_collections_id_fk": {
+          "name": "rejections_collection_id_collections_id_fk",
+          "tableFrom": "rejections",
+          "tableTo": "collections",
+          "columnsFrom": ["collection_id"],
+          "columnsTo": ["id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "rejections_collection_id_gate_rejected_at_pk": {
+          "columns": ["collection_id", "gate", "rejected_at"],
+          "name": "rejections_collection_id_gate_rejected_at_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "rejections_gate_check": {
+          "name": "rejections_gate_check",
+          "value": "\"rejections\".\"gate\" in ('produce', 'publish')"
+        }
+      }
+    }
+  },
+  "views": {},
+  "enums": {},
+  "_meta": {
+    "schemas": {},
+    "tables": {},
+    "columns": {}
+  },
+  "internal": {
+    "indexes": {}
+  }
+}

@@ -153,7 +153,7 @@ describe.skipIf(fallowUnavailable)("Fallow dependency gate", () => {
       declaredTargetDependencies,
       ignoredRuntimeDependencies,
     }).toEqual({
-      declaredTargetDependencies: [],
+      declaredTargetDependencies: [...targetRuntimeDependencies],
       ignoredRuntimeDependencies: [],
     });
   });

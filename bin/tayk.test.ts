@@ -169,7 +169,7 @@ describe.skipIf(prerequisitesUnavailable)("tayk launcher", () => {
   test("should preserve arguments, stdio, and a non-zero Bun exit code", () => {
     withLauncherFixture((directory) => {
       const fakeBun = createFakeBun(directory);
-      const args = ["collection.plan", "--name", "空 白", "--", "末尾"];
+      const args = ["mcp", "--name", "空 白", "--", "末尾"];
 
       const result = runLauncher({
         args,

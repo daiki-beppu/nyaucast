@@ -42,6 +42,7 @@ _Avoid_: approve, 承認フロー (独立した承認操作は作らない。起
 
 **knowledge codec**:
 「いつ・どの MCP tool を・どう使うか」のドメイン知識パッケージ。MCP tool の description (WHAT) に対し、knowledge codec は WHEN/HOW を提供する。粗粒度の workflow tool を置かないため (ADR-0007)、**区間を歩く手順を持つ唯一の担い手**でもある。5 本構成: `collection-lifecycle` / `channel-management` / `analytics` / `content-quality` / `distribution`。下流へ配布する操作面は codec のみで、旧個別 skill は配布しない。旧 skill は codec の設計材料として扱う。
+v0.1 で実装する codec は collection-lifecycle のみ。残る 4 本は v0.2 以降に 1 リリース 1 テーマで直列に追加する。
 _Avoid_: skill guide, routing layer (knowledge codec は知識の bundled 提供であり、単なるルーティングではない)
 
 **adapter**:
@@ -66,6 +67,7 @@ _Avoid_: config.default.yaml, deep merge (Python 版の旧方式)
 
 **データ 4 分類**:
 チャンネルリポのデータの SSOT を種類で機械的に決める分類。① 宣言的インテント (config 等、SSOT = git 管理 JSON) / ② ランタイム状態・履歴 (SSOT = local store) / ③ 生成成果物 (再生成可能。キャッシュ扱いで SSOT を持たない) / ④ リモート実状態 (SSOT = YouTube。ローカルにあるのは reconcile 対象のミラー)。「どこを見ればいいか」は種類の判定だけで答えが出る。
+生成成果物を原子的に公開・置換する間だけ存在する ownership marker と予約 directory は ③ の一時資源であり、collection の進捗、gate 判断、read model の事実を表さない。安定状態へ収束した後は残さない。
 _Avoid_: 「SSOT は DB に全部集約」(① の git レビュー可能性と ④ の原理的なリモート性を壊す)
 
 **local store**:
@@ -100,6 +102,10 @@ _Avoid_: pipeline, workflow (lifecycle は collection 固有の制作工程を�
 collection 内の個別トラックをクロスフェード結合した最終音声ファイル (`master.mp3` / `master.wav`)。この音声が動画の音声トラックになる。
 
 ## マルチチャンネル運用
+
+**channel bootstrap**:
+チャンネルリポを tayk が扱える規約状態へ初期化すること。新規リポの作成と既存リポの取り込みを包含する概念で、具体的な入口はそれぞれ `tayk init` / `tayk import` が担う。
+_Avoid_: setup (何を初期化する操作かが曖昧)
 
 **channel registry**:
 運営者が所有する全 first-party チャンネルリポのパス一覧。`~/.config/tayk/channels.json` に JSON 配列で格納する。各エントリはチャンネルリポの絶対パスのみを持ち、表示名等のメタデータは各リポの `config/channel/meta.json` から動的に解決する（二重管理の回避）。

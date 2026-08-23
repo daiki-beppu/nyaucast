@@ -134,8 +134,13 @@ function importTarget(exportValue: unknown): string | null {
     exportValue !== null &&
     !Array.isArray(exportValue)
   ) {
-    const importValue = (exportValue as JsonRecord)["import"];
-    return typeof importValue === "string" ? importValue : null;
+    const conditions = exportValue as JsonRecord;
+    for (const condition of ["import", "node", "default"]) {
+      const target = importTarget(conditions[condition]);
+      if (target !== null) {
+        return target;
+      }
+    }
   }
   return null;
 }

@@ -2,7 +2,7 @@
 
 ## Status
 
-accepted (2026-07-11)
+accepted (2026-07-11, amended 2026-08-23)
 
 ## Context
 
@@ -12,7 +12,7 @@ local store はチャンネルリポごとの `<CHANNEL_DIR>/data/local.db`（li
 
 1. **tayk が DB を開くとき、未適用マイグレーションを自動適用する**（drizzle-orm の `migrate()`）。明示的な migrate コマンドを前提工程にしない
 2. **マイグレーションは additive（追加的）を原則とする**。カラム削除・型変更・テーブル再構築などの破壊的変更は ADR 級の判断として個別に文書化する
-3. **適用前に DB ファイルをコピーバックアップする**（`local.db.bak-<version>` 形式）。embedded ファイル DB のため `cp` 一発で完全バックアップになる
+3. **適用前に live libSQL 接続から WAL を含む standalone snapshot を作成する**（`local.db.bak-<from>-to-<to>` 形式）。candidate snapshot を単独で開いて integrity と適用済み migration version を検証し、固定名へ排他的に公開できた場合だけ migration を開始する。同名 backup が存在する場合は、同じ論理 snapshot と確認できたときだけ再利用し、上書きしない
 4. **SQL は `drizzle-kit generate` で生成し、git 管理して npm パッケージに同梱する**。schema 定義は 1 ファイル（`src/db/schema.ts`）に集約する
 
 ## Why
@@ -20,7 +20,7 @@ local store はチャンネルリポごとの `<CHANNEL_DIR>/data/local.db`（li
 - **儀式的停止点の排除**: 呼び手が agent の場合、「先に migrate を実行せよ」エラーは agent が migrate を呼んで再試行するだけで、安全性を実質足さずに自動化へ停止点を挟むだけになる
 - **分散 DB の版管理問題の消滅**: 自動適用なら「tayk が触った DB は常に最新」が不変条件になり、「どのチャンネルリポがどの schema 版か」という管理カテゴリ自体が存在しなくなる
 - **前例のある状況**: 単一ユーザー・ローカル・embedded という条件は、デスクトップアプリが SQLite に行う自動マイグレーションと同型
-- **リスクの引き受け方**: 自動適用のデータ破壊リスクは、additive 原則（そもそも壊さない）と適用前バックアップ（壊れても戻せる）の 2 段で受ける
+- **リスクの引き受け方**: 自動適用のデータ破壊リスクは、additive 原則（そもそも壊さない）と、main DB・WAL を一つの論理 DB として確定した適用前 snapshot（壊れても戻せる）の 2 段で受ける
 
 ## Considered Options
 

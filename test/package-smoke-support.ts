@@ -5,11 +5,13 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, relative, sep } from "node:path";
 
 import {
@@ -28,8 +30,9 @@ const subprocessTimeoutMilliseconds = 60_000;
 const unavailableRegistry = "http://127.0.0.1:1";
 const bunPath = Bun.which("bun");
 const nodePath = Bun.which("node");
+const npmPath = Bun.which("npm");
 export const packageSmokePrerequisitesUnavailable =
-  bunPath === null || nodePath === null;
+  bunPath === null || nodePath === null || npmPath === null;
 const runningInCi = process.env["CI"] !== undefined && process.env["CI"] !== "";
 
 if (packageSmokePrerequisitesUnavailable && runningInCi) {
@@ -46,6 +49,7 @@ function availableExecutablePath(path: string | null): string {
 export const bunExecutablePath = (): string => availableExecutablePath(bunPath);
 export const nodeExecutablePath = (): string =>
   availableExecutablePath(nodePath);
+const npmExecutablePath = (): string => availableExecutablePath(npmPath);
 
 type JsonRecord = Record<string, unknown>;
 export type SubprocessResult = SpawnSyncReturns<string>;
@@ -69,9 +73,6 @@ export interface DependencyProbeOutcome {
   probes: DependencyProbe[] | null;
   result: SubprocessResult;
 }
-
-export const localRuntimeDependencyName = "tayk-package-smoke-runtime";
-const localRuntimeDependencyVersion = "0.0.0-package-smoke-fixture";
 
 export function withTemporaryDirectory(run: (directory: string) => void): void {
   withSharedTemporaryDirectory("tayk-smoke-", run, realpathSync);
@@ -146,18 +147,102 @@ export function requireFailedSubprocess(
 function createIsolatedEnvironment(directory: string): NodeJS.ProcessEnv {
   const home = join(directory, "home");
   const config = join(directory, "config");
-  const cache = join(directory, "bun-cache");
+  const temporary = join(directory, "tmp");
+  const cache = join(directory, "npm-cache");
   mkdirSync(home);
   mkdirSync(config);
+  mkdirSync(temporary);
   mkdirSync(cache);
 
   return {
     ...process.env,
-    BUN_INSTALL_CACHE_DIR: cache,
     HOME: home,
+    TMPDIR: temporary,
     XDG_CONFIG_HOME: config,
+    npm_config_cache: cache,
   };
 }
+
+interface DependencyTarballFixture {
+  dependencies: Record<string, string>;
+}
+
+let dependencyTarballFixture: DependencyTarballFixture | undefined;
+
+const productionDependencyNames = (): string[] => {
+  const pending = Object.keys(
+    requireStringRecord(
+      readJsonRecord(packageJsonPath)["dependencies"] ?? {},
+      "source dependencies"
+    )
+  );
+  const discovered = new Set<string>();
+  while (pending.length > 0) {
+    const dependency = pending.pop();
+    if (dependency === undefined || discovered.has(dependency)) {
+      continue;
+    }
+    const manifestPath = join(
+      packageRoot,
+      "node_modules",
+      dependency,
+      "package.json"
+    );
+    if (!existsSync(manifestPath)) {
+      continue;
+    }
+    discovered.add(dependency);
+    const manifest = readJsonRecord(manifestPath);
+    const children = {
+      ...requireStringRecord(
+        manifest["dependencies"] ?? {},
+        `${dependency} dependencies`
+      ),
+      ...requireStringRecord(
+        manifest["optionalDependencies"] ?? {},
+        `${dependency} optional dependencies`
+      ),
+    };
+    pending.push(...Object.keys(children));
+  }
+  return [...discovered].toSorted();
+};
+
+const prepareDependencyTarballs = (): DependencyTarballFixture => {
+  if (dependencyTarballFixture !== undefined) {
+    return dependencyTarballFixture;
+  }
+  const root = mkdtempSync(join(tmpdir(), "tayk-npm-dependencies-"));
+  process.once("exit", () => {
+    rmSync(root, { force: true, recursive: true });
+  });
+  const cache = join(root, "npm-cache");
+  mkdirSync(cache);
+  const dependencies: Record<string, string> = {};
+  for (const dependency of productionDependencyNames()) {
+    const packageDirectory = join(packageRoot, "node_modules", dependency);
+    const packed = spawnSync(
+      npmExecutablePath(),
+      ["pack", packageDirectory, "--ignore-scripts", "--json"],
+      {
+        cwd: root,
+        encoding: "utf-8",
+        env: { ...process.env, npm_config_cache: cache },
+        killSignal: "SIGKILL",
+        timeout: subprocessTimeoutMilliseconds,
+      }
+    );
+    requireSuccessfulSubprocess(`npm pack ${dependency}`, packed);
+    const result = JSON.parse(packed.stdout) as { filename?: unknown }[];
+    const filename = result[0]?.filename;
+    if (typeof filename !== "string") {
+      throw new TypeError(`npm pack ${dependency} returned no filename`);
+    }
+    dependencies[dependency] = `file:${join(root, filename)}`;
+  }
+  dependencyTarballFixture = { dependencies };
+  return dependencyTarballFixture;
+};
 
 export function sourceDependencies(): Record<string, string> {
   return requireStringRecord(
@@ -168,25 +253,30 @@ export function sourceDependencies(): Record<string, string> {
 
 function installPackageFromSource(
   directory: string,
-  sourcePackageRoot: string,
-  consumerRuntimeDependencies: Record<string, string>
+  sourcePackageRoot: string
 ): InstalledPackage {
   const environment = createIsolatedEnvironment(directory);
   const tarballPath = join(directory, "tayk-production.tgz");
   const packed = spawnSync(
-    bunExecutablePath(),
-    ["pm", "pack", "--ignore-scripts", "--filename", tarballPath],
+    npmExecutablePath(),
+    ["pack", sourcePackageRoot, "--ignore-scripts", "--json"],
     {
-      cwd: sourcePackageRoot,
+      cwd: directory,
       encoding: "utf-8",
       env: environment,
       killSignal: "SIGKILL",
       timeout: subprocessTimeoutMilliseconds,
     }
   );
-  requireSuccessfulSubprocess("bun pm pack", packed);
-  if (!existsSync(tarballPath)) {
-    throw new Error(`bun pm pack did not create ${tarballPath}`);
+  requireSuccessfulSubprocess("npm pack tayk", packed);
+  const packResult = JSON.parse(packed.stdout) as { filename?: unknown }[];
+  const packedFilename = packResult[0]?.filename;
+  if (typeof packedFilename !== "string") {
+    throw new TypeError("npm pack tayk returned no filename");
+  }
+  const generatedTarballPath = join(directory, packedFilename);
+  if (generatedTarballPath !== tarballPath) {
+    copyFileSync(generatedTarballPath, tarballPath);
   }
 
   const sourceManifest = readJsonRecord(
@@ -195,16 +285,16 @@ function installPackageFromSource(
   const packageName = requireString(sourceManifest["name"], "package name");
   const consumerRoot = join(directory, "consumer");
   mkdirSync(consumerRoot);
+  const dependencyTarballs = prepareDependencyTarballs();
   writeFileSync(
     join(consumerRoot, "package.json"),
     `${JSON.stringify(
       {
         dependencies: {
-          ...consumerRuntimeDependencies,
           [packageName]: `file:${tarballPath}`,
         },
         name: "tayk-production-smoke-consumer",
-        overrides: consumerRuntimeDependencies,
+        overrides: dependencyTarballs.dependencies,
         private: true,
         version: "0.0.0",
       },
@@ -214,12 +304,15 @@ function installPackageFromSource(
   );
 
   const installed = spawnSync(
-    bunExecutablePath(),
+    npmExecutablePath(),
     [
       "install",
-      "--production",
       "--ignore-scripts",
-      "--backend=copyfile",
+      "--legacy-peer-deps",
+      "--no-audit",
+      "--no-fund",
+      "--offline",
+      "--omit=dev",
       `--registry=${unavailableRegistry}`,
     ],
     {
@@ -230,7 +323,7 @@ function installPackageFromSource(
       timeout: subprocessTimeoutMilliseconds,
     }
   );
-  requireSuccessfulSubprocess("bun install production tarball", installed);
+  requireSuccessfulSubprocess("npm install production tarball", installed);
 
   const packageDirectory = realpathSync(
     join(consumerRoot, "node_modules", packageName)
@@ -244,46 +337,15 @@ function installPackageFromSource(
   };
 }
 
-function createLocalRuntimeDependency(directory: string): string {
-  const dependencyRoot = join(directory, "local-runtime-dependency");
-  const tarballPath = join(directory, "local-runtime-dependency.tgz");
-  mkdirSync(dependencyRoot, { recursive: true });
-  writeFileSync(
-    join(dependencyRoot, "package.json"),
-    `${JSON.stringify(
-      {
-        exports: { ".": { import: "./index.js" } },
-        name: localRuntimeDependencyName,
-        type: "module",
-        version: localRuntimeDependencyVersion,
-      },
-      null,
-      2
-    )}\n`
-  );
-  writeFileSync(join(dependencyRoot, "index.js"), "export {};\n");
-  const packed = spawnSync(
-    bunExecutablePath(),
-    ["pm", "pack", "--ignore-scripts", "--filename", tarballPath],
-    {
-      cwd: dependencyRoot,
-      encoding: "utf-8",
-      killSignal: "SIGKILL",
-      timeout: subprocessTimeoutMilliseconds,
-    }
-  );
-  requireSuccessfulSubprocess("bun pm pack local runtime dependency", packed);
-  if (!existsSync(tarballPath)) {
-    throw new Error(`bun pm pack did not create ${tarballPath}`);
-  }
-  return `file:${tarballPath}`;
+export function installProductionPackage(directory: string): InstalledPackage {
+  return installPackageFromSource(directory, packageRoot);
 }
 
-function createSourcePackageWithLocalRuntimeDependency(directory: string): {
-  dependencyReference: string;
-  sourcePackageRoot: string;
-} {
-  const sourcePackageRoot = join(directory, "source-package");
+export function installPackageWithMisclassifiedRuntimeDependency(
+  directory: string,
+  dependency: string
+): InstalledPackage {
+  const sourcePackageRoot = join(directory, "misclassified-source");
   mkdirSync(sourcePackageRoot);
   cpSync(join(packageRoot, "bin"), join(sourcePackageRoot, "bin"), {
     recursive: true,
@@ -291,37 +353,35 @@ function createSourcePackageWithLocalRuntimeDependency(directory: string): {
   cpSync(join(packageRoot, "src"), join(sourcePackageRoot, "src"), {
     recursive: true,
   });
-
-  const sourceManifest = readJsonRecord(packageJsonPath);
-  const dependencyReference = createLocalRuntimeDependency(directory);
+  const manifest = readJsonRecord(packageJsonPath);
+  const dependencies = requireStringRecord(
+    manifest["dependencies"] ?? {},
+    "source dependencies"
+  );
+  const version = dependencies[dependency];
+  if (version === undefined) {
+    throw new Error(`${dependency} is not a production dependency`);
+  }
+  const productionDependencies = Object.fromEntries(
+    Object.entries(dependencies).filter(([name]) => name !== dependency)
+  );
+  const devDependencies = requireStringRecord(
+    manifest["devDependencies"] ?? {},
+    "source devDependencies"
+  );
   writeFileSync(
     join(sourcePackageRoot, "package.json"),
     `${JSON.stringify(
       {
-        ...sourceManifest,
-        dependencies: {
-          [localRuntimeDependencyName]: localRuntimeDependencyVersion,
-        },
+        ...manifest,
+        dependencies: productionDependencies,
+        devDependencies: { ...devDependencies, [dependency]: version },
       },
       null,
       2
     )}\n`
   );
-  return { dependencyReference, sourcePackageRoot };
-}
-
-export function installProductionPackage(directory: string): InstalledPackage {
-  return installPackageFromSource(directory, packageRoot, {});
-}
-
-export function installProductionPackageWithLocalRuntimeDependency(
-  directory: string
-): InstalledPackage {
-  const { dependencyReference, sourcePackageRoot } =
-    createSourcePackageWithLocalRuntimeDependency(directory);
-  return installPackageFromSource(directory, sourcePackageRoot, {
-    [localRuntimeDependencyName]: dependencyReference,
-  });
+  return installPackageFromSource(directory, sourcePackageRoot);
 }
 
 export function runInstalledShim(
@@ -398,12 +458,6 @@ export function runtimeMarkerEnvironment(
 export function instrumentDependencyProbe(installed: InstalledPackage): void {
   const probePath = join(installed.packageDirectory, "dependency-probe.ts");
   copyFileSync(dependencyProbeFixturePath, probePath);
-  writeFileSync(
-    installed.entrypointPath,
-    `${readFileSync(installed.entrypointPath, "utf-8")}
-await import("../dependency-probe.ts");
-`
-  );
 }
 
 function readDependencyProbes(path: string): DependencyProbe[] {
@@ -433,10 +487,21 @@ export function runInstalledDependencyProbe(
   markerPath: string
 ): DependencyProbeOutcome {
   rmSync(markerPath, { force: true });
-  const result = runInstalledShim(installed, {
-    TAYK_DEPENDENCY_CONSUMER_ROOT: installed.consumerRoot,
-    TAYK_DEPENDENCY_MARKER: markerPath,
-  });
+  const result = spawnSync(
+    bunExecutablePath(),
+    [join(installed.packageDirectory, "dependency-probe.ts")],
+    {
+      cwd: installed.consumerRoot,
+      encoding: "utf-8",
+      env: {
+        ...installed.environment,
+        TAYK_DEPENDENCY_CONSUMER_ROOT: installed.consumerRoot,
+        TAYK_DEPENDENCY_MARKER: markerPath,
+      },
+      killSignal: "SIGKILL",
+      timeout: subprocessTimeoutMilliseconds,
+    }
+  );
   return {
     probes: existsSync(markerPath) ? readDependencyProbes(markerPath) : null,
     result,

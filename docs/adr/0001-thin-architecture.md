@@ -2,7 +2,7 @@
 
 ## Status
 
-accepted (2026-07-08)
+accepted (2026-07-08, amended 2026-08-23)
 
 ## Context
 
@@ -17,6 +17,13 @@ accepted (2026-07-08)
 5. **runtime は Bun、schema は zod、DB は libSQL + Drizzle**
 6. **旧リポから引き継ぐ決定**（本リポで再議論しない）: npm 配布（旧 ADR-0006）/ `tayk` ブランド（旧 ADR-0007）/ JSON-only config（旧 ADR-0009）/ libSQL local store（旧 ADR-0017）/ CONTEXT.md の全用語
 7. **本規約の確定は tracer（plan 区間）の end-to-end 完走をもって行う**。tracer 実装中に破綻した項目は本 ADR を改訂して直す（黙って逸脱しない）
+8. **tracer で共有配置と複数資源更新規約を確定する**。
+   - tool は `src/tools/<domain>.<name>.ts`、対応テストは同じbasenameの`.test.ts`、local store schemaは`src/db/schema.ts`、生成migrationは`src/db/migrations/`、MCP adapterは`src/mcp.ts`へ置く
+   - channelごとのlocal storeは`data/local.db`、collection成果物は`collections/<id>/`へフラットに置く。channel registryは絶対path文字列だけのJSON配列とし、local storeへミラーしない
+   - DB行と生成成果物を同時更新するときは、tool専用の予約namespace、operation token、ownership marker、atomic renameを使う。新規作成はstagingからfinalへ公開する。force置換は新final公開前ならbackupからrollbackし、新final公開後はDB commit状態を推測せずbackupをdiscardへ移して破棄する
+   - rename・削除後はparent directoryをsyncする。sync完了前に後続のDB mutationまたは不可逆cleanupへ進まない。ownershipを確認できないmarker、token、ID、title、予約資源は変更せずthrowする
+   - ownership markerと予約directoryは生成中だけの一時資源であり、read model、collection進捗、gate履歴のSSOTにしない。安定状態への収束後は残さない
+   - 同じchannelのlocal storeを更新するwrite turnは、process内の順序制御と独立したlock DBのwrite transactionを組み合わせ、DB transaction開始前からpost-commit filesystem finalize完了後までprocess間で排他する。lock DBは業務状態・履歴・checkpointを持たず、所有process終了時はSQLite transactionの解放後に既存のmarker topologyから復旧する。異なるchannelは別のlock DBを使う
 
 ## Why
 
