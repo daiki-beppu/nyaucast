@@ -32,6 +32,10 @@ import {
 const collectionId = "550e8400-e29b-41d4-a716-446655440000";
 const otherCollectionId = "550e8400-e29b-41d4-a716-446655440001";
 const temporaryDirectories: string[] = [];
+const migrationProcessFixture = path.join(
+  import.meta.dirname,
+  "../../test/fixtures/local-store-migration-process.ts"
+);
 
 const channelFixture = (): string => {
   const directory = mkdtempSync(path.join(tmpdir(), "tayk-local-store-"));
@@ -92,6 +96,23 @@ const unmigratedBackupPath = (channelRoot: string): string => {
     );
   const toVersion = Math.max(...journal.entries.map((entry) => entry.when));
   return `${databasePath(channelRoot)}.bak-0-to-${toVersion}`;
+};
+
+const migrationCandidateEntries = (channelRoot: string): string[] => {
+  const candidatePrefix = `${path.basename(
+    unmigratedBackupPath(channelRoot)
+  )}.candidate`;
+  return readdirSync(path.join(channelRoot, "data")).filter((entry) =>
+    entry.startsWith(candidatePrefix)
+  );
+};
+
+const waitForFile = async (filePath: string): Promise<void> => {
+  if (existsSync(filePath)) {
+    return;
+  }
+  await Bun.sleep(5);
+  await waitForFile(filePath);
 };
 
 const createStandaloneBackup = async (
@@ -314,11 +335,7 @@ describe("local store", () => {
         "SELECT name FROM sqlite_master WHERE name = 'collections'"
       )
     ).toHaveLength(0);
-    expect(
-      readdirSync(path.join(channelRoot, "data")).filter((entry) =>
-        entry.includes(".candidate-")
-      )
-    ).toHaveLength(0);
+    expect(migrationCandidateEntries(channelRoot)).toHaveLength(0);
   });
 
   test("rejects a different valid migration snapshot without replacing it", async () => {
@@ -359,6 +376,65 @@ describe("local store", () => {
         entry.startsWith("local.db.bak-")
       )
     ).toHaveLength(1);
+  });
+
+  test("recovers a migration candidate left by a terminated process", async () => {
+    const channelRoot = channelFixture();
+    await createUnmigratedStore(channelRoot);
+    const signalDirectory = path.join(channelRoot, "migration-signals");
+    mkdirSync(signalDirectory);
+    const interruptedOpen = Bun.spawn(
+      [process.execPath, migrationProcessFixture, channelRoot, signalDirectory],
+      { stderr: "pipe", stdout: "pipe" }
+    );
+    await waitForFile(path.join(signalDirectory, "candidate-published"));
+
+    interruptedOpen.kill();
+    await interruptedOpen.exited;
+    expect(migrationCandidateEntries(channelRoot)).toHaveLength(1);
+
+    const recoveredStore = await openLocalStore(channelRoot);
+    await closeLocalStore(recoveredStore);
+
+    expect(migrationCandidateEntries(channelRoot)).toHaveLength(0);
+    expect(
+      await rows(
+        channelRoot,
+        "SELECT name FROM sqlite_master WHERE name = 'collections'"
+      )
+    ).toHaveLength(1);
+  }, 20_000);
+
+  test("does not start migration when candidate cleanup directory sync fails", async () => {
+    const channelRoot = channelFixture();
+    await createUnmigratedStore(channelRoot);
+    const originalOpen = fileSystemPromises.open;
+    let directorySyncCount = 0;
+    const directorySyncFailure = spyOn(
+      fileSystemPromises,
+      "open"
+    ).mockImplementation(async (...args) => {
+      directorySyncCount += 1;
+      if (directorySyncCount === 2) {
+        throw new Error("injected candidate cleanup sync failure");
+      }
+      return await originalOpen(...args);
+    });
+
+    let outcome: "opened" | "rejected";
+    try {
+      outcome = await openOutcome(channelRoot);
+    } finally {
+      directorySyncFailure.mockRestore();
+    }
+
+    expect(outcome).toBe("rejected");
+    expect(
+      await rows(
+        channelRoot,
+        "SELECT name FROM sqlite_master WHERE name IN ('collections', '__drizzle_migrations')"
+      )
+    ).toHaveLength(0);
   });
 
   test("requires migration backup directory sync again after an interrupted open", async () => {
@@ -538,11 +614,7 @@ describe("local store", () => {
         "SELECT name FROM sqlite_master WHERE name IN ('collections', '__drizzle_migrations')"
       )
     ).toHaveLength(0);
-    expect(
-      readdirSync(path.join(channelRoot, "data")).filter((entry) =>
-        entry.includes(".candidate-")
-      )
-    ).toHaveLength(0);
+    expect(migrationCandidateEntries(channelRoot)).toHaveLength(0);
   });
 
   test("does not start migration when snapshot generation fails", async () => {
@@ -565,11 +637,7 @@ describe("local store", () => {
         "SELECT name FROM sqlite_master WHERE name IN ('collections', '__drizzle_migrations')"
       )
     ).toHaveLength(0);
-    expect(
-      readdirSync(dataDirectory).filter((entry) =>
-        entry.includes(".candidate-")
-      )
-    ).toHaveLength(0);
+    expect(migrationCandidateEntries(channelRoot)).toHaveLength(0);
   });
 
   test("does not create another backup when an up-to-date store is reopened", async () => {

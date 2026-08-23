@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { mkdir, readFile, stat, unlink } from "node:fs/promises";
 import * as fileSystemPromises from "node:fs/promises";
 import path from "node:path";
@@ -248,6 +247,22 @@ const syncParentDirectory = async (filePath: string): Promise<void> => {
   }
 };
 
+const removeMigrationCandidate = async (
+  canonicalRoot: string,
+  candidatePath: string
+): Promise<void> => {
+  assertManagedPath(canonicalRoot, candidatePath, "file");
+  try {
+    await unlink(candidatePath);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+  await syncParentDirectory(candidatePath);
+};
+
 const backupBeforeMigration = async (
   sourceClient: Client,
   canonicalRoot: string,
@@ -256,7 +271,8 @@ const backupBeforeMigration = async (
   toVersion: number
 ): Promise<void> => {
   const backupPath = `${localStorePath}.bak-${fromVersion}-to-${toVersion}`;
-  const candidatePath = `${backupPath}.candidate-${randomUUID()}`;
+  const candidatePath = `${backupPath}.candidate`;
+  await removeMigrationCandidate(canonicalRoot, candidatePath);
   try {
     await sourceClient.execute({
       args: [candidatePath],
@@ -271,13 +287,7 @@ const backupBeforeMigration = async (
     await publishBackup(canonicalRoot, candidatePath, backupPath, fromVersion);
     await syncParentDirectory(backupPath);
   } finally {
-    await unlink(candidatePath).catch((error: unknown) => {
-      if (
-        !(error instanceof Error && "code" in error && error.code === "ENOENT")
-      ) {
-        throw error;
-      }
-    });
+    await removeMigrationCandidate(canonicalRoot, candidatePath);
   }
 };
 

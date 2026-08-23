@@ -6,6 +6,7 @@
     "src/index.ts",
     "test/helpers.ts",
     "test/package-smoke-support.ts",
+    "test/fixtures/local-store-migration-process.ts",
     "test/fixtures/package-dependency-probe.ts",
     "test/fixtures/plan-init-write-process.ts"
   ],

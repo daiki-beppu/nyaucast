@@ -139,13 +139,12 @@ describe("Fallow health gate", () => {
     const config = readJsonFile(
       join(packageRoot, ".fallowrc.json")
     ) as FallowConfig;
-    const productionFiles = new Set([
-      "src/db/local-store.ts",
-      "src/tools/plan.init.ts",
-    ]);
+    const productionFiles = ["src/db/local-store.ts", "src/tools/plan.init.ts"];
 
-    const ignoredProductionFiles = config.health.ignore.filter((ignoredPath) =>
-      productionFiles.has(ignoredPath)
+    const ignoredProductionFiles = productionFiles.filter((productionFile) =>
+      config.health.ignore.some((pattern) =>
+        new Bun.Glob(pattern).match(productionFile)
+      )
     );
 
     expect(ignoredProductionFiles).toEqual([]);
