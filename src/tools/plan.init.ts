@@ -11,6 +11,8 @@ import type {
 
 const markerName = ".tayk-operation.json";
 const reservationPrefix = ".tayk-";
+const reservationPattern =
+  /^\.tayk-(?<token>[A-Za-z0-9-]+)\.(?<kind>staging|backup|discard)$/u;
 
 // The public contract counts Unicode codepoints, not grapheme clusters.
 // oxlint-disable-next-line typescript/no-misused-spread
@@ -214,8 +216,429 @@ const assertMatchingRecord = (
   }
 };
 
-// Recovery enumerates a finite filesystem state table in one validation phase.
-// oxlint-disable-next-line eslint/complexity
+const registerResources = (
+  resourcesByToken: Map<string, OperationResources>,
+  token: string,
+  resources: OperationResources
+): void => {
+  if (resourcesByToken.has(token)) {
+    throw new Error("collection operation token is duplicated");
+  }
+  resourcesByToken.set(token, resources);
+};
+
+const parseReservationEntry = (
+  entry: string
+): { kind: string; token: string } => {
+  const match = reservationPattern.exec(entry);
+  const token = match?.groups?.["token"];
+  const kind = match?.groups?.["kind"];
+  if (token === undefined || kind === undefined) {
+    throw new Error("unknown collection reservation resource");
+  }
+  return { kind, token };
+};
+
+const collectStagingResources = (
+  canonicalRoot: string,
+  collectionsRoot: string,
+  entryPath: string,
+  token: string,
+  resourcesByToken: Map<string, OperationResources>,
+  fileSystem: PlanInitFileSystem
+): void => {
+  const operationMarkerPath = markerPath(entryPath);
+  if (!fileSystem.exists(operationMarkerPath)) {
+    throw new Error("collection staging marker is missing");
+  }
+  assertManagedPath(canonicalRoot, operationMarkerPath, "file");
+  const marker = parseMarker(entryPath, fileSystem);
+  validateMarker(marker);
+  if (marker.operationToken !== token) {
+    throw new Error("collection staging marker token does not match");
+  }
+  registerResources(resourcesByToken, token, {
+    marker,
+    paths: operationPaths(collectionsRoot, token),
+    stagingDirectory: entryPath,
+  });
+};
+
+const collectFinalResources = (
+  canonicalRoot: string,
+  collectionsRoot: string,
+  entry: string,
+  entryPath: string,
+  resourcesByToken: Map<string, OperationResources>,
+  fileSystem: PlanInitFileSystem
+): void => {
+  const operationMarkerPath = markerPath(entryPath);
+  if (!fileSystem.exists(operationMarkerPath)) {
+    return;
+  }
+  assertManagedPath(canonicalRoot, operationMarkerPath, "file");
+  const marker = parseMarker(entryPath, fileSystem);
+  validateMarker(marker);
+  if (marker.collectionId !== entry) {
+    throw new Error("collection operation marker ID does not match its path");
+  }
+  registerResources(resourcesByToken, marker.operationToken, {
+    finalDirectory: entryPath,
+    marker,
+    paths: operationPaths(collectionsRoot, marker.operationToken),
+  });
+};
+
+const collectEntryResources = (
+  canonicalRoot: string,
+  collectionsRoot: string,
+  entry: string,
+  resourcesByToken: Map<string, OperationResources>,
+  fileSystem: PlanInitFileSystem
+): void => {
+  const entryPath = path.join(collectionsRoot, entry);
+  assertManagedPath(canonicalRoot, entryPath, "directory");
+  if (!entry.startsWith(reservationPrefix)) {
+    collectFinalResources(
+      canonicalRoot,
+      collectionsRoot,
+      entry,
+      entryPath,
+      resourcesByToken,
+      fileSystem
+    );
+    return;
+  }
+  const { kind, token } = parseReservationEntry(entry);
+  if (kind === "staging") {
+    collectStagingResources(
+      canonicalRoot,
+      collectionsRoot,
+      entryPath,
+      token,
+      resourcesByToken,
+      fileSystem
+    );
+  }
+};
+
+const collectOperationResources = (
+  canonicalRoot: string,
+  collectionsRoot: string,
+  entries: string[],
+  fileSystem: PlanInitFileSystem
+): Map<string, OperationResources> => {
+  const resourcesByToken = new Map<string, OperationResources>();
+  for (const entry of entries) {
+    collectEntryResources(
+      canonicalRoot,
+      collectionsRoot,
+      entry,
+      resourcesByToken,
+      fileSystem
+    );
+  }
+  return resourcesByToken;
+};
+
+const assertNoOrphanedReservations = (
+  entries: string[],
+  resourcesByToken: Map<string, OperationResources>
+): void => {
+  for (const entry of entries) {
+    if (!entry.startsWith(reservationPrefix)) {
+      continue;
+    }
+    const { token } = parseReservationEntry(entry);
+    if (!resourcesByToken.has(token)) {
+      throw new Error("orphaned collection reservation resource");
+    }
+  }
+};
+
+const removeOwnedAndSync = (
+  directory: string,
+  marker: OwnershipMarker,
+  collectionsRoot: string,
+  fileSystem: PlanInitFileSystem
+): void => {
+  removeOwnedDirectory(directory, marker, fileSystem);
+  fileSystem.sync(collectionsRoot);
+};
+
+const assertCreateTopology = (
+  resources: OperationResources,
+  fileSystem: PlanInitFileSystem
+): void => {
+  const { finalDirectory, paths, stagingDirectory } = resources;
+  if (
+    fileSystem.exists(paths.backup) ||
+    fileSystem.exists(paths.discard) ||
+    (stagingDirectory !== undefined && finalDirectory !== undefined)
+  ) {
+    throw new Error("create operation has an invalid resource topology");
+  }
+};
+
+const createStagingRecoveryOperation = (
+  stagingDirectory: string,
+  marker: OwnershipMarker,
+  record: CollectionRecord | null,
+  collectionsRoot: string,
+  fileSystem: PlanInitFileSystem
+): RecoveryOperation => {
+  if (record !== null) {
+    throw new Error("create staging conflicts with local store");
+  }
+  return {
+    apply: () => {
+      removeOwnedAndSync(stagingDirectory, marker, collectionsRoot, fileSystem);
+    },
+  };
+};
+
+const createFinalRecoveryOperation = (
+  finalDirectory: string,
+  marker: OwnershipMarker,
+  record: CollectionRecord | null,
+  collectionsRoot: string,
+  fileSystem: PlanInitFileSystem
+): RecoveryOperation => {
+  if (record === null) {
+    return {
+      apply: () => {
+        removeOwnedAndSync(finalDirectory, marker, collectionsRoot, fileSystem);
+      },
+    };
+  }
+  assertMatchingRecord(marker, record);
+  return {
+    apply: () => {
+      removeMarker(finalDirectory, fileSystem);
+    },
+  };
+};
+
+const createRecoveryOperation = (
+  resources: OperationResources,
+  record: CollectionRecord | null,
+  collectionsRoot: string,
+  fileSystem: PlanInitFileSystem
+): RecoveryOperation => {
+  const { finalDirectory, marker, stagingDirectory } = resources;
+  assertCreateTopology(resources, fileSystem);
+  if (stagingDirectory !== undefined) {
+    return createStagingRecoveryOperation(
+      stagingDirectory,
+      marker,
+      record,
+      collectionsRoot,
+      fileSystem
+    );
+  }
+  if (finalDirectory === undefined) {
+    throw new Error("create operation final directory is missing");
+  }
+  return createFinalRecoveryOperation(
+    finalDirectory,
+    marker,
+    record,
+    collectionsRoot,
+    fileSystem
+  );
+};
+
+const restoreForceBackup = (
+  resources: OperationResources,
+  stableDirectory: string,
+  collectionsRoot: string,
+  fileSystem: PlanInitFileSystem
+): RecoveryOperation => {
+  const { marker, paths, stagingDirectory } = resources;
+  if (stagingDirectory === undefined) {
+    throw new Error("force staging directory is missing");
+  }
+  if (fileSystem.exists(stableDirectory)) {
+    throw new Error("collection backup conflicts with final directory");
+  }
+  return {
+    apply: () => {
+      fileSystem.rename(paths.backup, stableDirectory);
+      fileSystem.sync(collectionsRoot);
+      removeOwnedAndSync(stagingDirectory, marker, collectionsRoot, fileSystem);
+    },
+  };
+};
+
+const removeForceStaging = (
+  resources: OperationResources,
+  stableDirectory: string,
+  collectionsRoot: string,
+  fileSystem: PlanInitFileSystem
+): RecoveryOperation => {
+  const { marker, stagingDirectory } = resources;
+  if (stagingDirectory === undefined) {
+    throw new Error("force staging directory is missing");
+  }
+  if (!fileSystem.exists(stableDirectory)) {
+    throw new Error("force staging has no stable collection directory");
+  }
+  return {
+    apply: () => {
+      removeOwnedAndSync(stagingDirectory, marker, collectionsRoot, fileSystem);
+    },
+  };
+};
+
+const forceStagingRecoveryOperation = (
+  resources: OperationResources,
+  collectionsRoot: string,
+  fileSystem: PlanInitFileSystem
+): RecoveryOperation => {
+  const { finalDirectory, marker, paths, stagingDirectory } = resources;
+  if (stagingDirectory === undefined) {
+    throw new Error("force staging directory is missing");
+  }
+  if (fileSystem.exists(paths.discard) || finalDirectory !== undefined) {
+    throw new Error("force staging has an invalid resource topology");
+  }
+  const stableDirectory = path.join(collectionsRoot, marker.collectionId);
+  if (fileSystem.exists(paths.backup)) {
+    return restoreForceBackup(
+      resources,
+      stableDirectory,
+      collectionsRoot,
+      fileSystem
+    );
+  }
+  return removeForceStaging(
+    resources,
+    stableDirectory,
+    collectionsRoot,
+    fileSystem
+  );
+};
+
+const discardForceDirectory = (
+  finalDirectory: string,
+  paths: ReturnType<typeof operationPaths>,
+  collectionsRoot: string,
+  fileSystem: PlanInitFileSystem
+): RecoveryOperation => ({
+  apply: () => {
+    fileSystem.removeDirectory(paths.discard);
+    fileSystem.sync(collectionsRoot);
+    removeMarker(finalDirectory, fileSystem);
+  },
+});
+
+const publishForceDiscard = (
+  finalDirectory: string,
+  paths: ReturnType<typeof operationPaths>,
+  collectionsRoot: string,
+  fileSystem: PlanInitFileSystem
+): RecoveryOperation => ({
+  apply: () => {
+    fileSystem.rename(paths.backup, paths.discard);
+    fileSystem.sync(collectionsRoot);
+    fileSystem.removeDirectory(paths.discard);
+    fileSystem.sync(collectionsRoot);
+    removeMarker(finalDirectory, fileSystem);
+  },
+});
+
+const assertForceResourcesDoNotConflict = (
+  hasBackup: boolean,
+  hasDiscard: boolean
+): void => {
+  if (hasBackup && hasDiscard) {
+    throw new Error("force operation has conflicting backup resources");
+  }
+};
+
+const forceFinalRecoveryOperation = (
+  resources: OperationResources,
+  collectionsRoot: string,
+  fileSystem: PlanInitFileSystem
+): RecoveryOperation => {
+  const { finalDirectory, paths } = resources;
+  if (finalDirectory === undefined) {
+    throw new Error("force operation final directory is missing");
+  }
+  const hasBackup = fileSystem.exists(paths.backup);
+  const hasDiscard = fileSystem.exists(paths.discard);
+  assertForceResourcesDoNotConflict(hasBackup, hasDiscard);
+  if (hasDiscard) {
+    return discardForceDirectory(
+      finalDirectory,
+      paths,
+      collectionsRoot,
+      fileSystem
+    );
+  }
+  if (hasBackup) {
+    return publishForceDiscard(
+      finalDirectory,
+      paths,
+      collectionsRoot,
+      fileSystem
+    );
+  }
+  return {
+    apply: () => {
+      removeMarker(finalDirectory, fileSystem);
+    },
+  };
+};
+
+const recoveryOperationFor = async (
+  resources: OperationResources,
+  collectionsRoot: string,
+  transaction: LocalStoreTransaction,
+  fileSystem: PlanInitFileSystem
+): Promise<RecoveryOperation> => {
+  const { marker, stagingDirectory } = resources;
+  const record = await transaction.findCollectionById(marker.collectionId);
+  if (marker.kind === "create") {
+    return createRecoveryOperation(
+      resources,
+      record,
+      collectionsRoot,
+      fileSystem
+    );
+  }
+  assertMatchingRecord(marker, record);
+  if (stagingDirectory !== undefined) {
+    return forceStagingRecoveryOperation(
+      resources,
+      collectionsRoot,
+      fileSystem
+    );
+  }
+  return forceFinalRecoveryOperation(resources, collectionsRoot, fileSystem);
+};
+
+const decideRecoveryOperations = async (
+  resourcesByToken: Map<string, OperationResources>,
+  collectionsRoot: string,
+  transaction: LocalStoreTransaction,
+  fileSystem: PlanInitFileSystem
+): Promise<RecoveryOperation[]> => {
+  const operations: RecoveryOperation[] = [];
+  for (const resources of resourcesByToken.values()) {
+    // Recovery validates the complete namespace before executing this list.
+    // oxlint-disable-next-line no-await-in-loop
+    const operation = await recoveryOperationFor(
+      resources,
+      collectionsRoot,
+      transaction,
+      fileSystem
+    );
+    operations.push(operation);
+  }
+  return operations;
+};
+
 const recoverInterruptedOperations = async (
   canonicalRoot: string,
   collectionsRoot: string,
@@ -225,203 +648,75 @@ const recoverInterruptedOperations = async (
   if (!fileSystem.exists(collectionsRoot)) {
     return;
   }
-
-  const resourcesByToken = new Map<string, OperationResources>();
   const entries = fileSystem.readDirectory(collectionsRoot);
-
-  for (const entry of entries) {
-    const entryPath = path.join(collectionsRoot, entry);
-    assertManagedPath(canonicalRoot, entryPath, "directory");
-    const operationMarkerPath = markerPath(entryPath);
-
-    if (entry.startsWith(reservationPrefix)) {
-      const match =
-        /^\.tayk-(?<token>[A-Za-z0-9-]+)\.(?<kind>staging|backup|discard)$/u.exec(
-          entry
-        );
-      if (match === null) {
-        throw new Error("unknown collection reservation resource");
-      }
-      const token = match.groups?.["token"];
-      const kind = match.groups?.["kind"];
-      if (token === undefined || kind === undefined) {
-        throw new Error("collection reservation resource is invalid");
-      }
-      if (kind !== "staging") {
-        continue;
-      }
-      if (!fileSystem.exists(operationMarkerPath)) {
-        throw new Error("collection staging marker is missing");
-      }
-      assertManagedPath(canonicalRoot, operationMarkerPath, "file");
-      const marker = parseMarker(entryPath, fileSystem);
-      validateMarker(marker);
-      if (marker.operationToken !== token) {
-        throw new Error("collection staging marker token does not match");
-      }
-      if (resourcesByToken.has(token)) {
-        throw new Error("collection operation token is duplicated");
-      }
-      resourcesByToken.set(token, {
-        marker,
-        paths: operationPaths(collectionsRoot, token),
-        stagingDirectory: entryPath,
-      });
-      continue;
-    }
-
-    if (!fileSystem.exists(operationMarkerPath)) {
-      continue;
-    }
-    assertManagedPath(canonicalRoot, operationMarkerPath, "file");
-    const marker = parseMarker(entryPath, fileSystem);
-    validateMarker(marker);
-    if (marker.collectionId !== entry) {
-      throw new Error("collection operation marker ID does not match its path");
-    }
-    if (resourcesByToken.has(marker.operationToken)) {
-      throw new Error("collection operation token is duplicated");
-    }
-    resourcesByToken.set(marker.operationToken, {
-      finalDirectory: entryPath,
-      marker,
-      paths: operationPaths(collectionsRoot, marker.operationToken),
-    });
-  }
-
-  for (const entry of entries.filter((candidate) =>
-    candidate.startsWith(reservationPrefix)
-  )) {
-    const match =
-      /^\.tayk-(?<token>[A-Za-z0-9-]+)\.(?<kind>staging|backup|discard)$/u.exec(
-        entry
-      );
-    const token = match?.groups?.["token"];
-    if (token === undefined || !resourcesByToken.has(token)) {
-      throw new Error("orphaned collection reservation resource");
-    }
-  }
-
-  const operations: RecoveryOperation[] = [];
-  for (const resources of resourcesByToken.values()) {
-    const { finalDirectory, marker, paths, stagingDirectory } = resources;
-    const hasBackup = fileSystem.exists(paths.backup);
-    const hasDiscard = fileSystem.exists(paths.discard);
-    const hasStaging = stagingDirectory !== undefined;
-    // Recovery validates the complete namespace before executing this list.
-    // oxlint-disable-next-line no-await-in-loop
-    const record = await transaction.findCollectionById(marker.collectionId);
-
-    if (marker.kind === "create") {
-      if (
-        hasBackup ||
-        hasDiscard ||
-        (hasStaging && finalDirectory !== undefined)
-      ) {
-        throw new Error("create operation has an invalid resource topology");
-      }
-      if (stagingDirectory !== undefined) {
-        if (record !== null) {
-          throw new Error("create staging conflicts with local store");
-        }
-        operations.push({
-          apply: () => {
-            removeOwnedDirectory(stagingDirectory, marker, fileSystem);
-            fileSystem.sync(collectionsRoot);
-          },
-        });
-        continue;
-      }
-      if (finalDirectory === undefined) {
-        throw new Error("create operation final directory is missing");
-      }
-      if (record === null) {
-        operations.push({
-          apply: () => {
-            removeOwnedDirectory(finalDirectory, marker, fileSystem);
-            fileSystem.sync(collectionsRoot);
-          },
-        });
-      } else {
-        assertMatchingRecord(marker, record);
-        operations.push({
-          apply: () => {
-            removeMarker(finalDirectory, fileSystem);
-          },
-        });
-      }
-      continue;
-    }
-
-    assertMatchingRecord(marker, record);
-    if (stagingDirectory !== undefined) {
-      if (hasDiscard || finalDirectory !== undefined) {
-        throw new Error("force staging has an invalid resource topology");
-      }
-      const stableDirectory = path.join(collectionsRoot, marker.collectionId);
-      if (hasBackup) {
-        if (fileSystem.exists(stableDirectory)) {
-          throw new Error("collection backup conflicts with final directory");
-        }
-        operations.push({
-          apply: () => {
-            fileSystem.rename(paths.backup, stableDirectory);
-            fileSystem.sync(collectionsRoot);
-            removeOwnedDirectory(stagingDirectory, marker, fileSystem);
-            fileSystem.sync(collectionsRoot);
-          },
-        });
-      } else {
-        if (!fileSystem.exists(stableDirectory)) {
-          throw new Error("force staging has no stable collection directory");
-        }
-        operations.push({
-          apply: () => {
-            removeOwnedDirectory(stagingDirectory, marker, fileSystem);
-            fileSystem.sync(collectionsRoot);
-          },
-        });
-      }
-      continue;
-    }
-
-    if (finalDirectory === undefined) {
-      throw new Error("force operation final directory is missing");
-    }
-    if (hasBackup && hasDiscard) {
-      throw new Error("force operation has conflicting backup resources");
-    }
-    if (hasDiscard) {
-      operations.push({
-        apply: () => {
-          fileSystem.removeDirectory(paths.discard);
-          fileSystem.sync(collectionsRoot);
-          removeMarker(finalDirectory, fileSystem);
-        },
-      });
-      continue;
-    }
-    if (hasBackup) {
-      operations.push({
-        apply: () => {
-          fileSystem.rename(paths.backup, paths.discard);
-          fileSystem.sync(collectionsRoot);
-          fileSystem.removeDirectory(paths.discard);
-          fileSystem.sync(collectionsRoot);
-          removeMarker(finalDirectory, fileSystem);
-        },
-      });
-      continue;
-    }
-    operations.push({
-      apply: () => {
-        removeMarker(finalDirectory, fileSystem);
-      },
-    });
-  }
+  const resourcesByToken = collectOperationResources(
+    canonicalRoot,
+    collectionsRoot,
+    entries,
+    fileSystem
+  );
+  assertNoOrphanedReservations(entries, resourcesByToken);
+  const operations = await decideRecoveryOperations(
+    resourcesByToken,
+    collectionsRoot,
+    transaction,
+    fileSystem
+  );
 
   for (const operation of operations) {
     operation.apply();
+  }
+};
+
+const assertCreateResourcesAvailable = (
+  finalDirectory: string,
+  paths: ReturnType<typeof operationPaths>,
+  fileSystem: PlanInitFileSystem
+): void => {
+  if (
+    fileSystem.exists(finalDirectory) ||
+    fileSystem.exists(paths.staging) ||
+    fileSystem.exists(paths.backup) ||
+    fileSystem.exists(paths.discard)
+  ) {
+    throw new Error("generated collection resources already exist");
+  }
+};
+
+const assertForceResourcesAvailable = (
+  paths: ReturnType<typeof operationPaths>,
+  fileSystem: PlanInitFileSystem
+): void => {
+  if (
+    fileSystem.exists(paths.staging) ||
+    fileSystem.exists(paths.backup) ||
+    fileSystem.exists(paths.discard)
+  ) {
+    throw new Error("collection reservation resources already exist");
+  }
+};
+
+const assertStableCollectionDirectory = (
+  finalDirectory: string,
+  fileSystem: PlanInitFileSystem
+): void => {
+  if (
+    !fileSystem.exists(finalDirectory) ||
+    fileSystem.exists(markerPath(finalDirectory))
+  ) {
+    throw new Error("collection directory is not in a stable state");
+  }
+};
+
+const assertExistingCollectionDirectory = (
+  finalDirectory: string,
+  fileSystem: PlanInitFileSystem
+): void => {
+  if (
+    !fileSystem.exists(finalDirectory) ||
+    fileSystem.exists(markerPath(finalDirectory))
+  ) {
+    throw new Error("collection row and directory are inconsistent");
   }
 };
 
@@ -442,14 +737,11 @@ const createCollection = async (
 
   const finalDirectory = path.join(collectionsRoot, id);
   const paths = operationPaths(collectionsRoot, operationToken);
-  if (
-    dependencies.fileSystem.exists(finalDirectory) ||
-    dependencies.fileSystem.exists(paths.staging) ||
-    dependencies.fileSystem.exists(paths.backup) ||
-    dependencies.fileSystem.exists(paths.discard)
-  ) {
-    throw new Error("generated collection resources already exist");
-  }
+  assertCreateResourcesAvailable(
+    finalDirectory,
+    paths,
+    dependencies.fileSystem
+  );
 
   const marker: OwnershipMarker = {
     collectionId: id,
@@ -483,23 +775,12 @@ const forceCollection = async (
   }
 
   const finalDirectory = path.join(collectionsRoot, record.id);
-  if (
-    !dependencies.fileSystem.exists(finalDirectory) ||
-    dependencies.fileSystem.exists(markerPath(finalDirectory))
-  ) {
-    throw new Error("collection directory is not in a stable state");
-  }
+  assertStableCollectionDirectory(finalDirectory, dependencies.fileSystem);
 
   const operationToken = dependencies.createOperationToken();
   assertSafeGeneratedValue(operationToken, "operation token");
   const paths = operationPaths(collectionsRoot, operationToken);
-  if (
-    dependencies.fileSystem.exists(paths.staging) ||
-    dependencies.fileSystem.exists(paths.backup) ||
-    dependencies.fileSystem.exists(paths.discard)
-  ) {
-    throw new Error("collection reservation resources already exist");
-  }
+  assertForceResourcesAvailable(paths, dependencies.fileSystem);
 
   const marker: OwnershipMarker = {
     collectionId: record.id,
@@ -526,6 +807,71 @@ const forceCollection = async (
   };
 };
 
+const initializeExistingCollection = async (
+  existing: CollectionRecord,
+  force: boolean,
+  dependencies: PlanInitDependencies,
+  transaction: LocalStoreTransaction,
+  collectionsRoot: string
+): Promise<PlanInitTransactionResult> => {
+  const finalDirectory = path.join(collectionsRoot, existing.id);
+  assertExistingCollectionDirectory(finalDirectory, dependencies.fileSystem);
+  if (!force) {
+    return {
+      result: resultFor(existing, false),
+    };
+  }
+  return await forceCollection(
+    existing,
+    dependencies,
+    transaction,
+    collectionsRoot
+  );
+};
+
+const initializePlanTransaction = async (
+  title: string,
+  force: boolean,
+  canonicalRoot: string,
+  collectionsRoot: string,
+  dependencies: PlanInitDependencies,
+  transaction: LocalStoreTransaction
+): Promise<PlanInitTransactionResult> => {
+  await recoverInterruptedOperations(
+    canonicalRoot,
+    collectionsRoot,
+    transaction,
+    dependencies.fileSystem
+  );
+  const existing = await transaction.findCollectionByTitle(title);
+  if (existing !== null) {
+    return await initializeExistingCollection(
+      existing,
+      force,
+      dependencies,
+      transaction,
+      collectionsRoot
+    );
+  }
+  dependencies.fileSystem.mkdir(collectionsRoot, true);
+  assertManagedPath(canonicalRoot, collectionsRoot, "directory");
+  return await createCollection(
+    title,
+    dependencies,
+    transaction,
+    collectionsRoot
+  );
+};
+
+const finalizePlanTransaction = (
+  committed: PlanInitTransactionResult
+): z.output<typeof planInitOutputSchema> => {
+  if ("afterCommit" in committed) {
+    committed.afterCommit();
+  }
+  return committed.result;
+};
+
 export const initializePlan = async (
   input: z.input<typeof planInitInputSchema>,
   dependencies: PlanInitDependencies
@@ -536,49 +882,15 @@ export const initializePlan = async (
   assertManagedPath(canonicalRoot, collectionsRoot, "directory");
 
   return await dependencies.store.serializedWrite(
-    async (transaction) => {
-      await recoverInterruptedOperations(
+    async (transaction) =>
+      await initializePlanTransaction(
+        parsed.title,
+        parsed.force,
         canonicalRoot,
         collectionsRoot,
-        transaction,
-        dependencies.fileSystem
-      );
-      const existing = await transaction.findCollectionByTitle(parsed.title);
-      if (existing !== null) {
-        const finalDirectory = path.join(collectionsRoot, existing.id);
-        if (
-          !dependencies.fileSystem.exists(finalDirectory) ||
-          dependencies.fileSystem.exists(markerPath(finalDirectory))
-        ) {
-          throw new Error("collection row and directory are inconsistent");
-        }
-        if (!parsed.force) {
-          return {
-            result: resultFor(existing, false),
-          };
-        }
-        return await forceCollection(
-          existing,
-          dependencies,
-          transaction,
-          collectionsRoot
-        );
-      }
-
-      dependencies.fileSystem.mkdir(collectionsRoot, true);
-      assertManagedPath(canonicalRoot, collectionsRoot, "directory");
-      return await createCollection(
-        parsed.title,
         dependencies,
-        transaction,
-        collectionsRoot
-      );
-    },
-    (committed) => {
-      if ("afterCommit" in committed) {
-        committed.afterCommit();
-      }
-      return committed.result;
-    }
+        transaction
+      ),
+    finalizePlanTransaction
   );
 };

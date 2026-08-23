@@ -7,8 +7,11 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
+import * as fileSystem from "node:fs";
 import * as fileSystemPromises from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -144,6 +147,18 @@ const expectRejection = async (operation: Promise<unknown>): Promise<void> => {
     rejected = true;
   }
   expect(rejected).toBeTrue();
+};
+
+const openOutcome = async (
+  channelRoot: string
+): Promise<"opened" | "rejected"> => {
+  try {
+    const store = await openLocalStore(channelRoot);
+    await closeLocalStore(store);
+    return "opened";
+  } catch {
+    return "rejected";
+  }
 };
 
 afterEach(() => {
@@ -344,6 +359,158 @@ describe("local store", () => {
         entry.startsWith("local.db.bak-")
       )
     ).toHaveLength(1);
+  });
+
+  test("requires migration backup directory sync again after an interrupted open", async () => {
+    const channelRoot = channelFixture();
+    await createUnmigratedStore(channelRoot);
+    const directorySyncFailure = spyOn(
+      fileSystemPromises,
+      "open"
+    ).mockRejectedValue(new Error("injected directory sync failure"));
+
+    let firstAttempt: "opened" | "rejected";
+    let secondAttempt: "opened" | "rejected";
+    let tablesWhileSyncFailed: Awaited<ReturnType<typeof rows>>;
+    try {
+      firstAttempt = await openOutcome(channelRoot);
+      secondAttempt = await openOutcome(channelRoot);
+      tablesWhileSyncFailed = await rows(
+        channelRoot,
+        "SELECT name FROM sqlite_master WHERE name IN ('collections', '__drizzle_migrations')"
+      );
+    } finally {
+      directorySyncFailure.mockRestore();
+    }
+
+    const recoveredStore = await openLocalStore(channelRoot);
+    await closeLocalStore(recoveredStore);
+
+    expect({
+      firstAttempt,
+      secondAttempt,
+      tablesWhileSyncFailed: tablesWhileSyncFailed.map((row) => row["name"]),
+    }).toEqual({
+      firstAttempt: "rejected",
+      secondAttempt: "rejected",
+      tablesWhileSyncFailed: [],
+    });
+    expect(
+      await rows(
+        channelRoot,
+        "SELECT name FROM sqlite_master WHERE name = 'collections'"
+      )
+    ).toHaveLength(1);
+  });
+
+  test("rejects a local store symlink introduced while waiting for a write turn", async () => {
+    const channelRoot = channelFixture();
+    const externalRoot = channelFixture();
+    const store = await openLocalStore(channelRoot);
+    await createUnmigratedStore(externalRoot, "external store");
+    const writeEntered = Promise.withResolvers<null>();
+    const releaseWrite = Promise.withResolvers<null>();
+    const heldWrite = store.serializedWrite(
+      async () => {
+        writeEntered.resolve(null);
+        await releaseWrite.promise;
+        return null;
+      },
+      () => null
+    );
+    await writeEntered.promise;
+    const canonicalDatabasePath = path.join(
+      fileSystem.realpathSync(channelRoot),
+      "data",
+      "local.db"
+    );
+    const validationSpy = spyOn(fileSystem, "realpathSync");
+    const waitForOuterValidation = async (): Promise<void> => {
+      if (
+        validationSpy.mock.calls.some(
+          ([targetPath]) => targetPath === canonicalDatabasePath
+        )
+      ) {
+        return;
+      }
+      await Bun.sleep(0);
+      await waitForOuterValidation();
+    };
+
+    let pendingOpen: Promise<
+      Awaited<ReturnType<typeof openLocalStore>>
+    > | null = null;
+    let outcome: "opened" | "rejected";
+    try {
+      pendingOpen = openLocalStore(channelRoot);
+      await waitForOuterValidation();
+      unlinkSync(databasePath(channelRoot));
+      symlinkSync(databasePath(externalRoot), databasePath(channelRoot));
+      releaseWrite.resolve(null);
+      await heldWrite;
+      outcome = await pendingOpen.then(
+        async (openedStore) => {
+          await closeLocalStore(openedStore);
+          return "opened" as const;
+        },
+        () => "rejected" as const
+      );
+    } finally {
+      validationSpy.mockRestore();
+      releaseWrite.resolve(null);
+      await heldWrite.catch(() => null);
+      if (pendingOpen !== null) {
+        await pendingOpen.catch(() => null);
+      }
+      await closeLocalStore(store);
+    }
+
+    const externalTables = await rows(
+      externalRoot,
+      "SELECT name FROM sqlite_master WHERE name IN ('collections', '__drizzle_migrations')"
+    );
+    expect({
+      externalTables: externalTables.map((row) => row["name"]),
+      outcome,
+    }).toEqual({ externalTables: [], outcome: "rejected" });
+  });
+
+  test("rejects a local store symlink introduced before migration reconnect", async () => {
+    const channelRoot = channelFixture();
+    const externalRoot = channelFixture();
+    await createUnmigratedStore(channelRoot);
+    await createUnmigratedStore(externalRoot, "external store");
+    const originalLink = fileSystemPromises.link;
+    let symlinkIntroduced = false;
+    const publicationSpy = spyOn(fileSystemPromises, "link").mockImplementation(
+      async (existingPath, newPath) => {
+        await originalLink(existingPath, newPath);
+        unlinkSync(databasePath(channelRoot));
+        symlinkSync(databasePath(externalRoot), databasePath(channelRoot));
+        symlinkIntroduced = true;
+      }
+    );
+
+    let outcome: "opened" | "rejected";
+    try {
+      outcome = await openOutcome(channelRoot);
+    } finally {
+      publicationSpy.mockRestore();
+    }
+
+    const externalTables = await rows(
+      externalRoot,
+      "SELECT name FROM sqlite_master WHERE name IN ('collections', '__drizzle_migrations')"
+    );
+    expect({
+      externalTables: externalTables.map((row) => row["name"]),
+      outcome,
+      symlinkIntroduced,
+    }).toEqual({
+      externalTables: [],
+      outcome: "rejected",
+      symlinkIntroduced: true,
+    });
   });
 
   test("does not start migration when the backup publication fails", async () => {

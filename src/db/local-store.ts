@@ -108,86 +108,168 @@ const latestBundledMigration = (): number => {
   return Math.max(0, ...migrations.map((migration) => migration.folderMillis));
 };
 
+const closeAfterFailure = (client: Client, error: unknown): never => {
+  try {
+    client.close();
+  } catch (closeError) {
+    // AggregateError retains both failures where a single cause cannot.
+    // oxlint-disable-next-line preserve-caught-error
+    throw new AggregateError(
+      [error, closeError],
+      "local store validation and cleanup both failed",
+      { cause: closeError }
+    );
+  }
+  throw error;
+};
+
+const createManagedClient = (
+  canonicalRoot: string,
+  databasePath: string
+): Client => {
+  assertManagedPath(canonicalRoot, databasePath, "file");
+  const client = createClient({ url: localFileUrl(databasePath) });
+  try {
+    assertManagedPath(canonicalRoot, databasePath, "file");
+  } catch (error) {
+    closeAfterFailure(client, error);
+  }
+  return client;
+};
+
+const configureClient = async (client: Client): Promise<void> => {
+  await client.execute("PRAGMA foreign_keys = ON");
+  await client.execute("PRAGMA busy_timeout = 5000");
+};
+
+const createConfiguredClient = async (
+  canonicalRoot: string,
+  databasePath: string
+): Promise<Client> => {
+  const client = createManagedClient(canonicalRoot, databasePath);
+  try {
+    await configureClient(client);
+  } catch (error) {
+    closeAfterFailure(client, error);
+  }
+  return client;
+};
+
+const validateSnapshot = async (
+  canonicalRoot: string,
+  snapshotPath: string,
+  fromVersion: number,
+  invalidMessage: string
+): Promise<void> => {
+  const snapshotClient = createManagedClient(canonicalRoot, snapshotPath);
+  try {
+    const integrity = await snapshotClient.execute("PRAGMA integrity_check");
+    if (integrity.rows[0]?.["integrity_check"] !== "ok") {
+      throw new Error(invalidMessage);
+    }
+    if ((await latestAppliedMigration(snapshotClient)) !== fromVersion) {
+      throw new Error("migration backup has an unexpected version");
+    }
+  } finally {
+    snapshotClient.close();
+  }
+};
+
+const matchingBackupExists = async (
+  canonicalRoot: string,
+  candidatePath: string,
+  backupPath: string,
+  fromVersion: number
+): Promise<boolean> => {
+  if (!(await fileExists(backupPath))) {
+    return false;
+  }
+  await validateSnapshot(
+    canonicalRoot,
+    backupPath,
+    fromVersion,
+    "migration backup is not a valid standalone snapshot"
+  );
+  const [candidate, backup] = await Promise.all([
+    readFile(candidatePath),
+    readFile(backupPath),
+  ]);
+  if (!candidate.equals(backup)) {
+    throw new Error("migration backup conflicts with the current local store");
+  }
+  return true;
+};
+
+const isFileExistsError = (error: unknown): boolean =>
+  error instanceof Error && "code" in error && error.code === "EEXIST";
+
+const publishBackup = async (
+  canonicalRoot: string,
+  candidatePath: string,
+  backupPath: string,
+  fromVersion: number
+): Promise<void> => {
+  if (
+    await matchingBackupExists(
+      canonicalRoot,
+      candidatePath,
+      backupPath,
+      fromVersion
+    )
+  ) {
+    return;
+  }
+  try {
+    await fileSystemPromises.link(candidatePath, backupPath);
+  } catch (error) {
+    const concurrentBackupMatches =
+      isFileExistsError(error) &&
+      (await matchingBackupExists(
+        canonicalRoot,
+        candidatePath,
+        backupPath,
+        fromVersion
+      ));
+    if (!concurrentBackupMatches) {
+      throw error;
+    }
+  }
+};
+
+const syncParentDirectory = async (filePath: string): Promise<void> => {
+  const parentDirectory = await fileSystemPromises.open(
+    path.dirname(filePath),
+    "r"
+  );
+  try {
+    await parentDirectory.sync();
+  } finally {
+    await parentDirectory.close();
+  }
+};
+
 const backupBeforeMigration = async (
   sourceClient: Client,
+  canonicalRoot: string,
   localStorePath: string,
   fromVersion: number,
   toVersion: number
 ): Promise<void> => {
   const backupPath = `${localStorePath}.bak-${fromVersion}-to-${toVersion}`;
   const candidatePath = `${backupPath}.candidate-${randomUUID()}`;
-  const validateSnapshot = async (
-    snapshotPath: string,
-    invalidMessage: string
-  ): Promise<void> => {
-    const snapshotClient = createClient({ url: localFileUrl(snapshotPath) });
-    try {
-      const integrity = await snapshotClient.execute("PRAGMA integrity_check");
-      if (integrity.rows[0]?.["integrity_check"] !== "ok") {
-        throw new Error(invalidMessage);
-      }
-      if ((await latestAppliedMigration(snapshotClient)) !== fromVersion) {
-        throw new Error("migration backup has an unexpected version");
-      }
-    } finally {
-      snapshotClient.close();
-    }
-  };
-
-  const reuseMatchingBackup = async (): Promise<boolean> => {
-    if (!(await fileExists(backupPath))) {
-      return false;
-    }
-    await validateSnapshot(
-      backupPath,
-      "migration backup is not a valid standalone snapshot"
-    );
-    const [candidate, backup] = await Promise.all([
-      readFile(candidatePath),
-      readFile(backupPath),
-    ]);
-    if (!candidate.equals(backup)) {
-      throw new Error(
-        "migration backup conflicts with the current local store"
-      );
-    }
-    return true;
-  };
-
   try {
     await sourceClient.execute({
       args: [candidatePath],
       sql: "VACUUM INTO ?",
     });
     await validateSnapshot(
+      canonicalRoot,
       candidatePath,
+      fromVersion,
       "migration backup snapshot failed integrity validation"
     );
-    if (await reuseMatchingBackup()) {
-      return;
-    }
-    try {
-      await fileSystemPromises.link(candidatePath, backupPath);
-    } catch (error) {
-      if (
-        error instanceof Error &&
-        "code" in error &&
-        error.code === "EEXIST" &&
-        (await reuseMatchingBackup())
-      ) {
-        return;
-      }
-      throw error;
-    }
-    const parentDirectory = await fileSystemPromises.open(
-      path.dirname(backupPath),
-      "r"
-    );
-    try {
-      await parentDirectory.sync();
-    } finally {
-      await parentDirectory.close();
-    }
+    await publishBackup(canonicalRoot, candidatePath, backupPath, fromVersion);
+    await syncParentDirectory(backupPath);
   } finally {
     await unlink(candidatePath).catch((error: unknown) => {
       if (
@@ -206,6 +288,58 @@ type LocalStoreDatabase = ReturnType<typeof createDatabase>;
 type LocalStoreDrizzleTransaction = Parameters<
   Parameters<LocalStoreDatabase["transaction"]>[0]
 >[0];
+
+type FactReader = LocalStoreDatabase | LocalStoreDrizzleTransaction;
+
+const latestFactTimes = async (
+  database: FactReader,
+  collectionId: string,
+  gate: Gate
+): Promise<{ approvedAt: number; rejectedAt: number }> => {
+  const [latestApproval, latestRejection] = await Promise.all([
+    database
+      .select({ occurredAt: max(approvals.approvedAt) })
+      .from(approvals)
+      .where(
+        and(eq(approvals.collectionId, collectionId), eq(approvals.gate, gate))
+      ),
+    database
+      .select({ occurredAt: max(rejections.rejectedAt) })
+      .from(rejections)
+      .where(
+        and(
+          eq(rejections.collectionId, collectionId),
+          eq(rejections.gate, gate)
+        )
+      ),
+  ]);
+  return {
+    approvedAt: latestApproval[0]?.occurredAt ?? 0,
+    rejectedAt: latestRejection[0]?.occurredAt ?? 0,
+  };
+};
+
+const insertFact = async (
+  transaction: LocalStoreDrizzleTransaction,
+  collectionId: string,
+  gate: Gate,
+  kind: "approval" | "rejection",
+  occurredAt: number
+): Promise<void> => {
+  if (kind === "approval") {
+    await transaction.insert(approvals).values({
+      approvedAt: occurredAt,
+      collectionId,
+      gate,
+    });
+    return;
+  }
+  await transaction.insert(rejections).values({
+    collectionId,
+    gate,
+    rejectedAt: occurredAt,
+  });
+};
 
 const transactionPort = (
   transaction: LocalStoreDrizzleTransaction
@@ -317,71 +451,24 @@ class LocalStore {
     kind: "approval" | "rejection"
   ): Promise<void> {
     await this.withWriteTransaction(async (transaction) => {
-      const [latestApproval, latestRejection] = await Promise.all([
-        transaction
-          .select({ occurredAt: max(approvals.approvedAt) })
-          .from(approvals)
-          .where(
-            and(
-              eq(approvals.collectionId, collectionId),
-              eq(approvals.gate, gate)
-            )
-          ),
-        transaction
-          .select({ occurredAt: max(rejections.rejectedAt) })
-          .from(rejections)
-          .where(
-            and(
-              eq(rejections.collectionId, collectionId),
-              eq(rejections.gate, gate)
-            )
-          ),
-      ]);
-      const previous = Math.max(
-        latestApproval[0]?.occurredAt ?? 0,
-        latestRejection[0]?.occurredAt ?? 0
+      const { approvedAt, rejectedAt } = await latestFactTimes(
+        transaction,
+        collectionId,
+        gate
       );
+      const previous = Math.max(approvedAt, rejectedAt);
       const occurredAt = Math.max(this.nowEpochMicroseconds(), previous + 1);
-      await (kind === "approval"
-        ? transaction.insert(approvals).values({
-            approvedAt: occurredAt,
-            collectionId,
-            gate,
-          })
-        : transaction.insert(rejections).values({
-            collectionId,
-            gate,
-            rejectedAt: occurredAt,
-          }));
+      await insertFact(transaction, collectionId, gate, kind, occurredAt);
     });
   }
 
   async isNoGo(collectionId: string, gate: Gate): Promise<boolean> {
-    const [latestRejection, latestApproval] = await Promise.all([
-      this.database
-        .select({ occurredAt: max(rejections.rejectedAt) })
-        .from(rejections)
-        .where(
-          and(
-            eq(rejections.collectionId, collectionId),
-            eq(rejections.gate, gate)
-          )
-        ),
-      this.database
-        .select({ occurredAt: max(approvals.approvedAt) })
-        .from(approvals)
-        .where(
-          and(
-            eq(approvals.collectionId, collectionId),
-            eq(approvals.gate, gate)
-          )
-        ),
-    ]);
-    const rejectedAt = latestRejection[0]?.occurredAt;
-    const approvedAt = latestApproval[0]?.occurredAt ?? 0;
-    return (
-      rejectedAt !== null && rejectedAt !== undefined && rejectedAt > approvedAt
+    const { approvedAt, rejectedAt } = await latestFactTimes(
+      this.database,
+      collectionId,
+      gate
     );
+    return rejectedAt > approvedAt;
   }
 
   async isProducePending(collectionId: string): Promise<boolean> {
@@ -424,48 +511,12 @@ class LocalStore {
 
 const systemClock = (): number => Date.now() * 1000;
 
-const openLocalStoreDuringTurn = async (
+const migrateClient = async (
+  client: Client,
   canonicalRoot: string,
   localStorePath: string,
   options?: OpenLocalStoreOptions
 ): Promise<LocalStore> => {
-  const existed = await fileExists(localStorePath);
-  const client = createClient({ url: localFileUrl(localStorePath) });
-  await client.execute("PRAGMA foreign_keys = ON");
-  await client.execute("PRAGMA busy_timeout = 5000");
-  const appliedVersion = await latestAppliedMigration(client);
-  const bundledVersion = latestBundledMigration();
-
-  if (existed && appliedVersion < bundledVersion) {
-    try {
-      await backupBeforeMigration(
-        client,
-        localStorePath,
-        appliedVersion,
-        bundledVersion
-      );
-    } catch (error) {
-      client.close();
-      throw error;
-    }
-    client.close();
-    const migrationClient = createClient({ url: localFileUrl(localStorePath) });
-    try {
-      await migrationClient.execute("PRAGMA foreign_keys = ON");
-      await migrationClient.execute("PRAGMA busy_timeout = 5000");
-      await migrate(drizzle(migrationClient), { migrationsFolder });
-      return new LocalStore(
-        migrationClient,
-        canonicalRoot,
-        localStorePath,
-        options?.nowEpochMicroseconds ?? systemClock
-      );
-    } catch (error) {
-      migrationClient.close();
-      throw error;
-    }
-  }
-
   try {
     await migrate(drizzle(client), { migrationsFolder });
     return new LocalStore(
@@ -475,9 +526,68 @@ const openLocalStoreDuringTurn = async (
       options?.nowEpochMicroseconds ?? systemClock
     );
   } catch (error) {
-    client.close();
-    throw error;
+    return closeAfterFailure(client, error);
   }
+};
+
+const readAppliedVersion = async (client: Client): Promise<number> => {
+  try {
+    return await latestAppliedMigration(client);
+  } catch (error) {
+    return closeAfterFailure(client, error);
+  }
+};
+
+const backupAndClose = async (
+  client: Client,
+  canonicalRoot: string,
+  localStorePath: string,
+  appliedVersion: number,
+  bundledVersion: number
+): Promise<void> => {
+  try {
+    await backupBeforeMigration(
+      client,
+      canonicalRoot,
+      localStorePath,
+      appliedVersion,
+      bundledVersion
+    );
+  } finally {
+    client.close();
+  }
+};
+
+const openLocalStoreDuringTurn = async (
+  canonicalRoot: string,
+  localStorePath: string,
+  options?: OpenLocalStoreOptions
+): Promise<LocalStore> => {
+  const existed = await fileExists(localStorePath);
+  const client = await createConfiguredClient(canonicalRoot, localStorePath);
+  const appliedVersion = await readAppliedVersion(client);
+  const bundledVersion = latestBundledMigration();
+
+  if (existed && appliedVersion < bundledVersion) {
+    await backupAndClose(
+      client,
+      canonicalRoot,
+      localStorePath,
+      appliedVersion,
+      bundledVersion
+    );
+    const migrationClient = await createConfiguredClient(
+      canonicalRoot,
+      localStorePath
+    );
+    return await migrateClient(
+      migrationClient,
+      canonicalRoot,
+      localStorePath,
+      options
+    );
+  }
+  return await migrateClient(client, canonicalRoot, localStorePath, options);
 };
 
 export const openLocalStore = async (

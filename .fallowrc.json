@@ -37,11 +37,6 @@
     "maxCognitive": 5,
     "maxCrap": 30,
     "maxUnitSize": 60,
-    "ignore": [
-      "src/db/local-store.ts",
-      "src/tools/plan.init.ts",
-      "test/package-smoke-support.ts",
-      "test/fixtures/**"
-    ]
+    "ignore": ["test/package-smoke-support.ts", "test/fixtures/**"]
   }
 }

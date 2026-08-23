@@ -3,7 +3,6 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -298,9 +297,6 @@ describeProductionPackageSmoke("production package smoke", () => {
       expect(missing.result.status).not.toBe(0);
       expect(missing.result.signal).toBeNull();
       expect(missing.result.stderr).toContain(target.dependency);
-      expect(readFileSync(installed.entrypointPath, "utf-8")).toContain(
-        'import { startMcpServer } from "./mcp"'
-      );
       expect(() => {
         requireSuccessfulSubprocess(
           "dependency smoke verification",

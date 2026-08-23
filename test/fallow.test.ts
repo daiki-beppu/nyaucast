@@ -30,6 +30,9 @@ if (fallowUnavailable && runningInCi) {
 
 interface FallowConfig {
   entry: string[];
+  health: {
+    ignore: string[];
+  };
   ignoreDependencies: string[];
   ignorePatterns: string[];
 }
@@ -130,6 +133,24 @@ function runFallow(directory: string, args: string[]) {
 function combinedOutput(result: ReturnType<typeof runFallow>): string {
   return `${result.stdout.toString()}\n${result.stderr.toString()}`;
 }
+
+describe("Fallow health gate", () => {
+  test("keeps production local store and plan initialization code in health analysis", () => {
+    const config = readJsonFile(
+      join(packageRoot, ".fallowrc.json")
+    ) as FallowConfig;
+    const productionFiles = new Set([
+      "src/db/local-store.ts",
+      "src/tools/plan.init.ts",
+    ]);
+
+    const ignoredProductionFiles = config.health.ignore.filter((ignoredPath) =>
+      productionFiles.has(ignoredPath)
+    );
+
+    expect(ignoredProductionFiles).toEqual([]);
+  });
+});
 
 describe.skipIf(fallowUnavailable)("Fallow dependency gate", () => {
   // REQ-112-01 / TC-112-01 / P-112-01
