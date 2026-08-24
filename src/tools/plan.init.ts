@@ -356,6 +356,18 @@ const assertNoOrphanedReservations = (
   }
 };
 
+const assertUniqueRecoveryDestinations = (
+  resourcesByToken: Map<string, OperationResources>
+): void => {
+  const collectionIds = new Set<string>();
+  for (const { marker } of resourcesByToken.values()) {
+    if (collectionIds.has(marker.collectionId)) {
+      throw new Error("collection recovery destination is duplicated");
+    }
+    collectionIds.add(marker.collectionId);
+  }
+};
+
 const removeOwnedAndSync = (
   directory: string,
   marker: OwnershipMarker,
@@ -656,6 +668,7 @@ const recoverInterruptedOperations = async (
     fileSystem
   );
   assertNoOrphanedReservations(entries, resourcesByToken);
+  assertUniqueRecoveryDestinations(resourcesByToken);
   const operations = await decideRecoveryOperations(
     resourcesByToken,
     collectionsRoot,

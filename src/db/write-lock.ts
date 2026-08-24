@@ -58,43 +58,6 @@ const closeResources = (resources: readonly Closable[]): unknown[] => {
   return errors;
 };
 
-type OperationOutcome<Value> =
-  | { error: unknown; succeeded: false }
-  | { result: Value; succeeded: true };
-
-const runOperation = async <Value>(
-  execute: () => Promise<Value>
-): Promise<OperationOutcome<Value>> => {
-  try {
-    return { result: await execute(), succeeded: true };
-  } catch (error) {
-    return { error, succeeded: false };
-  }
-};
-
-const resolveOutcome = <Value>(
-  outcome: OperationOutcome<Value>,
-  cleanupErrors: readonly unknown[]
-): Value => {
-  if (!outcome.succeeded) {
-    if (cleanupErrors.length > 0) {
-      throw new AggregateError(
-        [outcome.error, ...cleanupErrors],
-        "write operation and process-shared lock cleanup failed",
-        { cause: outcome.error }
-      );
-    }
-    throw outcome.error;
-  }
-  if (cleanupErrors.length > 0) {
-    throw new AggregateError(
-      cleanupErrors,
-      "process-shared lock cleanup failed"
-    );
-  }
-  return outcome.result;
-};
-
 export const withProcessSharedWriteLock = async <Value>(
   canonicalRoot: string,
   localStorePath: string,
@@ -121,6 +84,29 @@ export const withProcessSharedWriteLock = async <Value>(
     )
   );
 
-  const outcome = await runOperation(execute);
-  return resolveOutcome(outcome, closeResources([transaction, client]));
+  let result: Value;
+  try {
+    result = await execute();
+  } catch (error) {
+    const cleanupErrors = closeResources([transaction, client]);
+    if (cleanupErrors.length > 0) {
+      // AggregateError retains the operation error as both the first error and cause.
+      // oxlint-disable-next-line preserve-caught-error
+      throw new AggregateError(
+        [error, ...cleanupErrors],
+        "write operation and process-shared lock cleanup failed",
+        { cause: error }
+      );
+    }
+    throw error;
+  }
+
+  const cleanupErrors = closeResources([transaction, client]);
+  if (cleanupErrors.length > 0) {
+    throw new AggregateError(
+      cleanupErrors,
+      "process-shared lock cleanup failed"
+    );
+  }
+  return result;
 };

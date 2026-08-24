@@ -235,6 +235,32 @@ describe("stdio MCP server", () => {
     expect(collectionEntries(channelRoot)).toEqual([storedId]);
   });
 
+  test("rejects a saved title and continues checking titles in the same MCP session", async () => {
+    const channelRoot = channelFixture();
+
+    await withMcpClient(channelRoot, async (client) => {
+      const created = await client.callTool({
+        arguments: { title: "Night Drive" },
+        name: "plan_init",
+      });
+      expect(created.isError).not.toBeTrue();
+      expect(created.structuredContent).toMatchObject({ created: true });
+
+      const duplicate = await client.callTool({
+        arguments: { title: "Night Drive" },
+        name: "plan_check_title",
+      });
+      expect(duplicate.isError).toBeTrue();
+
+      const fresh = await client.callTool({
+        arguments: { title: "Fresh Title" },
+        name: "plan_check_title",
+      });
+      expect(fresh.isError).not.toBeTrue();
+      expect(fresh.structuredContent).toEqual({ ok: true });
+    });
+  });
+
   test("returns structured checkTitle success without changing collections", async () => {
     const channelRoot = channelFixture();
     const beforeRows = await collectionRows(channelRoot);

@@ -416,6 +416,72 @@ describe("plan.init", () => {
     expect(existsSync(collectionDirectory(channelRoot))).toBeTrue();
   });
 
+  test("recovers multiple create reservations for distinct collections", async () => {
+    const channelRoot = channelFixture();
+    const fixture = createDependencies(channelRoot);
+    const collectionsRoot = path.join(channelRoot, "collections");
+    const firstStaging = path.join(
+      collectionsRoot,
+      ".tayk-stale-operation-a.staging"
+    );
+    const secondStaging = path.join(
+      collectionsRoot,
+      ".tayk-stale-operation-b.staging"
+    );
+    writeOwnershipMarker(firstStaging, {
+      collectionId: "stale-collection-a",
+      kind: "create",
+      operationToken: "stale-operation-a",
+      title: "Stale A",
+    });
+    writeOwnershipMarker(secondStaging, {
+      collectionId: "stale-collection-b",
+      kind: "create",
+      operationToken: "stale-operation-b",
+      title: "Stale B",
+    });
+
+    const result = await initializePlan({ title: "Night Drive" }, fixture.deps);
+
+    expect(result.created).toBeTrue();
+    expect(existsSync(firstStaging)).toBeFalse();
+    expect(existsSync(secondStaging)).toBeFalse();
+    expect(reservationEntries(channelRoot)).toEqual([]);
+    expect(existsSync(collectionDirectory(channelRoot))).toBeTrue();
+  });
+
+  test("rejects conflicting recovery destinations before mutating the namespace", async () => {
+    const channelRoot = channelFixture();
+    const collectionsRoot = path.join(channelRoot, "collections");
+    const existing = { id: collectionId, title: "Night Drive" };
+    const fixture = createDependencies(
+      channelRoot,
+      createStoreFake([existing])
+    );
+    for (const token of ["interrupted-force-a", "interrupted-force-b"]) {
+      writeOwnershipMarker(
+        path.join(collectionsRoot, `.tayk-${token}.staging`),
+        {
+          collectionId,
+          kind: "force",
+          operationToken: token,
+          title: "Night Drive",
+        }
+      );
+      const backup = path.join(collectionsRoot, `.tayk-${token}.backup`);
+      mkdirSync(backup);
+      writeFileSync(path.join(backup, "old.txt"), token);
+    }
+    const before = snapshotDirectory(collectionsRoot);
+
+    await expectRejection(
+      initializePlan({ title: "Night Drive" }, fixture.deps)
+    );
+
+    expect(snapshotDirectory(collectionsRoot)).toEqual(before);
+    expect(fixture.store.records.get(collectionId)).toEqual(existing);
+  });
+
   test("finalizes an owned create directory when its row was committed", async () => {
     const channelRoot = channelFixture();
     const existing = { id: collectionId, title: "Night Drive" };
