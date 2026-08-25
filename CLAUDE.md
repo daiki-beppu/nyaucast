@@ -48,3 +48,4 @@ YouTube チャンネル運営を自動化するツールキット。skill に蓄
 - `docs/agents/issue-tracker.md` — GitHub Issues の操作、takt workflow の使い分け、wayfinder map から実装への引き渡し
 - `docs/agents/triage-labels.md` — triage ロール → 実ラベル名の対応表
 - `docs/agents/domain.md` — 探索前に読むもの（`CONTEXT.md` / ADR）と、ADR 矛盾の扱い
+- `docs/agents/mutation-audit.md` — Stryker mutation 監査の運用（実行の節目・レポートの扱い・発見の issue 化）

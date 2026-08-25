@@ -26,6 +26,10 @@ _Avoid_: 「第三者 consumer は存在しない」の根拠として使うこ�
 Python 版を skills 経由で運用する数十人規模の第三者コミュニティ。first-party ではないため dogfood 対象外だが、告知義務・移行コスト判断に影響する。移行告知はイベントベース（「次の告知は dogfood 完走後」）で行い、日付は約束しない (旧リポ ADR-0021)。
 _Avoid_: 第三者 consumer なし
 
+**Node 互換表面**:
+配布物に入るコード（`package.json` の `files` 対象 = `src/` + `bin/tayk.js`）を Node 互換 API のみで書く規約面。実行ランタイムは Bun のまま（ADR-0003）。`Bun` グローバルと `bun:` import は lint で機械強制的に禁止される。テスト・開発ツーリングは対象外。
+_Avoid_: Node 対応, Node サポート (配布形の具体化 — ビルドステップや npm 配布再開 — を含意する。それは external user が現実になる時点の別決定)
+
 ## アーキテクチャ
 
 **MCP tool**:
@@ -75,6 +79,16 @@ _Avoid_: database, SQLite (実体は libSQL。SQLite 互換だが区別する)
 **read model**:
 local store が兼ねる読み取り専用のクエリ面。書き込みの正はデータ 4 分類のまま、① と ④ を DB へミラーし「何かを知りたいときは常に local store に SQL 一発」を保証する。ミラーは SSOT ではなく、① は git、④ は YouTube が常に正。
 _Avoid_: キャッシュ (③ と混同する)、SSOT (read model は読み口であって正本ではない)
+
+## テスト・品質検証
+
+**改変拒否契約テスト**:
+リポジトリ設定・workflow 定義・配布契約などの改変を検知して拒否する契約テスト層。`src` を import せず、bun を被検体（子プロセスとして起動される対象）として検証する。過去の `docs/audits/` 文書ではこれを「mutation test」と呼んでいたが、今後この意味では使わない（過去文書は書き換えない）。
+_Avoid_: mutation test (Stryker の mutation testing と衝突する旧称)
+
+**mutation testing**:
+Stryker による変異テスト。実装コードへ機械的に変異 (mutant) を注入し、テストが検知 (kill) できるかで「テストの穴」を発見する。CI ゲートではなく、人が読んで issue 化する監査として運用する（運用の正書は `docs/agents/mutation-audit.md`）。対象は unit テスト層のみで、改変拒否契約テストは対象外。
+_Avoid_: 改変拒否契約テストをこの語で呼ぶこと
 
 ## コンテンツ制作
 
