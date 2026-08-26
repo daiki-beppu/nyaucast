@@ -1,6 +1,6 @@
 version: 2
 updates:
-  - package-ecosystem: bun
+  - package-ecosystem: npm
     directory: /
     schedule:
       interval: weekly
@@ -14,17 +14,12 @@ updates:
     commit-message:
       prefix: "chore(deps)"
     groups:
-      bun-minor-and-patch:
+      npm-minor-and-patch:
         patterns: ["*"]
         update-types: [minor, patch]
 
-  # `directory: /` は .github/workflows とリポジトリ直下の action.yml しか見ない。
-  # composite action (.github/actions/*/action.yml) の pin を拾うには、その
-  # ディレクトリを明示する必要がある（dependabot-core#6704）。
   - package-ecosystem: github-actions
-    directories:
-      - /
-      - /.github/actions/*
+    directory: /
     schedule:
       interval: weekly
       day: monday
@@ -40,20 +35,3 @@ updates:
       actions-minor-and-patch:
         patterns: ["*"]
         update-types: [minor, patch]
-
-  - package-ecosystem: nix
-    directory: /
-    schedule:
-      interval: weekly
-      day: monday
-      time: "09:30"
-      timezone: Asia/Tokyo
-    cooldown:
-      default-days: 3
-    open-pull-requests-limit: 5
-    labels: [dependencies]
-    commit-message:
-      prefix: "chore(deps)"
-    groups:
-      nix-inputs:
-        patterns: ["*"]

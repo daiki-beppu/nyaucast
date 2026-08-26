@@ -1,0 +1,6 @@
+allowBuilds:
+  actionlint: true
+publicHoistPattern:
+  - oxfmt
+  - oxlint
+  - vitest

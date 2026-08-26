@@ -16,7 +16,7 @@
     "noEmit": true,
     "allowJs": true,
     "checkJs": true,
-    "types": ["bun"]
+    "types": ["node"]
   },
   "include": [
     "*.config.ts",

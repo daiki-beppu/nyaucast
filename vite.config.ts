@@ -1,0 +1,57 @@
+import { defineConfig } from "vite-plus";
+
+export default defineConfig({
+  fmt: {
+    ignorePatterns: ["CONTEXT.md", "docs/agents/**", "docs/research/**", "prototype/**"],
+    proseWrap: "preserve",
+  },
+  lint: {
+    ignorePatterns: ["prototype/**"],
+    options: {
+      typeAware: true,
+      typeCheck: true,
+    },
+    overrides: [
+      {
+        files: ["*.ts"],
+        rules: {
+          "no-implicit-globals": "off",
+          "no-unused-vars": "off",
+        },
+      },
+      {
+        files: ["src/index.ts"],
+        rules: {
+          "unicorn/no-empty-file": "off",
+        },
+      },
+      {
+        files: ["src/**/*.ts", "bin/**/*.js"],
+        rules: {
+          "no-restricted-globals": ["error", "Bun"],
+          "no-restricted-imports": ["error", { patterns: ["bun:*"] }],
+        },
+      },
+    ],
+  },
+  staged: {
+    "*.{js,jsx,ts,tsx,json,jsonc,md,yml,yaml}": "vp fmt --write",
+  },
+  test: {
+    passWithNoTests: true,
+    projects: [
+      {
+        test: {
+          name: "unit",
+          include: ["src/**/*.test.ts"],
+        },
+      },
+      {
+        test: {
+          name: "contract",
+          include: ["test/**/*.test.ts"],
+        },
+      },
+    ],
+  },
+});
