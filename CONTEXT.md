@@ -7,7 +7,7 @@ YouTube チャンネル運営を自動化するツールキット。skill に蓄
 ## プロダクト・配布
 
 **tayk**:
-本ツールの公開ブランド = npm package 名 = bin 名。下流からの canonical 起動は `npx`/`nlx` 互換の `tayk <cmd>`（runtime は Bun）。
+本ツールの公開ブランド = npm package 名 = bin 名。下流からの canonical 起動は `npx`/`nlx` 互換の `tayk <cmd>`（runtime は Node）。
 _Avoid_: youtube-channels-automation, yt-automation, yt (旧 bin 名)
 
 **dogfood**:
@@ -27,8 +27,7 @@ Python 版を skills 経由で運用する数十人規模の第三者コミュ�
 _Avoid_: 第三者 consumer なし
 
 **Node 互換表面**:
-配布物に入るコード（`package.json` の `files` 対象 = `src/` + `bin/tayk.js`）を Node 互換 API のみで書く規約面。実行ランタイムは Bun のまま（ADR-0003）。`Bun` グローバルと `bun:` import は lint で機械強制的に禁止される。テスト・開発ツーリングは対象外。
-_Avoid_: Node 対応, Node サポート (配布形の具体化 — ビルドステップや npm 配布再開 — を含意する。それは external user が現実になる時点の別決定)
+配布物に入るコード（`package.json` の `files` 対象）を Node 互換 API のみで書く規約面。`Bun` グローバルと `bun:` import は lint で機械強制的に禁止される — 実行ランタイムが Node になった（ADR-0003）ため、この lint は実ランタイム強制として維持される。テスト・開発ツーリングは対象外。
 
 ## アーキテクチャ
 
@@ -83,7 +82,7 @@ _Avoid_: キャッシュ (③ と混同する)、SSOT (read model は読み口�
 ## テスト・品質検証
 
 **改変拒否契約テスト**:
-リポジトリ設定・workflow 定義・配布契約などの改変を検知して拒否する契約テスト層。`src` を import せず、bun を被検体（子プロセスとして起動される対象）として検証する。過去の `docs/audits/` 文書ではこれを「mutation test」と呼んでいたが、今後この意味では使わない（過去文書は書き換えない）。
+リポジトリ設定・workflow 定義・配布契約などの改変を検知して拒否する契約テスト層。`src` を import せず、node を被検体（子プロセスとして起動される対象）として検証する。過去の `docs/audits/` 文書ではこれを「mutation test」と呼んでいたが、今後この意味では使わない（過去文書は書き換えない）。
 _Avoid_: mutation test (Stryker の mutation testing と衝突する旧称)
 
 **mutation testing**:

@@ -8,11 +8,12 @@ YouTube チャンネル運営を自動化するツールキット。skill に蓄
 
 ## 環境
 
-- bun / node は Nix flake devShell が供給し、リポジトリ作業では direnv を通した devShell の bun を使う。**グローバル（nix-darwin per-user profile）にも bun はあるが、flake の pin とは供給元が別で版がずれ得る**。lefthook / nixfmt / `node_modules/.bin` は devShell のみ供給で、direnv を通さないシェルには無い
-- worktree を作ったら毎回 `direnv allow` — devShell 入場時に `bun install --frozen-lockfile` が走る（`node_modules` は worktree ごとに要る）。**lockfile が `package.json` と乖離していると install は失敗するが devShell には入れてしまう** — 警告だけ出て `node_modules` が無い状態になるので、`bun install` で lockfile を更新する
-- パッケージ操作・スクリプト実行は bun のみ。npm / pnpm / yarn とそのラッパを使わない
-- npm CLI は ADR-0003 が定める配布互換境界の限定例外だけに使う。release の `npm publish` / `npm publish --dry-run` と、package 統合テストの `npm pack` / 一時 consumer への `npm install` だけを許可する。後者は npm tarball と生成 shim の互換検証であり、リポジトリの依存管理ではない
-- **検査ゲートは `bun run check` の 1 コマンド**（最初に失敗したゲートで止まる）。CI・pre-push フックも同じ script を呼ぶため、ここで通れば CI でも通る。ただし takt workflow 定義の検査だけは check の外にある（開発フロー節の doctor）。GitHub Actions の workflow 定義は actionlint として check の中にある。ゲートが何本あり何を実行するかは `package.json` の `check` script だけが定義する — **このファイルを含め、どこにも書き写さない**
+- ランタイムは Node。ローカルはホスト供給で強制せず、開発・CI の版は `package.json` の `devEngines.runtime`（24.x 線）が SSOT — CI（setup-node）だけが pin を読んで導入する。**ローカルと CI の版ずれは許容し、CI を裁定者とする**
+- パッケージマネージャは pnpm v11。`packageManager` フィールドの exact pin が SSOT で、pnpm 自身が pin 版へ自動切替するため手元の版は不問。corepack は使わない
+- test / lint / format / 型検査は Vite+（npm パッケージ `vite-plus`、`vp` CLI）が一元管理する。同梱ツールは exact pin で、個別ツールを devDependencies に重複して置かない
+- **パッケージ操作は `vp install` を正とし（lockfile 検出で pnpm へ委譲）、vp が覆わない操作（任意 script 実行・pack 等）は pnpm を使う。npm / yarn / bun とそのラッパを使わない** — 例外条項なし（publish も pnpm）
+- **検査ゲートは `pnpm run check` の 1 コマンド**（最初に失敗したゲートで止まる）。CI・pre-push フックも同じ script を呼ぶため、ここで通れば CI でも通る。GitHub Actions の workflow 定義は actionlint として check の中にある。ゲートが何本あり何を実行するかは `package.json` の `check` script だけが定義する — **このファイルを含め、どこにも書き写さない**
+- git hook のディスパッチャ実体は gitignore されており、**依存 install（`prepare` 経由の hook enable）を忘れた worktree では hook が無警告でスキップされる**。素通りしても CI が同一の check で落とすが、worktree を作ったら必ず依存 install を実行する
 
 ## アーキテクチャ（ADR-0001）
 
@@ -31,11 +32,10 @@ YouTube チャンネル運営を自動化するツールキット。skill に蓄
 
 ## 開発フロー
 
-- **worktree 必須・main 直コミット禁止**。worktree は `git worktree add --detach .claude/worktrees/<slug> main` で先に手動作成し、`direnv allow` する。ブランチは takt の pipeline モードに作らせるため、worktree 作成時に `-b` を付けない
-- 開発は takt メイン。detached HEAD の手動 worktree 内から直接 `takt --pipeline --auto-pr -b <新規ブランチ名> -w tayk-feature -i <issue番号>` / `takt --pipeline --auto-pr -b <新規ブランチ名> -w tayk-fix -i <issue番号>` を実行する。`--auto-pr` は `--pipeline` が必須、pipeline の issue 指定は positional 引数ではなく `-i` が必須であり、`-b` のブランチは実行前に存在してはならない。新しい review-adjudication 経路の隔離 clone 実走行が未検証のため、検証完了までは `worktree: true` のキュー実行を使わない。設計ゲート・診断ゲート・レビューループ・要件 ID の採番は workflow 側が持つ（`docs/agents/issue-tracker.md` / ADR-0008）
-- workflow の一般構造（schema・遷移・facet 参照）の検査は `takt workflow doctor` の 1 本。pre-push で自動実行されるが、**CI では走らない** — takt は dotfiles の profile 由来で CI 環境に無いため。doctor が検出しない issue 固有の受け入れ契約に限り、Takt に依存しない読み取り専用テストを `bun run check` に含めてよい（ADR-0008 Consequences）
-- **rule の決定的な分岐は `condition: when(<式>)` と書く。** 決定的か LLM 判定かはキーではなく `condition` の**値の構文**で決まるため、`when()` を外すと `structured.*` の分岐が黙って自然言語判定に化ける。`when:` という別キーは takt が受け付けない
-- **doctor が見ないもの**は目視で保つ — ループ上限の実効性（cycle の外から再入されると loop monitor が発火しない）・複製 step の一致・レポート境界（callable の子は親のレポートを読めない）。ただし `spillover` の report 名・format は issue #119 の読み取り専用テストが feature / fix の一致を検査する。遷移や複製定義を変えるときは ADR-0008 の Consequences を読むこと
+- **worktree 必須・main 直コミット禁止**。worktree セットアップは「`git worktree add --detach .claude/worktrees/<slug> main` → 依存 install」の 2 コマンド。ブランチは takt の pipeline モードに作らせるため、worktree 作成時に `-b` を付けない
+- **feature の実装は takt（builtin `experimental`）**。detached HEAD の手動 worktree 内から直接 `takt --pipeline --auto-pr -b <新規ブランチ名> -w experimental -i <issue番号>` を実行する。`--auto-pr` は `--pipeline` が必須、pipeline の issue 指定は positional 引数ではなく `-i` が必須であり、`-b` のブランチは実行前に存在してはならない。review-adjudication 経路の隔離 clone 実走行が未検証のため、検証完了までは `worktree: true` のキュー実行を使わない。要求追跡は builtin の Completion Contracts ledger + `SCN-{contract ID}-P/N` 構造が持つ（`docs/agents/issue-tracker.md` / ADR-0008）
+- **fix は takt を使わず issue-direct で実装する**（worktree → 実装 → PR 作成 → CI green まで監視）。品質ゲートは PR レビュー標準の builtin `review-fix-default` が担う
+- tayk 固有の workflow 資産は持たない — `.takt/` は `config.yaml` のみ（ADR-0008）。workflow・steps / facets / schemas を足す提案は ADR-0008 の改訂を同じ差分に含めない限り規約違反
 - スコープ外で見つけた問題は、直さず捨てず issue にする
 - commit: 日本語 Conventional Commits + タイトル末尾に `(#<issue番号>)`
 
@@ -45,7 +45,7 @@ YouTube チャンネル運営を自動化するツールキット。skill に蓄
 
 ## Agent 向けドキュメント
 
-- `docs/agents/issue-tracker.md` — GitHub Issues の操作、takt workflow の使い分け、wayfinder map から実装への引き渡し
+- `docs/agents/issue-tracker.md` — GitHub Issues の操作、takt workflow の使い分け、self-contained issue の起票規約
 - `docs/agents/triage-labels.md` — triage ロール → 実ラベル名の対応表
 - `docs/agents/domain.md` — 探索前に読むもの（`CONTEXT.md` / ADR）と、ADR 矛盾の扱い
 - `docs/agents/mutation-audit.md` — Stryker mutation 監査の運用（実行の節目・レポートの扱い・発見の issue 化）

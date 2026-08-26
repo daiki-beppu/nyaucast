@@ -2,7 +2,7 @@
 
 ## Status
 
-accepted (2026-07-08)
+accepted (2026-07-08) / 改訂 2026-08-26（#368。map #353「開発基盤スクラップアンドビルド」の決定を実装に先行して反映 — 決定 5 の runtime を Bun → Node へ差し替え。zod / libSQL + Drizzle は不変。骨子は issue #363 の resolution）
 
 ## Context
 
@@ -14,7 +14,7 @@ accepted (2026-07-08)
 2. **registry を置かない**。tool 一覧は entry point でのフラットな import 配列のみ。「登録」という工程を存在させない
 3. **エラーは内部 throw、境界で変換**。core 内部は素直に throw する。MCP adapter が MCP エラーへ、CLI adapter が exit code へ変換する。`Result` 型・`createService` フレーム・`toServiceError` の手書きセレモニーは導入しない
 4. **adapter は MCP primary + CLI thin の 2 本**（CONTEXT.md「adapter」）。adapter に業務ロジックを書かない
-5. **runtime は Bun、schema は zod、DB は libSQL + Drizzle**
+5. **runtime は Node、schema は zod、DB は libSQL + Drizzle**（runtime は 2026-08-26 / #368 で改訂 — 配布・開発の実行モデルは ADR-0003）
 6. **旧リポから引き継ぐ決定**（本リポで再議論しない）: npm 配布（旧 ADR-0006）/ `tayk` ブランド（旧 ADR-0007）/ JSON-only config（旧 ADR-0009）/ libSQL local store（旧 ADR-0017）/ CONTEXT.md の全用語
 7. **本規約の確定は tracer（plan 区間）の end-to-end 完走をもって行う**。tracer 実装中に破綻した項目は本 ADR を改訂して直す（黙って逸脱しない）
 
@@ -35,6 +35,7 @@ accepted (2026-07-08)
 - tracer（plan 区間）が本規約の最初の適用対象。ディレクトリ規約（`src/tools/<domain>.<name>.ts` 等）は tracer 実装で確定させ、本 ADR に追記する
 - ~~takt 運用は組み込み default workflow を素のまま使う。レビュー終了条件（仕様引用必須 / ラウンド上限）は予防的に導入せず、レビューが 3 ラウンドを超える再発を観測したら実データを根拠に別 ADR で導入する（旧 ADR-0021 の決定）~~
   → **ADR-0008 で置き換え**（2026-07-26）。tayk 専用 workflow を採用し、設計ゲート（fix では診断ゲート）・ADR 整合検査・レビュー ⇄ 修正ループ上限 3 回（CI 待機・レビュー待機のような待機ループは別枠の閾値）を構造として持つ。本項の「予防的に導入しない」は、無人完走を目標に据えた時点で前提が変わったため覆した。経緯は ADR-0008 を参照。
+  → さらに ADR-0008 は 2026-08-26（#368）に「builtin 直用。tayk 固有の workflow 資産を持たない」へ主旨転換した。専用 workflow と独自ゲートは全廃され、品質装置は takt builtin が持つ。
   **なお本項は改訂の前後を通じて開発側の運用規約である** — 製品（collection lifecycle）の orchestration に takt を採用しないことは ADR-0006 が別途確定しており、そちらは本項の改訂と独立に有効（ADR-0006 自身が「開発側の takt 利用は本 ADR の対象外」と定めている）
 - CLI adapter は「人間が直接触る唯一の面」という役割を持ち、ゲート承認の書き込み口を独占する（ADR-0007）。それでも規約 4「adapter に業務ロジックを書かない」は保たれる — 承認を書くのは core の関数で、CLI はそれを呼ぶだけ
 
@@ -42,4 +43,4 @@ accepted (2026-07-08)
 
 - 旧リポ ADR-0021（本リポ誕生の出典）/ CONTEXT.md「MCP tool」「adapter」「tracer」「データ 4 分類」「read model」
 - ADR-0006（takt を製品の orchestration に採用しない）/ ADR-0007（collection lifecycle の実行モデル。tracer が通す区間は `collection.plan` tool ではなく plan 区間になった）
-- ADR-0008（開発側の takt 運用。本 ADR の Consequences 2 項目めを上書きする。決定 7「黙って逸脱しない」を ADR 整合性レビューとして工程化する）
+- ADR-0008（開発側の takt 運用。本 ADR の Consequences 2 項目めを上書きする。2026-08-26 の主旨転換後は ADR 整合の受け皿を「AGENTS.md が全 agent に届く事実 + 決定 7『黙って逸脱しない』」に置く）

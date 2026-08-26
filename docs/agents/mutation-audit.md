@@ -5,19 +5,19 @@ Stryker（<https://stryker-mutator.io/>）を監査ツールとして運用す�
 ## 位置づけ
 
 - **監査ツールであってゲートではない。** mutation score を出し、surviving mutant（テストが殺せなかった変異）からテストの穴を発見して issue 化する。score 閾値で CI を落とさない — CI 常設ゲート化の再評価は、監査運用の実測データが出た後の別 effort
-- `bun run check` の直列チェーンに入れない。ゲート集合の定義は `package.json` の check script だけが持つ
+- `pnpm run check` の直列チェーンに入れない。ゲート集合の定義は `package.json` の check script だけが持つ
 - 用語は CONTEXT.md — 「mutation testing」（本書の対象）と「改変拒否契約テスト」（別物・旧称 mutation test）を混同しない
 
 ## 実行
 
 - **ローカル手動のみ。** GitHub Actions の定期実行（nightly 等）は設けない。定期実行の再検討は CI ゲート化の再評価と同じ束で行う
 - 節目の目安（強制しない）: **実装 issue が main にマージされた後に 1 回** + **v0.1 ゲート（dogfood 完走）前に最低 1 回**。mutate 対象が増えた直後 — surviving mutant が出やすい瞬間 — に監査を当てる
-- コマンドは `bun run mutation`（check チェーンから独立した package.json script）
+- コマンドは `pnpm run mutation`（check チェーンから独立した package.json script）
 
 ## 対象
 
 - mutate は `src/**/*.ts` 全対象を初期値とする。除外は「この surviving mutant は許容する」と決めた場所に監査運用の中で貼る — 導入時に先回りで除外を設計しない
-- mutation 対象のテストは vitest の **unit project のみ**。改変拒否契約テストは `src` を import しない（mutant を殺せない）うえ `bun install` 等を含む重量級のため対象外。vitest runner に project 選択オプションは無いため、unit 層だけを include した Stryker 専用 vitest config を `vitest.configFile` で渡して実現する
+- mutation 対象のテストは vitest の **unit project のみ**。改変拒否契約テストは `src` を import しない（mutant を殺せない）うえ依存 install 等を含む重量級のため対象外。vitest runner に project 選択オプションは無いため、unit 層だけを include した Stryker 専用 vitest config を `vitest.configFile` で渡して実現する
 
 ## レポート
 
