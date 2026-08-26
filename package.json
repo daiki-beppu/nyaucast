@@ -35,7 +35,7 @@
   "devDependencies": {
     "@stryker-mutator/core": "10.0.0",
     "@stryker-mutator/vitest-runner": "10.0.0",
-    "@types/node": "24.13.3",
+    "@types/node": "26.2.0",
     "fallow": "3.18.0",
     "github-actionlint": "1.7.12",
     "typescript": "7.0.2",
