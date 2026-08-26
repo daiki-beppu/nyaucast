@@ -8,16 +8,16 @@ YouTube チャンネル運営を自動化するツールキット。agent (Claud
 
 ## Setup
 
-前提: [Nix](https://nixos.org) + [direnv](https://direnv.net)。bun / node は flake devShell が提供する（バージョンの SSOT は `flake.lock`）。
+前提: [Node](https://nodejs.org)（ホスト供給。開発・CI の版線は `package.json` の `devEngines.runtime` が定める）。パッケージマネージャは pnpm（`packageManager` の exact pin を pnpm 自身が読んで自動切替する）。
 
 ```bash
-direnv allow    # devShell 有効化 + 依存導入の試行（初回と worktree 作成後）
-bun run check   # 全ゲートを実行
+vp install       # 依存導入（初回と worktree 作成後。lockfile 検出で pnpm へ委譲）
+pnpm run check   # 全ゲートを実行
 ```
 
-devShell に入るたびに `bun install --frozen-lockfile` を試みる。lockfile と `package.json` が乖離している場合も devShell には入れるが、`node_modules` が生成されない状態になり得る。その場合は `bun install` で lockfile を更新し、依存を導入する。
+lockfile と `package.json` の乖離は check の最初のゲートが検出する。
 
-全ゲートの入口は `bun run check` であり、`bun test` はその部分集合。
+全ゲートの入口は `pnpm run check`。ゲートの構成は `package.json` の `check` script だけが定義する。
 
 ## Status
 
