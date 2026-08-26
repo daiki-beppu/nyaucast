@@ -28,10 +28,13 @@
     "lockfile:check": "pnpm install --frozen-lockfile --lockfile-only",
     "actions:check": "github-actionlint",
     "fallow": "fallow --no-cache --fail-on-issues",
+    "mutation": "pnpm exec stryker run",
     "prepack": "tsc --project tsconfig.build.json",
     "prepare": "vp hooks enable"
   },
   "devDependencies": {
+    "@stryker-mutator/core": "10.0.0",
+    "@stryker-mutator/vitest-runner": "10.0.0",
     "@types/node": "24.13.3",
     "fallow": "3.18.0",
     "github-actionlint": "1.7.12",
