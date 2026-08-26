@@ -11,11 +11,13 @@
   },
   "files": [
     "dist",
-    "bin"
+    "bin",
+    "drizzle"
   ],
   "type": "module",
   "imports": {
     "#tayk-entry": {
+      "tayk-source": "./src/index.ts",
       "types": "./src/index.ts",
       "default": "./dist/index.js"
     }
@@ -29,13 +31,21 @@
     "actions:check": "github-actionlint",
     "fallow": "fallow --no-cache --fail-on-issues",
     "mutation": "pnpm exec stryker run",
+    "db:generate": "drizzle-kit generate",
     "prepack": "tsc --project tsconfig.build.json",
     "prepare": "vp hooks enable"
+  },
+  "dependencies": {
+    "@libsql/client": "0.17.4",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "drizzle-orm": "0.45.2",
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@stryker-mutator/core": "10.0.0",
     "@stryker-mutator/vitest-runner": "10.0.0",
     "@types/node": "24.13.3",
+    "drizzle-kit": "0.31.10",
     "fallow": "3.18.0",
     "github-actionlint": "1.7.12",
     "typescript": "7.0.2",

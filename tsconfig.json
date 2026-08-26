@@ -15,6 +15,7 @@
     "noUnusedParameters": true,
     "noEmit": true,
     "allowJs": true,
+    "allowImportingTsExtensions": true,
     "checkJs": true,
     "types": ["node"]
   },

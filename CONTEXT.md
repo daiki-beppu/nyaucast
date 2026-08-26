@@ -11,7 +11,7 @@ YouTube チャンネル運営を自動化するツールキット。skill に蓄
 _Avoid_: youtube-channels-automation, yt-automation, yt (旧 bin 名)
 
 **dogfood**:
-first-party 2 リポ (soulful-grooves / deepfocus365) で collection のフルライフサイクル 1 周（TTP ベンチマーク収集 → 企画 → 音源 → 動画 → upload → description）を tayk だけで実走させる受け入れ検証。`v0.1.0` の唯一のリリースゲート。期間ではなく完走で判定する。
+first-party 2 リポ (soulful-grooves / deepfocus365) で collection のフルライフサイクル 1 周（TTP 収集・分析 → 企画 → サムネ生成 → 音源生成 → MIX/マスタリング → 動画生成 → upload → 公開後運用）を tayk だけで実走させる受け入れ検証。`v0.1.0` の唯一のリリースゲート。期間ではなく完走で判定する。
 _Avoid_: ベータ, トライアル, 試運転
 
 **critical regression**:
@@ -44,7 +44,7 @@ collection lifecycle の GO/NO-GO ゲートを人間が越えた記録。`tayk c
 _Avoid_: approve, 承認フロー (独立した承認操作は作らない。起動 = 承認)
 
 **knowledge codec**:
-「いつ・どの MCP tool を・どう使うか」のドメイン知識パッケージ。MCP tool の description (WHAT) に対し、knowledge codec は WHEN/HOW を提供する。粗粒度の workflow tool を置かないため (ADR-0007)、**区間を歩く手順を持つ唯一の担い手**でもある。5 本構成: `collection-lifecycle` / `channel-management` / `analytics` / `content-quality` / `distribution`。下流へ配布する操作面は codec のみで、旧個別 skill は配布しない。旧 skill は codec の設計材料として扱う。
+「いつ・どの MCP tool を・どう使うか」のドメイン知識パッケージ。MCP tool の description (WHAT) に対し、knowledge codec は WHEN/HOW を提供する。粗粒度の workflow tool を置かないため (ADR-0007)、**区間を歩く手順を持つ唯一の担い手**でもある。5 本構成: `collection-lifecycle` / `channel-management` / `analytics` / `content-quality` / `distribution`。**v0.1 で実装するのは `collection-lifecycle` のみ**。下流へ配布する操作面は codec のみで、旧個別 skill は配布しない。旧 skill は codec の設計材料として扱う。
 _Avoid_: skill guide, routing layer (knowledge codec は知識の bundled 提供であり、単なるルーティングではない)
 
 **adapter**:
@@ -117,6 +117,10 @@ collection 内の個別トラックをクロスフェード結合した最終音
 **channel registry**:
 運営者が所有する全 first-party チャンネルリポのパス一覧。`~/.config/tayk/channels.json` に JSON 配列で格納する。各エントリはチャンネルリポの絶対パスのみを持ち、表示名等のメタデータは各リポの `config/channel/meta.json` から動的に解決する（二重管理の回避）。
 _Avoid_: channel list, channel config (config は `config/channel/*.json` のこと)
+
+**channel bootstrap**:
+`tayk init` が行う新規チャンネルリポの立ち上げ工程。
+_Avoid_: channel registry への既存リポ登録（bootstrap は新規作成を指す）
 
 **dashboard** (v0.2 以降):
 全 first-party チャンネルの analytics スナップショットを一覧表示するローカル Web UI。データ収集は行わずビューア専用 — 読み口は各チャンネルの local store (read model)。channel registry で対象チャンネルを解決する。
