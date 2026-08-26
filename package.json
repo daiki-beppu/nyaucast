@@ -10,8 +10,8 @@
     "tayk": "bin/tayk.js"
   },
   "files": [
-    "bin/tayk.js",
-    "src"
+    "dist",
+    "bin"
   ],
   "type": "module",
   "publishConfig": {
@@ -22,6 +22,7 @@
     "lockfile:check": "pnpm install --frozen-lockfile --lockfile-only",
     "actions:check": "github-actionlint",
     "fallow": "fallow --no-cache --fail-on-issues",
+    "prepack": "tsc --project tsconfig.build.json",
     "prepare": "vp hooks enable"
   },
   "devDependencies": {
