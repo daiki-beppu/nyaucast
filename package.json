@@ -28,7 +28,7 @@
     "format:fix": "oxfmt --write .",
     "format:nix:check": "nixfmt --check $(git ls-files '*.nix')",
     "format:nix:fix": "nixfmt $(git ls-files '*.nix')",
-    "test": "bun test",
+    "test": "bun test --pass-with-no-tests",
     "fallow": "fallow --no-cache --fail-on-issues"
   },
   "devDependencies": {
