@@ -1,11 +1,18 @@
-import { eq } from "drizzle-orm";
-
-import { hasThumbnail } from "./collections.ts";
-import type { Gate } from "./gates.ts";
+import { createCollectionStore, hasThumbnail } from "./collections.ts";
+import { getGateDecision, type GateDecision } from "./gates.ts";
 import type { LocalStore } from "./local-store.ts";
-import { collections } from "./schema.ts";
 
-type GateDecision = "approved" | "pending" | "rejected";
+export type CollectionStatus = {
+  collectionId: string;
+  gates: {
+    produce: GateDecision;
+    publish: GateDecision;
+  };
+  progress: {
+    awaitingApproval?: "produce" | "publish";
+    terminated: boolean;
+  };
+};
 
 function progressFromFacts(produce: GateDecision, publish: GateDecision, hasThumbnail: boolean) {
   if ([produce, publish].includes("rejected")) {
@@ -23,52 +30,26 @@ function progressFromFacts(produce: GateDecision, publish: GateDecision, hasThum
   return { terminated: false };
 }
 
-async function latestTimestamp(
+export async function deriveCollectionStatus(
   store: LocalStore,
   collectionId: string,
-  gate: Gate,
-  decision: "approval" | "rejection",
-): Promise<string | undefined> {
-  const query =
-    decision === "approval"
-      ? "SELECT approved_at AS timestamp FROM approvals WHERE collection_id = ? AND gate = ? ORDER BY approved_at DESC LIMIT 1"
-      : "SELECT rejected_at AS timestamp FROM rejections WHERE collection_id = ? AND gate = ? ORDER BY rejected_at DESC LIMIT 1";
-  const result = await store.client.execute({ args: [collectionId, gate], sql: query });
-  const timestamp = result.rows[0]?.["timestamp"];
-  return typeof timestamp === "string" ? timestamp : undefined;
-}
-
-async function deriveGateDecision(
-  store: LocalStore,
-  collectionId: string,
-  gate: Gate,
-): Promise<GateDecision> {
-  const [latestApproval, latestRejection] = await Promise.all([
-    latestTimestamp(store, collectionId, gate, "approval"),
-    latestTimestamp(store, collectionId, gate, "rejection"),
-  ]);
-  if (
-    latestRejection !== undefined &&
-    !(latestApproval !== undefined && latestApproval > latestRejection)
-  ) {
-    return "rejected";
-  }
-  return latestApproval === undefined ? "pending" : "approved";
-}
-
-export async function deriveCollectionProgress(store: LocalStore, collectionId: string) {
-  const collection = await store.db
-    .select({ id: collections.id })
-    .from(collections)
-    .where(eq(collections.id, collectionId))
-    .limit(1);
-  if (collection.length === 0) {
+): Promise<CollectionStatus> {
+  const collection = await createCollectionStore(store).findById(collectionId);
+  if (collection === undefined) {
     throw new Error("collection does not exist");
   }
   const [produce, publish, thumbnailExists] = await Promise.all([
-    deriveGateDecision(store, collectionId, "produce"),
-    deriveGateDecision(store, collectionId, "publish"),
+    getGateDecision(store, collectionId, "produce"),
+    getGateDecision(store, collectionId, "publish"),
     hasThumbnail(store, collectionId),
   ]);
-  return progressFromFacts(produce, publish, thumbnailExists);
+  return {
+    collectionId,
+    gates: { produce, publish },
+    progress: progressFromFacts(produce, publish, thumbnailExists),
+  };
+}
+
+export async function deriveCollectionProgress(store: LocalStore, collectionId: string) {
+  return (await deriveCollectionStatus(store, collectionId)).progress;
 }

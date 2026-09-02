@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, type SQL } from "drizzle-orm";
 
 import type { LocalStore } from "./local-store.ts";
 import { approvals, collections, rejections, thumbnails } from "./schema.ts";
@@ -6,6 +6,14 @@ import { approvals, collections, rejections, thumbnails } from "./schema.ts";
 interface CollectionRecord {
   id: string;
   title: string;
+}
+
+async function findCollection(
+  store: LocalStore,
+  condition: SQL<unknown>,
+): Promise<CollectionRecord | undefined> {
+  const rows = await store.db.select().from(collections).where(condition).limit(1);
+  return rows[0];
 }
 
 export async function hasThumbnail(store: LocalStore, collectionId: string): Promise<boolean> {
@@ -22,18 +30,8 @@ export function createCollectionStore(store: LocalStore) {
     create: async (collection: CollectionRecord) => {
       await store.db.insert(collections).values(collection);
     },
-    findById: async (id: string) => {
-      const rows = await store.db.select().from(collections).where(eq(collections.id, id)).limit(1);
-      return rows[0];
-    },
-    findByTitle: async (title: string) => {
-      const rows = await store.db
-        .select()
-        .from(collections)
-        .where(eq(collections.title, title))
-        .limit(1);
-      return rows[0];
-    },
+    findById: (id: string) => findCollection(store, eq(collections.id, id)),
+    findByTitle: (title: string) => findCollection(store, eq(collections.title, title)),
     hasDownstreamRecords: async (id: string) => {
       const [thumbnail, approval, rejection] = await Promise.all([
         hasThumbnail(store, id),
