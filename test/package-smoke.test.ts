@@ -7,7 +7,7 @@ describe("K3 package smoke", () => {
     const { allowedRoots, localDatabaseCreated, packedPaths, toolNames } =
       await inspectInstalledPackage();
 
-    expect(toolNames.toSorted()).toEqual(["plan_check_title", "plan_init"]);
+    expect(toolNames.toSorted()).toEqual(["collection_status", "plan_check_title", "plan_init"]);
     expect(localDatabaseCreated).toBe(true);
     expect(packedPaths).not.toContainEqual(expect.stringMatching(/\.test\.ts$/));
     expect(packedPaths).not.toContainEqual(expect.stringMatching(/^src\//));

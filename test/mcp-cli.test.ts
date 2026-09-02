@@ -11,7 +11,7 @@ import { createJsonRpcClient, requireRecord, stopChildProcess } from "./mcp-stdi
 const packageRoot = resolve(import.meta.dirname, "..");
 
 describe("tayk mcp", () => {
-  test("serves the two plan tools over stdio from the startup working directory", async () => {
+  test("serves the plan and collection status tools from the startup working directory", async () => {
     await withTemporaryDirectoryAsync("tayk-mcp-", async (channelRoot) => {
       const server = spawn(
         process.execPath,
@@ -56,7 +56,11 @@ describe("tayk mcp", () => {
           }
           return name;
         });
-        expect(toolNames.toSorted()).toEqual(["plan_check_title", "plan_init"]);
+        expect(toolNames.toSorted()).toEqual([
+          "collection_status",
+          "plan_check_title",
+          "plan_init",
+        ]);
 
         writeMessage({
           id: 3,
