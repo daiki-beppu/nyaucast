@@ -8,9 +8,12 @@ YouTube チャンネル運営を自動化するツールキット。agent (Claud
 
 ## Setup
 
-前提: [Node](https://nodejs.org)（ホスト供給。開発・CI の版線は `package.json` の `devEngines.runtime` が定める）。パッケージマネージャは pnpm（`packageManager` の exact pin を pnpm 自身が読んで自動切替する）。
+前提: [Node](https://nodejs.org)（ホスト供給。開発・CI の版線は `package.json` の `devEngines.runtime` が定める）と pnpm v12 native binary。pnpm の版は `packageManager` の exact pin が定める。旧 pnpm からの自動切替は使わないため、既存環境はリポジトリ外で一度だけ pin 版へ更新する（pnpm 未導入なら[公式のインストール手順](https://pnpm.io/installation)を使う）。
 
 ```bash
+pnpm_version=$(node -p 'require("./package.json").packageManager.split("@").at(-1)')
+(cd /tmp && pnpm self-update "$pnpm_version")
+pnpm --version   # packageManager の pin と一致すること
 vp install       # 依存導入（初回と worktree 作成後。lockfile 検出で pnpm へ委譲）
 pnpm run check   # 全ゲートを実行
 ```

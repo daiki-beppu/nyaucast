@@ -1,6 +1,7 @@
 allowBuilds:
   actionlint: true
   esbuild: true
+pmOnFail: ignore
 publicHoistPattern:
   - oxfmt
   - oxlint
