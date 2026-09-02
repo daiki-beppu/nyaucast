@@ -123,7 +123,7 @@ export async function inspectInstalledPackage(): Promise<PackageSmokeResult> {
     );
     const installed = spawnSync(
       "pnpm",
-      ["add", "--prod", "--ignore-scripts", "--prefer-offline", report.filename],
+      ["add", "--ignore-scripts", `${manifest.name}@file:${report.filename}`],
       { cwd: consumer, encoding: "utf8", timeout: subprocessTimeout },
     );
     requireSuccess("isolated pnpm install", installed);
