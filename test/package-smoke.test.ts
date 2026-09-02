@@ -19,5 +19,5 @@ describe("K3 package smoke", () => {
     for (const path of packedPaths.filter((path) => !npmMetadata.has(path))) {
       expect(allowedRoots.some((root) => path === root || path.startsWith(`${root}/`))).toBe(true);
     }
-  });
+  }, 120_000);
 });

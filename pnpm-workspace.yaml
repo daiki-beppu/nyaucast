@@ -1,5 +1,6 @@
 allowBuilds:
   actionlint: true
+  esbuild: true
 publicHoistPattern:
   - oxfmt
   - oxlint
