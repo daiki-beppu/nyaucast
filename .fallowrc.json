@@ -23,10 +23,8 @@
     "minOccurrences": 2,
     "threshold": 50,
     "ignore": [
-      "src/collections/gate-operations.ts",
       "src/db/schema.ts",
       "src/db/gates.ts",
-      "src/tools/collection.status.ts",
       "src/tools/plan.init.ts",
       "test/helpers.ts",
       "test/package-smoke-support.ts",

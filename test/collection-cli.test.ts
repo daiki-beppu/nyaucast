@@ -198,7 +198,13 @@ describe("tayk collection CLI", () => {
         cliEnvironment(""),
       );
 
+      expect(result.error).toBeUndefined();
+      expect(result.signal).toBeNull();
+      expect(typeof result.status).toBe("number");
       expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("Invalid option");
+      expect(result.stderr).toContain("produce");
+      expect(result.stderr).toContain("publish");
       const store = await openLocalStore(channelRoot);
       try {
         await expect(store.db.select().from(approvals)).resolves.toEqual([]);
@@ -219,7 +225,11 @@ describe("tayk collection CLI", () => {
 
       const result = runCollectionCli(channelRoot, arguments_, cliEnvironment(""));
 
+      expect(result.error).toBeUndefined();
+      expect(result.signal).toBeNull();
+      expect(typeof result.status).toBe("number");
       expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("01JMISSING0000000000000000");
       const reopened = await openLocalStore(channelRoot);
       try {
         await expect(reopened.db.select().from(approvals)).resolves.toEqual([]);

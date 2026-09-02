@@ -12,6 +12,16 @@ import { createJsonRpcClient, requireRecord, stopChildProcess } from "./mcp-stdi
 const collectionId = "01JCOLLECTION00000000000000";
 const packageRoot = resolve(import.meta.dirname, "..");
 
+function objectKeysDeep(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => objectKeysDeep(item));
+  }
+  if (value === null || typeof value !== "object") {
+    return [];
+  }
+  return Object.entries(value).flatMap(([key, nested]) => [key, ...objectKeysDeep(nested)]);
+}
+
 describe("collection status MCP tool", () => {
   test("lists and calls the read tool without exposing a gate write tool", async () => {
     await withTemporaryDirectoryAsync("tayk-collection-status-", async (channelRoot) => {
@@ -87,7 +97,7 @@ describe("collection status MCP tool", () => {
         });
         const status = requireRecord(called["structuredContent"], "structured content");
         const forbiddenFields = new Set(["command", "instruction", "next", "recommendation"]);
-        for (const field of Object.keys(status).map((value) => value.toLowerCase())) {
+        for (const field of objectKeysDeep(status).map((value) => value.toLowerCase())) {
           expect(forbiddenFields.has(field)).toBe(false);
         }
       } finally {

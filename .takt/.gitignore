@@ -1,8 +1,0 @@
-# Ignore everything by default
-*
-
-# This file itself
-!.gitignore
-
-# Project configuration
-!config.yaml

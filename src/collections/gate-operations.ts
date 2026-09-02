@@ -1,19 +1,10 @@
 import { createCollectionStore } from "../db/collections.ts";
-import { type Gate, getGateState, recordApproval, recordRejection } from "../db/gates.ts";
+import { getGateState, recordApproval, recordRejection } from "../db/gates.ts";
 import type { LocalStore } from "../db/local-store.ts";
 
-interface Clock {
-  now(): Date;
-}
-
-interface GateOperationInput {
-  collectionId: string;
-  gate: Gate;
-}
-
-interface GateOperationResult extends GateOperationInput {
-  recorded: boolean;
-}
+type Clock = Parameters<typeof recordApproval>[2];
+type GateOperationInput = Parameters<typeof recordApproval>[1];
+type GateOperationResult = GateOperationInput & { recorded: boolean };
 
 async function assertCollectionExists(store: LocalStore, collectionId: string): Promise<void> {
   const collection = await createCollectionStore(store).findById(collectionId);
@@ -30,30 +21,20 @@ function clockAfterLatestFact(clock: Clock, latestTimestamp: string | undefined)
   return { now: () => new Date(new Date(latestTimestamp).getTime() + 1) };
 }
 
-export async function approveCollectionGate(
-  store: LocalStore,
-  input: GateOperationInput,
-  clock: Clock,
-): Promise<GateOperationResult> {
-  await assertCollectionExists(store, input.collectionId);
-  const state = await getGateState(store, input.collectionId, input.gate);
-  if (state.decision === "approved") {
-    return { ...input, recorded: false };
-  }
-  await recordApproval(store, input, clockAfterLatestFact(clock, state.latestTimestamp));
-  return { ...input, recorded: true };
+function createGateOperation(
+  decision: "approved" | "rejected",
+  recordDecision: typeof recordApproval,
+): (store: LocalStore, input: GateOperationInput, clock: Clock) => Promise<GateOperationResult> {
+  return async (store, input, clock) => {
+    await assertCollectionExists(store, input.collectionId);
+    const state = await getGateState(store, input.collectionId, input.gate);
+    const recorded = state.decision !== decision;
+    if (recorded) {
+      await recordDecision(store, input, clockAfterLatestFact(clock, state.latestTimestamp));
+    }
+    return { ...input, recorded };
+  };
 }
 
-export async function rejectCollectionGate(
-  store: LocalStore,
-  input: GateOperationInput,
-  clock: Clock,
-): Promise<GateOperationResult> {
-  await assertCollectionExists(store, input.collectionId);
-  const state = await getGateState(store, input.collectionId, input.gate);
-  if (state.decision === "rejected") {
-    return { ...input, recorded: false };
-  }
-  await recordRejection(store, input, clockAfterLatestFact(clock, state.latestTimestamp));
-  return { ...input, recorded: true };
-}
+export const approveCollectionGate = createGateOperation("approved", recordApproval);
+export const rejectCollectionGate = createGateOperation("rejected", recordRejection);

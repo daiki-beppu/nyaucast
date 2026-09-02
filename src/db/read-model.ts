@@ -1,9 +1,6 @@
-import { eq } from "drizzle-orm";
-
-import { hasThumbnail } from "./collections.ts";
+import { createCollectionStore, hasThumbnail } from "./collections.ts";
 import { getGateDecision, type GateDecision } from "./gates.ts";
 import type { LocalStore } from "./local-store.ts";
-import { collections } from "./schema.ts";
 
 export type CollectionStatus = {
   collectionId: string;
@@ -33,13 +30,12 @@ function progressFromFacts(produce: GateDecision, publish: GateDecision, hasThum
   return { terminated: false };
 }
 
-async function collectionFacts(store: LocalStore, collectionId: string) {
-  const collection = await store.db
-    .select({ id: collections.id })
-    .from(collections)
-    .where(eq(collections.id, collectionId))
-    .limit(1);
-  if (collection.length === 0) {
+export async function deriveCollectionStatus(
+  store: LocalStore,
+  collectionId: string,
+): Promise<CollectionStatus> {
+  const collection = await createCollectionStore(store).findById(collectionId);
+  if (collection === undefined) {
     throw new Error("collection does not exist");
   }
   const [produce, publish, thumbnailExists] = await Promise.all([
@@ -47,14 +43,6 @@ async function collectionFacts(store: LocalStore, collectionId: string) {
     getGateDecision(store, collectionId, "publish"),
     hasThumbnail(store, collectionId),
   ]);
-  return { produce, publish, thumbnailExists };
-}
-
-export async function deriveCollectionStatus(
-  store: LocalStore,
-  collectionId: string,
-): Promise<CollectionStatus> {
-  const { produce, publish, thumbnailExists } = await collectionFacts(store, collectionId);
   return {
     collectionId,
     gates: { produce, publish },

@@ -30,15 +30,23 @@ describe("collection.status", () => {
     expect(getCollectionStatus).toHaveBeenCalledWith(collectionId);
   });
 
-  test("does not expose next actions in its output contract", () => {
+  test("accepts factual status and rejects action fields at every output level", () => {
     const tool = createCollectionStatusTool({
       getCollectionStatus: vi.fn(),
     });
-    const forbiddenFields = new Set(["command", "instruction", "next", "recommendation"]);
-    const outputFields = Object.keys(tool.outputSchema.shape).map((field) => field.toLowerCase());
+    const status = {
+      collectionId,
+      gates: { produce: "rejected", publish: "pending" },
+      progress: { terminated: true },
+    } as const;
 
-    for (const field of outputFields) {
-      expect(forbiddenFields.has(field)).toBe(false);
+    expect(tool.outputSchema.safeParse(status).success).toBe(true);
+    for (const outputWithAction of [
+      { ...status, recommendation: "publish" },
+      { ...status, gates: { ...status.gates, command: "produce" } },
+      { ...status, progress: { ...status.progress, next: "publish" } },
+    ]) {
+      expect(tool.outputSchema.safeParse(outputWithAction).success).toBe(false);
     }
   });
 });
