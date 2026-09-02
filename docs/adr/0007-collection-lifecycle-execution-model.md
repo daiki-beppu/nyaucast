@@ -70,7 +70,7 @@ tayk collection publish <id>   # 叩いた事実が gate='publish' の承認
 
 **書き込み 1 種類だけが MCP に無い。** agent は承認状態を読めて、人間に「承認してください」と言えて、書けない。
 
-**読み口は事実のみを返し、「次に何をすべきか」は返さない。** 順序の知識は knowledge codec の領分である。
+**読み口は保存済みの事実と、そこから決定的に導出できる状態を返す。** たとえば最新の承認・却下記録から導出する `terminated` や、実体行と承認記録から導出する承認待ち gate は read model の責務である。一方、次に呼ぶ primitive tool、区間を歩く手順、推奨行動は返さない。これら順序と行動の知識は knowledge codec の領分である。
 
 ### 7. 区間の割り当ては CONTEXT.md の lifecycle 文字列が正（#61）
 

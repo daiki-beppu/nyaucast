@@ -2,7 +2,7 @@
 
 ## Status
 
-accepted (2026-07-11) / 改訂 2026-08-02（#185 #113。npm CLI の配布互換境界例外として決定 5 を追加）/ 改訂 2026-08-25（#351。map #343「Stryker mutation testing 導入」の決定を実装に先行して反映 — 決定 1 を「配布物コードは Node 互換表面のみ」へ、決定 4 を「テストは vitest（Node 実行）へ統合」へ差し替え）/ 改訂 2026-08-26（#368。map #353「開発基盤スクラップアンドビルド」の決定を実装に先行して反映 — **主旨転換**: 実行ランタイム Bun 必須 → Node、bin の Bun 委譲ランチャ → dist を import する素の Node entry、ビルドレス出荷 → tsc emit の dist 出荷（開発時ビルドレスは維持）、契約テストの被検体 bun → node、npm CLI 限定例外 → 例外全廃（パッケージ操作は pnpm 全面）。ファイル名 `0003-bun-only-distribution.md` は歴史的識別子として据え置く。骨子は issue #363 / #354 の resolution）
+accepted (2026-07-11) / 改訂 2026-08-02（#185 #113。npm CLI の配布互換境界例外として決定 5 を追加）/ 改訂 2026-08-25（#351。map #343「Stryker mutation testing 導入」の決定を実装に先行して反映 — 決定 1 を「配布物コードは Node 互換表面のみ」へ、決定 4 を「テストは vitest（Node 実行）へ統合」へ差し替え）/ 改訂 2026-08-26（#368。map #353「開発基盤スクラップアンドビルド」の決定を実装に先行して反映 — **主旨転換**: 実行ランタイム Bun 必須 → Node、bin の Bun 委譲ランチャ → dist を import する素の Node entry、ビルドレス出荷 → tsc emit の dist 出荷（開発時ビルドレスは維持）、契約テストの被検体 bun → node、npm CLI 限定例外 → 例外全廃（パッケージ操作は pnpm 全面）。ファイル名 `0003-bun-only-distribution.md` は歴史的識別子として据え置く。骨子は issue #363 / #354 の resolution）/ 改訂 2026-09-02（#387。pnpm v12 native binary へ更新し、ローカル供給と lockfile 可視性の境界を明文化）
 
 ## Context
 
@@ -32,19 +32,23 @@ map #353「開発基盤スクラップアンドビルド」で **bun の完全�
 - **ビルドレス放棄の根拠**: Node は node_modules 配下の `.ts` を path ベースで拒否し（`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`）、解除フラグが無い（#364 実測）。消費者に loader（amaro 迂回）を要求する変則形は不採用
 - **tsc を選ぶ理由**: `rewriteRelativeImportExtensions` での emit は #364 で実測確認済みの唯一の経路で、追加リスクゼロ。tsdown / rolldown は CLI + MCP server には `.d.ts` / bundle の利点が薄く実ビルド未検証。後日の乗り換えは幹（dist 出荷）を変えない
 - **開発時ビルドレス維持の理由**: checkout 直下の type stripping は無フラグで成立（v24.12.0 で Stable、#364 実測）。「dist が stale」「build 忘れ」の失敗モードを開発ループに持ち込まない
-- **pnpm 全面の根拠**: pnpm は corepack なしで自給でき（`packageManager` pin を pnpm 自身が読んで pin 版へ自動切替）、v11 は native OIDC publish と `strictDepBuilds`（lifecycle scripts の既定ブロック + 明示許可）を備える（#365 実測）。publish・pack・consumer install のすべてに成立経路が揃い、npm CLI の例外を残す理由が消えた
+- **pnpm 全面の根拠**: v11 で native OIDC publish と build approval を実証済み（#365）。v12.2.1 への更新時に frozen install、build approval、pack、隔離 consumer install、`publish --dry-run`、mutation CLI、CI を再実測した。v12 は native binary の事前導入をローカル前提とする。`packageManager` は exact pin の SSOT として CI setup と導入版を定めるが、pnpm 自身による旧版からの自動切替は使わない
+- **単一 document lockfile の根拠**: v12 の package-manager 自動切替は実依存を第 2 YAML document へ移し、GitHub dependency graph が依存 0 件と解釈する。`pmOnFail: ignore` で自動切替と package-manager document の永続化を止め、実依存を先頭かつ唯一の document に保つ。契約テストは一般的な単一 document parser で root dependencies を取得できることを検証する
 
 ## Considered Options
 
 - **消費者 loader（amaro 迂回）でビルドレス出荷を維持**: 消費者側に実行フラグ / loader 登録を要求する変則形。npm 配布物の「入れたら動く」を壊す。不採用
 - **tsdown / rolldown でビルド**: CLI + MCP server に bundle / `.d.ts` の利点が薄く、実ビルド未検証。tsc の実測済み経路を優先。不採用（後日の乗り換えは可能）
-- **corepack でパッケージマネージャを供給**: Node 25 から非同梱化。pnpm 自身の pin 版自動切替で足りる。不採用
-- **npm CLI 例外の維持（publish / pack / consumer install）**: pnpm v11 に成立経路が揃い、例外を残すと「パッケージ操作は pnpm のみ」の規約に恒久の但し書きが残る。全廃。OIDC 登録でつまずいた場合のみ npm CLI へ 1 行退避する（既知の成立経路）
+- **corepack でパッケージマネージャを供給**: Node 25 から非同梱化。pnpm v12 native binary を公式経路で事前導入するため不採用
+- **pnpm 自身で旧版から pin 版へ自動切替**: v12 wrapper の build が実行されず `ENOEXEC` になる経路があり、成功時も package-manager 専用 document が dependency graph を不可視化する。`pmOnFail: ignore` で無効化し、事前導入へ一本化する
+- **npm CLI 例外の維持（publish / pack / consumer install）**: pnpm v12 に成立経路が揃い、例外を残すと「パッケージ操作は pnpm のみ」の規約に恒久の但し書きが残る。全廃。OIDC 登録でつまずいた場合のみ npm CLI へ 1 行退避する（既知の成立経路）
 - **npm の flat hoisting / npx 入口をテストマトリクスに残す**: pnpm の strict layout は未宣言依存の検出でむしろ厳しく、npm 特有の緩さを検証し続ける価値がない。外す
 
 ## Consequences
 
 - 開発・CI の Node 版は `package.json` の `devEngines.runtime`（24.x 線）が定め、CI（setup-node）が導入する。ローカルはホスト供給とし強制しない。`engines.node` は消費者契約として維持する
+- pnpm は `packageManager` の exact pin を CI setup とローカル導入版の SSOT とする。ローカルはリポジトリ外で pin 版の native binary を事前導入し、リポジトリ内の自動切替には依存しない
+- `pnpm-lock.yaml` は GitHub dependency graph と Dependabot が実依存を読める単一 YAML document を維持する
 - 消費者は JS（dist）を受け取るため、`engines.node` は type stripping の版制約から自由になる
 - dist ビルドの破綻は `prepack` が publish 前に検出する — 「静かに進行する事故」にはならない
 - **本改訂は実装に先行する**（スクラップアンドビルド前提）。改訂時点の実装（Bun 委譲 bin ランチャ・`bun run check`・flake 供給・npm 例外を使う統合テスト）は旧決定のままであり、後続の実装 issue 列（#369〜#373）が本改訂へ追従する。乖離は意図した過渡状態であって黙認ではない

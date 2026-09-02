@@ -123,6 +123,21 @@ describe("K1 three identical check surfaces", () => {
     }
   });
 
+  test("the dependency graph remains visible in a single-document lockfile", () => {
+    const lockfile = requireRecord(
+      parse(readFileSync(join(packageRoot, "pnpm-lock.yaml"), "utf8")),
+      "pnpm lockfile",
+    );
+    const rootImporter = requireRecord(
+      requireRecord(lockfile["importers"], "lockfile importers")["."],
+      "root importer",
+    );
+
+    expect(
+      Object.keys(requireRecord(rootImporter["dependencies"], "root dependencies")),
+    ).not.toHaveLength(0);
+  });
+
   test("runtime dependencies cannot be silenced through fallow", () => {
     const manifest = readJson(join(packageRoot, "package.json"));
     const fallow = readJson(join(packageRoot, ".fallowrc.json"));

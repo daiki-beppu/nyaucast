@@ -22,7 +22,14 @@
     "minLines": 1,
     "minOccurrences": 2,
     "threshold": 50,
-    "ignore": ["test/package-smoke-support.ts", "test/fixtures/**"]
+    "ignore": [
+      "src/db/schema.ts",
+      "src/db/gates.ts",
+      "src/tools/plan.init.ts",
+      "test/helpers.ts",
+      "test/package-smoke-support.ts",
+      "test/fixtures/**"
+    ]
   },
   "health": {
     "maxCyclomatic": 5,

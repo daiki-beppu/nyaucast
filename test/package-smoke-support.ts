@@ -1,8 +1,9 @@
-import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-import { withTemporaryDirectory } from "./helpers";
+import { withTemporaryDirectoryAsync } from "./helpers";
+import { createJsonRpcClient, requireRecord, stopChildProcess } from "./mcp-stdio-helpers";
 
 const packageRoot = resolve(import.meta.dirname, "..");
 const subprocessTimeout = 120_000;
@@ -23,8 +24,9 @@ interface PackageManifest {
 
 export interface PackageSmokeResult {
   allowedRoots: string[];
-  entrypointStatus: number | null;
+  localDatabaseCreated: boolean;
   packedPaths: string[];
+  toolNames: string[];
 }
 
 function requireSuccess(label: string, result: ReturnType<typeof spawnSync>): void {
@@ -58,11 +60,16 @@ function readManifest(): PackageManifest {
 }
 
 function readPackReport(output: string): PackReport {
-  const reportStart = output.lastIndexOf("\n{");
+  const embeddedReportStart = output.lastIndexOf("\n{");
+  const reportStart = output.startsWith("{")
+    ? 0
+    : embeddedReportStart === -1
+      ? -1
+      : embeddedReportStart + 1;
   if (reportStart === -1) {
     throw new Error("pnpm pack returned no package report");
   }
-  const value: unknown = JSON.parse(output.slice(reportStart + 1));
+  const value: unknown = JSON.parse(output.slice(reportStart));
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new TypeError("pnpm pack report must be an object");
   }
@@ -83,18 +90,32 @@ function readPackReport(output: string): PackReport {
   };
 }
 
-export function inspectInstalledPackage(inspect: (result: PackageSmokeResult) => void): void {
-  withTemporaryDirectory("tayk-package-smoke-", (directory) => {
+function toolNamesFrom(result: unknown): string[] {
+  const tools = requireRecord(result, "tools/list result")["tools"];
+  if (!Array.isArray(tools)) {
+    throw new TypeError("tools/list result must contain tools");
+  }
+  return tools.map((tool) => {
+    const name = requireRecord(tool, "tool")["name"];
+    if (typeof name !== "string") {
+      throw new TypeError("each tool must contain a string name");
+    }
+    return name;
+  });
+}
+
+export async function inspectInstalledPackage(): Promise<PackageSmokeResult> {
+  return withTemporaryDirectoryAsync("tayk-package-smoke-", async (directory) => {
     const packed = spawnSync("pnpm", ["pack", "--json", "--out", join(directory, "tayk.tgz")], {
       cwd: packageRoot,
       encoding: "utf8",
+      env: { ...process.env, VP_GIT_HOOKS: "0" },
       timeout: subprocessTimeout,
     });
     requireSuccess("pnpm pack", packed);
     const report = readPackReport(packed.stdout);
     const manifest = readManifest();
     const consumer = join(directory, "consumer");
-    const store = join(directory, "pnpm-store");
     mkdirSync(consumer);
     writeFileSync(
       join(consumer, "package.json"),
@@ -102,21 +123,47 @@ export function inspectInstalledPackage(inspect: (result: PackageSmokeResult) =>
     );
     const installed = spawnSync(
       "pnpm",
-      ["add", "--prod", "--ignore-scripts", "--offline", "--store-dir", store, report.filename],
+      ["add", "--ignore-scripts", `${manifest.name}@file:${report.filename}`],
       { cwd: consumer, encoding: "utf8", timeout: subprocessTimeout },
     );
     requireSuccess("isolated pnpm install", installed);
 
     const packageDirectory = join(consumer, "node_modules", manifest.name);
-    const entrypoint = spawnSync(process.execPath, [join(packageDirectory, "bin", "tayk.js")], {
+    const server = spawn(process.execPath, [join(packageDirectory, "bin", "tayk.js"), "mcp"], {
       cwd: consumer,
-      encoding: "utf8",
-      timeout: subprocessTimeout,
+      env: process.env,
+      stdio: "pipe",
     });
-    inspect({
-      allowedRoots: manifest.files,
-      entrypointStatus: entrypoint.status,
-      packedPaths: report.files.map(({ path }) => path),
-    });
+    const { responseFor, writeMessage } = createJsonRpcClient(server);
+    try {
+      writeMessage({
+        id: 1,
+        jsonrpc: "2.0",
+        method: "initialize",
+        params: {
+          capabilities: {},
+          clientInfo: { name: "tayk-package-smoke", version: "1.0.0" },
+          protocolVersion: "2025-06-18",
+        },
+      });
+      const initialized = await responseFor(1);
+      if (initialized.error !== undefined) {
+        throw new Error("installed MCP server rejected initialize");
+      }
+      writeMessage({ jsonrpc: "2.0", method: "notifications/initialized", params: {} });
+      writeMessage({ id: 2, jsonrpc: "2.0", method: "tools/list", params: {} });
+      const listed = await responseFor(2);
+      if (listed.error !== undefined) {
+        throw new Error("installed MCP server rejected tools/list");
+      }
+      return {
+        allowedRoots: manifest.files,
+        localDatabaseCreated: existsSync(join(consumer, "data", "local.db")),
+        packedPaths: report.files.map(({ path }) => path),
+        toolNames: toolNamesFrom(listed.result),
+      };
+    } finally {
+      await stopChildProcess(server);
+    }
   });
 }
