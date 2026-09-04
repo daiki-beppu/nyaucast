@@ -10,6 +10,7 @@ import { serveMcp } from "./mcp.ts";
 import { createCollectionStatusTool } from "./tools/collection.status.ts";
 import { createPlanCheckTitleTool } from "./tools/plan.checkTitle.ts";
 import { createPlanInitTool } from "./tools/plan.init.ts";
+import { createProductionYouTubeAuth } from "./youtube/auth.ts";
 
 const systemClock = { now: () => new Date() };
 
@@ -98,6 +99,13 @@ async function runMcp(): Promise<void> {
   await serveMcp(tools);
 }
 
+async function runAuth(command: string, arguments_: string[]): Promise<void> {
+  // fallow-ignore-next-line code-duplication -- Top-level auth dispatch and collection existence checks have different effects.
+  if (command !== "auth") throw new Error(`unknown command: ${command}`);
+  requireArguments(arguments_, 1, "tayk auth <channel>");
+  await createProductionYouTubeAuth().authenticate(arguments_[0] as string);
+}
+
 async function main(): Promise<void> {
   const [command, ...arguments_] = process.argv.slice(2);
   if (command === undefined) {
@@ -112,7 +120,7 @@ async function main(): Promise<void> {
     await runCollection(arguments_);
     return;
   }
-  throw new Error(`unknown command: ${command}`);
+  await runAuth(command, arguments_);
 }
 
 await main();
