@@ -4,7 +4,7 @@ Issues and PRDs for this repo live as GitHub issues. Use the `gh` CLI for all op
 
 ## 実装ワークフロー: takt 前提
 
-### host 前提: takt 0.60.0
+### host 前提: takt
 
 takt は host が供給する開発 orchestration tool であり、tayk の runtime / package dependency には含めない（ADR-0008）。導入・更新は host 側の責務で、repository の依存管理には現れない。
 
@@ -15,7 +15,7 @@ command -v takt
 takt --version
 ```
 
-`takt --version` が正確に `0.60.0` を返す場合だけ、後続の pipeline 手順へ進む。不在または version 不一致の場合は host 側の導入を更新し、preflight をやり直す。
+`command -v takt` で存在を確認できたら、後続の pipeline 手順へ進む。不在の場合は host 側で導入し、preflight をやり直す。`takt --version` の出力は記録として残すだけで、特定の版を進行条件にしない。版の互換確認は、下記「共通の規約」の takt 更新時の `takt workflow doctor` で行う。
 
 tayk 固有の workflow 資産は持たない — `.takt/` は `config.yaml` のみで、実装は builtin workflow を直用する（[ADR-0008](../adr/0008-takt-dedicated-workflow.md)）。用途ごとの使い分け:
 
