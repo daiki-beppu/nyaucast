@@ -33,7 +33,7 @@ YouTube チャンネル運営を自動化するツールキット。skill に蓄
 ## 開発フロー
 
 - **worktree 必須・main 直コミット禁止**。worktree セットアップは「`git worktree add --detach .claude/worktrees/<slug> main` → 依存 install」の 2 コマンド。ブランチは takt の pipeline モードに作らせるため、worktree 作成時に `-b` を付けない
-- **feature の実装は takt（builtin `experimental`）**。detached HEAD の手動 worktree 内から直接 `takt --pipeline --auto-pr -b <新規ブランチ名> -w experimental -i <issue番号>` を実行する。`--auto-pr` は `--pipeline` が必須、pipeline の issue 指定は positional 引数ではなく `-i` が必須であり、`-b` のブランチは実行前に存在してはならない。review-adjudication 経路の隔離 clone 実走行が未検証のため、検証完了までは `worktree: true` のキュー実行を使わない。要求追跡は builtin の Completion Contracts ledger + `SCN-{contract ID}-P/N` 構造が持つ（`docs/agents/issue-tracker.md` / ADR-0008）
+- **feature の実装は takt（builtin `default`）**。detached HEAD の手動 worktree 内から直接 `takt --pipeline --auto-pr -b <新規ブランチ名> -w default -i <issue番号>` を実行する。`--auto-pr` は `--pipeline` が必須、pipeline の issue 指定は positional 引数ではなく `-i` が必須であり、`-b` のブランチは実行前に存在してはならない。review-adjudication 経路の隔離 clone 実走行が未検証のため、検証完了までは `worktree: true` のキュー実行を使わない。要求追跡は builtin の Completion Contracts ledger + `SCN-{contract ID}-P/N` 構造が持つ（`docs/agents/issue-tracker.md` / ADR-0008）
 - **fix は takt を使わず issue-direct で実装する**（worktree → 実装 → PR 作成 → CI green まで監視）。品質ゲートは PR レビュー標準の builtin `review-fix-default` が担う
 - nyacast 固有の workflow 資産は持たない — `.takt/` は `config.yaml` のみ（ADR-0008）。workflow・steps / facets / schemas を足す提案は ADR-0008 の改訂を同じ差分に含めない限り規約違反
 - スコープ外で見つけた問題は、直さず捨てず issue にする

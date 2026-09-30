@@ -4,7 +4,7 @@
 
 ## Status
 
-accepted (2026-08-22。takt 0.59.0 で廃止された Finding Contract を review-adjudication / verified remediation / final-gate へ移行し、0.60.0 の capability / instruction composition / final-gate contract に追従) / 改訂 2026-08-26（#368。map #353「開発基盤スクラップアンドビルド」の決定を実装に先行して反映 — **主旨転換**: 「takt の builtin を基礎に、nyacast 固有の開発ゲートだけを重ねる」→「builtin 直用。nyacast 固有の workflow 資産を持たない」。自作 workflow 5 本・steps / facets / schemas・監査 workflow 2 本を全廃する。骨子は issue #358 の resolution、前提事実は #357 の調査）
+accepted (2026-08-22。takt 0.59.0 で廃止された Finding Contract を review-adjudication / verified remediation / final-gate へ移行し、0.60.0 の capability / instruction composition / final-gate contract に追従) / 改訂 2026-08-26（#368。map #353「開発基盤スクラップアンドビルド」の決定を実装に先行して反映 — **主旨転換**: 「takt の builtin を基礎に、nyacast 固有の開発ゲートだけを重ねる」→「builtin 直用。nyacast 固有の workflow 資産を持たない」。自作 workflow 5 本・steps / facets / schemas・監査 workflow 2 本を全廃する。骨子は issue #358 の resolution、前提事実は #357 の調査） / 改訂 2026-10-01（#441。feature 経路に指定していた builtin `experimental` が nrslib/takt#1424 で `default` に統合されたため、workflow 名を `default` に改める。起動経路は変えない）
 
 ## Context
 
@@ -22,7 +22,7 @@ map #353 の再検討（#357 の実態調査 + #358 の決定）で前提が変�
 
 ### 2. 経路
 
-- **feature**（新機能・機能拡張）: builtin **`experimental`**。起動形は現行互換 — main から作った detached HEAD の手動 worktree 内で `takt --pipeline --auto-pr -b issue-<N>-<slug> -w experimental -i <N>`。選定根拠は Requirement Scenarios（`SCN-{contract ID}-P/N` の Given/When/Then）を持つ唯一の builtin であること（`default` の base plan には無い）
+- **feature**（新機能・機能拡張）: builtin **`default`**。起動形は現行互換 — main から作った detached HEAD の手動 worktree 内で `takt --pipeline --auto-pr -b issue-<N>-<slug> -w default -i <N>`。選定根拠は Requirement Scenarios（`SCN-{contract ID}-P/N` の Given/When/Then）を持つ builtin であること（nrslib/takt#1424 の統合以降、`default` が scenario-based の計画・test-first を持つ）
 - **fix**（バグ修正・回帰修正）: **takt を使わない**。issue-direct（Claude Code 直接: worktree → 実装 → PR 作成 → CI green まで監視）で実装し、品質ゲートは PR レビュー標準の `review-fix-default` が担う（実装とレビューの分担）
 - **PR レビュー**: builtin **`review-fix-default`**（remediation ループ内蔵）。旧 `review-takt-default` は takt 自体の開発用 knowledge を nyacast コードのレビューに混ぜる誤適合だったため変更する
 
