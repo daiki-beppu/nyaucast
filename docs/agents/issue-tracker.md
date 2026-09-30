@@ -4,7 +4,7 @@ Issues and PRDs for this repo live as GitHub issues. Use the `gh` CLI for all op
 
 ## 実装ワークフロー: takt 前提
 
-### host 前提: takt 0.60.0
+### host 前提: takt
 
 takt は host が供給する開発 orchestration tool であり、tayk の runtime / package dependency には含めない（ADR-0008）。導入・更新は host 側の責務で、repository の依存管理には現れない。
 
@@ -15,7 +15,7 @@ command -v takt
 takt --version
 ```
 
-`takt --version` が正確に `0.60.0` を返す場合だけ、後続の pipeline 手順へ進む。不在または version 不一致の場合は host 側の導入を更新し、preflight をやり直す。
+`command -v takt` で存在を確認できたら、後続の pipeline 手順へ進む。不在の場合は host 側で導入し、preflight をやり直す。`takt --version` の出力は記録として残すだけで、特定の版を進行条件にしない。版の互換確認は、下記「共通の規約」の takt 更新時の `takt workflow doctor` で行う。
 
 tayk 固有の workflow 資産は持たない — `.takt/` は `config.yaml` のみで、実装は builtin workflow を直用する（[ADR-0008](../adr/0008-takt-dedicated-workflow.md)）。用途ごとの使い分け:
 
@@ -23,8 +23,6 @@ tayk 固有の workflow 資産は持たない — `.takt/` は `config.yaml` の
   要求追跡は builtin の Completion Contracts ledger + `SCN-{contract ID}-P/N`（Given/When/Then）構造が持つ。品質装置（5 並列レビュー → review-adjudication → 検証付き remediation → final-gate、test-first）も builtin 側。
 - **バグ修正の実装** — **takt を使わない**。`issue-direct` skill（Claude Code 直接: worktree 作成 → 実装 → PR 作成 → CI green まで監視）で実装し、品質ゲートは PR レビューの builtin **`review-fix-default`** が担う（実装とレビューの分担。ADR-0008）。
 - **PR のレビュー** — builtin workflow **`review-fix-default`**（remediation ループ内蔵）。単体起動専用。
-
-過渡注記: 旧監査 workflow `tayk-audit-runs`（takt 実行トレース・workflow 定義の監査）は撤去が決定済みで（ADR-0008。撤去実装は後続の scrap issue）、撤去までは旧運用の契約 — 実行入口は手動で作った linked worktree に限定し、独立 clone / 隔離 clone 内からの実行は対象外とする・監査レポート冒頭の対象範囲宣言に辿れない meta の件数と各 `branch` 名を列挙する — を契約テスト（`test/workflow/`）が固定している。この段落はテストと同時に削除する。
 
 共通の規約:
 
