@@ -87,7 +87,7 @@ const credentialPaths = (root: string, channel: string) => {
 
 class AuthRequiredError extends Error {
   constructor(channel: string) {
-    super(`YouTube 認証が必要です。tayk auth ${channel} を実行してください`);
+    super(`YouTube 認証が必要です。nyacast auth ${channel} を実行してください`);
   }
 }
 
@@ -173,7 +173,7 @@ class YouTubeAuthService implements YouTubeAuth {
       paths.clientSecrets,
       clientSecretsSchema,
       new Error(
-        `client_secrets.json を ~/.config/tayk/${channel}/client_secrets.json に配置してください`,
+        `client_secrets.json を ~/.config/nyacast/${channel}/client_secrets.json に配置してください`,
       ),
     );
   }
@@ -219,7 +219,7 @@ class YouTubeAuthService implements YouTubeAuth {
       refreshed = refreshedCredentialsSchema.parse(await update());
     } catch {
       throw new Error(
-        `YouTube credential を更新できません。tayk auth ${channel} を実行してください`,
+        `YouTube credential を更新できません。nyacast auth ${channel} を実行してください`,
       );
     }
     return refreshed;
@@ -233,6 +233,6 @@ export function createProductionYouTubeAuth(): YouTubeAuth {
   return createYouTubeAuth({
     authorize: authorizeWithLoopback,
     createOAuthClient: (options) => new OAuth2Client(options),
-    credentialRoot: join(homedir(), ".config", "tayk"),
+    credentialRoot: join(homedir(), ".config", "nyacast"),
   });
 }

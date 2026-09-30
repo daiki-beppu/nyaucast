@@ -10,15 +10,15 @@ import { createJsonRpcClient, requireRecord, stopChildProcess } from "./mcp-stdi
 
 const packageRoot = resolve(import.meta.dirname, "..");
 
-describe("tayk mcp", () => {
+describe("nyacast mcp", () => {
   test("serves the plan and collection status tools from the startup working directory", async () => {
-    await withTemporaryDirectoryAsync("tayk-mcp-", async (channelRoot) => {
+    await withTemporaryDirectoryAsync("nyacast-mcp-", async (channelRoot) => {
       const server = spawn(
         process.execPath,
         [
-          "--conditions=tayk-source",
+          "--conditions=nyacast-source",
           "--experimental-strip-types",
-          join(packageRoot, "bin", "tayk.js"),
+          join(packageRoot, "bin", "nyacast.js"),
           "mcp",
         ],
         {
@@ -35,12 +35,18 @@ describe("tayk mcp", () => {
           method: "initialize",
           params: {
             capabilities: {},
-            clientInfo: { name: "tayk-contract-test", version: "1.0.0" },
+            clientInfo: { name: "nyacast-contract-test", version: "1.0.0" },
             protocolVersion: "2025-06-18",
           },
         });
         const initialized = await responseFor(1);
         expect(initialized.error).toBeUndefined();
+        expect(
+          requireRecord(
+            requireRecord(initialized.result, "initialize result")["serverInfo"],
+            "serverInfo",
+          )["name"],
+        ).toBe("nyacast");
         writeMessage({ jsonrpc: "2.0", method: "notifications/initialized", params: {} });
         writeMessage({ id: 2, jsonrpc: "2.0", method: "tools/list", params: {} });
 

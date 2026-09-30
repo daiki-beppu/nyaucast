@@ -100,7 +100,7 @@ function createOAuthClientFake(options: {
 
 describe("YouTube authentication", () => {
   test("authorizes with the fixed scopes and stores credentials with owner-only permissions", async () => {
-    await withTemporaryDirectoryAsync("tayk-auth-", async (credentialRoot) => {
+    await withTemporaryDirectoryAsync("nyacast-auth-", async (credentialRoot) => {
       const credentialDirectory = await prepareCredentialDirectory(credentialRoot);
       const authorize = vi.fn().mockResolvedValue({
         credentials: storedToken(),
@@ -129,7 +129,7 @@ describe("YouTube authentication", () => {
   });
 
   test("repairs the permissions of an existing token file", async () => {
-    await withTemporaryDirectoryAsync("tayk-auth-existing-token-", async (credentialRoot) => {
+    await withTemporaryDirectoryAsync("nyacast-auth-existing-token-", async (credentialRoot) => {
       const credentialDirectory = await prepareCredentialDirectory(credentialRoot);
       const tokenPath = join(credentialDirectory, "token.json");
       await writeFile(tokenPath, JSON.stringify(storedToken()), { mode: 0o600 });
@@ -147,7 +147,7 @@ describe("YouTube authentication", () => {
   });
 
   test("requires client secrets at the single credential location", async () => {
-    await withTemporaryDirectoryAsync("tayk-auth-location-", async (credentialRoot) => {
+    await withTemporaryDirectoryAsync("nyacast-auth-location-", async (credentialRoot) => {
       const repositoryAuth = join(credentialRoot, "channel-repository", "auth");
       await mkdir(repositoryAuth, { recursive: true });
       await writeFile(join(repositoryAuth, "client_secrets.json"), clientSecretsJson());
@@ -161,7 +161,9 @@ describe("YouTube authentication", () => {
       const error = await auth.authenticate(channel).catch((reason: unknown) => reason);
 
       expect(error).toBeInstanceOf(Error);
-      expect((error as Error).message).toContain(`~/.config/tayk/${channel}/client_secrets.json`);
+      expect((error as Error).message).toContain(
+        `~/.config/nyacast/${channel}/client_secrets.json`,
+      );
       expect((error as Error).message).not.toContain(credentialRoot);
       expect(authorize).not.toHaveBeenCalled();
     });
@@ -170,7 +172,7 @@ describe("YouTube authentication", () => {
   test.each(["", ".", "..", "deepfocus/365", "deepfocus\\365"])(
     "rejects invalid channel value %j before authorization",
     async (invalidChannel) => {
-      await withTemporaryDirectoryAsync("tayk-auth-channel-", async (credentialRoot) => {
+      await withTemporaryDirectoryAsync("nyacast-auth-channel-", async (credentialRoot) => {
         const authorize = vi.fn();
         const auth = createYouTubeAuth({
           authorize,
@@ -185,7 +187,7 @@ describe("YouTube authentication", () => {
   );
 
   test("uses a copied unexpired token without starting browser authorization", async () => {
-    await withTemporaryDirectoryAsync("tayk-auth-copied-token-", async (credentialRoot) => {
+    await withTemporaryDirectoryAsync("nyacast-auth-copied-token-", async (credentialRoot) => {
       const credentialDirectory = await prepareCredentialDirectory(credentialRoot);
       await writeFile(join(credentialDirectory, "token.json"), JSON.stringify(storedToken()), {
         mode: 0o644,
@@ -245,7 +247,7 @@ describe("YouTube authentication", () => {
       }),
     },
   ])("delegates normal token retrieval to the SDK for a token $name", async (tokenState) => {
-    await withTemporaryDirectoryAsync("tayk-auth-sdk-token-", async (credentialRoot) => {
+    await withTemporaryDirectoryAsync("nyacast-auth-sdk-token-", async (credentialRoot) => {
       const credentialDirectory = await prepareCredentialDirectory(credentialRoot);
       const tokenPath = join(credentialDirectory, "token.json");
       await writeFile(tokenPath, JSON.stringify(tokenState.storedCredentials), { mode: 0o600 });
@@ -269,7 +271,7 @@ describe("YouTube authentication", () => {
   });
 
   test("does not overwrite a newer token file when SDK credentials are unchanged", async () => {
-    await withTemporaryDirectoryAsync("tayk-auth-unchanged-token-", async (credentialRoot) => {
+    await withTemporaryDirectoryAsync("nyacast-auth-unchanged-token-", async (credentialRoot) => {
       const credentialDirectory = await prepareCredentialDirectory(credentialRoot);
       const tokenPath = join(credentialDirectory, "token.json");
       const existingCredentials = storedToken({ access_token: "EXISTING_ACCESS_TOKEN" });
@@ -293,7 +295,7 @@ describe("YouTube authentication", () => {
   });
 
   test("persists the SDK credentials returned by an explicit refresh without merging old fields", async () => {
-    await withTemporaryDirectoryAsync("tayk-auth-refresh-", async (credentialRoot) => {
+    await withTemporaryDirectoryAsync("nyacast-auth-refresh-", async (credentialRoot) => {
       const credentialDirectory = await prepareCredentialDirectory(credentialRoot);
       const tokenPath = join(credentialDirectory, "token.json");
       await writeFile(tokenPath, JSON.stringify(storedToken({ legacy_field: "remove" })), {
@@ -321,7 +323,7 @@ describe("YouTube authentication", () => {
     { field: "refresh_token", value: undefined },
     { field: "refresh_token", value: "" },
   ])("does not overwrite credentials when a new $field is invalid", async ({ field, value }) => {
-    await withTemporaryDirectoryAsync("tayk-auth-invalid-new-token-", async (credentialRoot) => {
+    await withTemporaryDirectoryAsync("nyacast-auth-invalid-new-token-", async (credentialRoot) => {
       const credentialDirectory = await prepareCredentialDirectory(credentialRoot);
       const tokenPath = join(credentialDirectory, "token.json");
       const original = `${JSON.stringify(storedToken(), undefined, 2)}\n`;
@@ -345,7 +347,7 @@ describe("YouTube authentication", () => {
     "does not save or return an old access token when SDK retrieval leaves it $name",
     async ({ sdkCredentials }) => {
       await withTemporaryDirectoryAsync(
-        "tayk-auth-invalid-refresh-token-",
+        "nyacast-auth-invalid-refresh-token-",
         async (credentialRoot) => {
           const credentialDirectory = await prepareCredentialDirectory(credentialRoot);
           const tokenPath = join(credentialDirectory, "token.json");
@@ -362,7 +364,7 @@ describe("YouTube authentication", () => {
             credentialRoot,
           });
 
-          await expect(auth.getAccessToken(channel)).rejects.toThrow(`tayk auth ${channel}`);
+          await expect(auth.getAccessToken(channel)).rejects.toThrow(`nyacast auth ${channel}`);
 
           expect(await readFile(tokenPath, "utf8")).toBe(original);
           expect(authorize).not.toHaveBeenCalled();
@@ -372,7 +374,7 @@ describe("YouTube authentication", () => {
   );
 
   test("replaces an existing token inode only after writing the new owner-only file", async () => {
-    await withTemporaryDirectoryAsync("tayk-auth-atomic-save-", async (credentialRoot) => {
+    await withTemporaryDirectoryAsync("nyacast-auth-atomic-save-", async (credentialRoot) => {
       const credentialDirectory = await prepareCredentialDirectory(credentialRoot);
       const tokenPath = join(credentialDirectory, "token.json");
       const oldCredentials = storedToken({ access_token: "OLD_ACCESS_TOKEN" });
@@ -399,51 +401,54 @@ describe("YouTube authentication", () => {
   });
 
   test("reports a storage error when automatically refreshed credentials cannot be saved", async () => {
-    await withTemporaryDirectoryAsync("tayk-auth-refresh-save-failure-", async (credentialRoot) => {
-      const credentialDirectory = await prepareCredentialDirectory(credentialRoot);
-      const tokenPath = join(credentialDirectory, "token.json");
-      await writeFile(
-        tokenPath,
-        JSON.stringify(storedToken({ expiry_date: Date.parse("2028-01-01T00:00:00.000Z") })),
-        { mode: 0o600 },
-      );
-      const refreshedAccessToken = "REFRESHED_ACCESS_TOKEN_SENTINEL";
-      const oauthClient = createOAuthClientFake({
-        beforeGetAccessToken: async () => {
-          await rm(tokenPath);
-          await mkdir(tokenPath);
-        },
-        credentialsAfterGet: {
-          access_token: refreshedAccessToken,
-          refresh_token: refreshToken,
-        },
-      });
-      const authorize = vi.fn();
-      const auth = createYouTubeAuth({
-        authorize,
-        createOAuthClient: vi.fn(() => oauthClient),
-        credentialRoot,
-      });
+    await withTemporaryDirectoryAsync(
+      "nyacast-auth-refresh-save-failure-",
+      async (credentialRoot) => {
+        const credentialDirectory = await prepareCredentialDirectory(credentialRoot);
+        const tokenPath = join(credentialDirectory, "token.json");
+        await writeFile(
+          tokenPath,
+          JSON.stringify(storedToken({ expiry_date: Date.parse("2028-01-01T00:00:00.000Z") })),
+          { mode: 0o600 },
+        );
+        const refreshedAccessToken = "REFRESHED_ACCESS_TOKEN_SENTINEL";
+        const oauthClient = createOAuthClientFake({
+          beforeGetAccessToken: async () => {
+            await rm(tokenPath);
+            await mkdir(tokenPath);
+          },
+          credentialsAfterGet: {
+            access_token: refreshedAccessToken,
+            refresh_token: refreshToken,
+          },
+        });
+        const authorize = vi.fn();
+        const auth = createYouTubeAuth({
+          authorize,
+          createOAuthClient: vi.fn(() => oauthClient),
+          credentialRoot,
+        });
 
-      const error = await auth.getAccessToken(channel).catch((reason: unknown) => reason);
+        const error = await auth.getAccessToken(channel).catch((reason: unknown) => reason);
 
-      expect(error).toBeInstanceOf(Error);
-      expect((error as Error).message).toContain("保存に失敗");
-      expect((error as Error).message).not.toContain("tayk auth");
-      expect((error as Error).message).not.toContain(refreshedAccessToken);
-      expect((error as Error).message).not.toContain(refreshToken);
-      expect((error as Error).message).not.toContain(credentialRoot);
-      expect(authorize).not.toHaveBeenCalled();
-      expect((await stat(tokenPath)).isDirectory()).toBe(true);
-      expect(
-        (await readdir(credentialDirectory)).filter((name) => name.startsWith(".token-")),
-      ).toEqual([]);
-    });
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toContain("保存に失敗");
+        expect((error as Error).message).not.toContain("nyacast auth");
+        expect((error as Error).message).not.toContain(refreshedAccessToken);
+        expect((error as Error).message).not.toContain(refreshToken);
+        expect((error as Error).message).not.toContain(credentialRoot);
+        expect(authorize).not.toHaveBeenCalled();
+        expect((await stat(tokenPath)).isDirectory()).toBe(true);
+        expect(
+          (await readdir(credentialDirectory)).filter((name) => name.startsWith(".token-")),
+        ).toEqual([]);
+      },
+    );
   });
 
   test("reports a storage error when explicitly refreshed credentials cannot be saved", async () => {
     await withTemporaryDirectoryAsync(
-      "tayk-auth-explicit-refresh-save-failure-",
+      "nyacast-auth-explicit-refresh-save-failure-",
       async (credentialRoot) => {
         const credentialDirectory = await prepareCredentialDirectory(credentialRoot);
         const tokenPath = join(credentialDirectory, "token.json");
@@ -470,7 +475,7 @@ describe("YouTube authentication", () => {
 
         expect(error).toBeInstanceOf(Error);
         expect((error as Error).message).toContain("保存に失敗");
-        expect((error as Error).message).not.toContain("tayk auth");
+        expect((error as Error).message).not.toContain("nyacast auth");
         expect((error as Error).message).not.toContain(refreshedAccessToken);
         expect((error as Error).message).not.toContain(refreshToken);
         expect((error as Error).message).not.toContain(credentialRoot);
@@ -484,7 +489,7 @@ describe("YouTube authentication", () => {
   });
 
   test("stops with an auth command when SDK token retrieval fails", async () => {
-    await withTemporaryDirectoryAsync("tayk-auth-get-token-failure-", async (credentialRoot) => {
+    await withTemporaryDirectoryAsync("nyacast-auth-get-token-failure-", async (credentialRoot) => {
       const credentialDirectory = await prepareCredentialDirectory(credentialRoot);
       await writeFile(join(credentialDirectory, "token.json"), JSON.stringify(storedToken()), {
         mode: 0o600,
@@ -502,7 +507,7 @@ describe("YouTube authentication", () => {
       const error = await auth.getAccessToken(channel).catch((reason: unknown) => reason);
 
       expect(error).toBeInstanceOf(Error);
-      expect((error as Error).message).toContain(`tayk auth ${channel}`);
+      expect((error as Error).message).toContain(`nyacast auth ${channel}`);
       expect((error as Error).message).not.toContain(refreshToken);
       expect((error as Error).message).not.toContain(credentialRoot);
       expect(authorize).not.toHaveBeenCalled();
@@ -510,7 +515,7 @@ describe("YouTube authentication", () => {
   });
 
   test("stops with an auth command when explicit refresh fails without authorization", async () => {
-    await withTemporaryDirectoryAsync("tayk-auth-refresh-failure-", async (credentialRoot) => {
+    await withTemporaryDirectoryAsync("nyacast-auth-refresh-failure-", async (credentialRoot) => {
       const credentialDirectory = await prepareCredentialDirectory(credentialRoot);
       await writeFile(
         join(credentialDirectory, "token.json"),
@@ -530,7 +535,7 @@ describe("YouTube authentication", () => {
       const error = await auth.refreshAccessToken(channel).catch((reason: unknown) => reason);
 
       expect(error).toBeInstanceOf(Error);
-      expect((error as Error).message).toContain(`tayk auth ${channel}`);
+      expect((error as Error).message).toContain(`nyacast auth ${channel}`);
       expect((error as Error).message).not.toContain(refreshToken);
       expect((error as Error).message).not.toContain(credentialRoot);
       expect(authorize).not.toHaveBeenCalled();
@@ -538,7 +543,7 @@ describe("YouTube authentication", () => {
   });
 
   test("propagates token persistence failure without exposing credentials", async () => {
-    await withTemporaryDirectoryAsync("tayk-auth-save-failure-", async (credentialRoot) => {
+    await withTemporaryDirectoryAsync("nyacast-auth-save-failure-", async (credentialRoot) => {
       const credentialDirectory = await prepareCredentialDirectory(credentialRoot);
       await mkdir(join(credentialDirectory, "token.json"));
       const authorize = vi.fn().mockResolvedValue({ credentials: storedToken() });
@@ -552,7 +557,7 @@ describe("YouTube authentication", () => {
 
       expect(error).toBeInstanceOf(Error);
       expect((error as Error).message).toContain("保存に失敗");
-      expect((error as Error).message).not.toContain("tayk auth");
+      expect((error as Error).message).not.toContain("nyacast auth");
       expect((error as Error).message).not.toContain(accessToken);
       expect((error as Error).message).not.toContain(refreshToken);
       expect((error as Error).message).not.toContain(clientSecret);
@@ -564,38 +569,41 @@ describe("YouTube authentication", () => {
   });
 
   test("preserves the storage error when temporary-token cleanup also fails", async () => {
-    await withTemporaryDirectoryAsync("tayk-auth-double-save-failure-", async (credentialRoot) => {
-      const credentialDirectory = await prepareCredentialDirectory(credentialRoot);
-      const tokenPath = join(credentialDirectory, "token.json");
-      await mkdir(tokenPath);
-      const cleanupFailure = `CLEANUP_FAILURE_SENTINEL ${tokenPath} ${accessToken}`;
-      fileSystemMocks.rm.mockClear();
-      fileSystemMocks.rm.mockRejectedValueOnce(new Error(cleanupFailure));
-      const authorize = vi.fn().mockResolvedValue({ credentials: storedToken() });
-      const auth = createYouTubeAuth({
-        authorize,
-        createOAuthClient: vi.fn(),
-        credentialRoot,
-      });
+    await withTemporaryDirectoryAsync(
+      "nyacast-auth-double-save-failure-",
+      async (credentialRoot) => {
+        const credentialDirectory = await prepareCredentialDirectory(credentialRoot);
+        const tokenPath = join(credentialDirectory, "token.json");
+        await mkdir(tokenPath);
+        const cleanupFailure = `CLEANUP_FAILURE_SENTINEL ${tokenPath} ${accessToken}`;
+        fileSystemMocks.rm.mockClear();
+        fileSystemMocks.rm.mockRejectedValueOnce(new Error(cleanupFailure));
+        const authorize = vi.fn().mockResolvedValue({ credentials: storedToken() });
+        const auth = createYouTubeAuth({
+          authorize,
+          createOAuthClient: vi.fn(),
+          credentialRoot,
+        });
 
-      const error = await auth.authenticate(channel).catch((reason: unknown) => reason);
+        const error = await auth.authenticate(channel).catch((reason: unknown) => reason);
 
-      expect(error).toBeInstanceOf(Error);
-      expect((error as Error).message).toContain("保存に失敗");
-      expect((error as Error).message).not.toContain("CLEANUP_FAILURE_SENTINEL");
-      expect((error as Error).message).not.toContain(accessToken);
-      expect((error as Error).message).not.toContain(refreshToken);
-      expect((error as Error).message).not.toContain(clientSecret);
-      expect((error as Error).message).not.toContain(credentialRoot);
-      expect(fileSystemMocks.rm).toHaveBeenCalledWith(expect.stringContaining(".token-"), {
-        force: true,
-      });
-      expect(authorize).toHaveBeenCalledOnce();
-    });
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toContain("保存に失敗");
+        expect((error as Error).message).not.toContain("CLEANUP_FAILURE_SENTINEL");
+        expect((error as Error).message).not.toContain(accessToken);
+        expect((error as Error).message).not.toContain(refreshToken);
+        expect((error as Error).message).not.toContain(clientSecret);
+        expect((error as Error).message).not.toContain(credentialRoot);
+        expect(fileSystemMocks.rm).toHaveBeenCalledWith(expect.stringContaining(".token-"), {
+          force: true,
+        });
+        expect(authorize).toHaveBeenCalledOnce();
+      },
+    );
   });
 
   test("does not expose client secrets from an authorization failure", async () => {
-    await withTemporaryDirectoryAsync("tayk-auth-redaction-", async (credentialRoot) => {
+    await withTemporaryDirectoryAsync("nyacast-auth-redaction-", async (credentialRoot) => {
       await prepareCredentialDirectory(credentialRoot);
       const auth = createYouTubeAuth({
         authorize: vi.fn().mockRejectedValue(new Error(`OAuth rejected ${clientSecret}`)),

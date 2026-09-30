@@ -1,5 +1,7 @@
 # メディア処理基盤は mediabunny + node-av に統一し、ffmpeg CLI は撤退先に留める
 
+旧称 tayk
+
 ## Status
 
 accepted (2026-07-24) / 改訂 2026-07-31（#178。動画生成工程を「agent が書く HTML composition → Chrome rasterize → mediabunny エンコード」のパイプラインへ載せ替え — 決定 6〜11 を追加。エンコード層の mediabunny + node-av 統一（決定 1）と ffmpeg CLI 不採用（決定 3）は不変。Chrome 依存は `video.render` / `video.preview` の 2 tool に限定して許容する）/ 改訂 2026-08-22（#332。Remotion への置き換え検討を不採用として Considered Options に追記 — 決定 1〜11 は不変）
@@ -30,7 +32,7 @@ accepted (2026-07-24) / 改訂 2026-07-31（#178。動画生成工程を「agent
 1. **音声（MIX/マスタリング）・動画生成・アップロード前検証（メタデータ読み）の全工程を mediabunny + `@mediabunny/server`（node-av 経由のネイティブ FFmpeg バインディング）に統一する。** 工程ごとの技術分岐は設けない。ffmpeg CLI 直接呼び出し、音声のみ WASM エンコーダ（`@mediabunny/mp3-encoder` 等）に逃がす構成のいずれも採用しない
 2. **LUFS 測定・正規化は `@audio/loudness-lufs`（MIT・純 JS）を npm 依存として採用する。** vendor 化はしない。BS.1770-4 準拠の integrated loudness を測定し、`gainLinear = 10 ** ((target - measured) / 20)` の単純ゲイン乗算で -14 LUFS に正規化する。増幅方向になる場合のみ `lufs-web` の true peak 測定でゲインを -1 dBTP 以内にキャップする（音楽ミックスは通常 -14 LUFS より大きく減衰方向が支配的なため、通常は素通りする安全弁）
 3. **ffmpeg CLI 直接呼び出しは採用しない。** Considered Options に撤退先として記録するに留め、実装はしない
-4. **node-av の GPLv3 ネイティブバイナリ依存を許容する。** 配布時の「結合著作物（実効 GPLv3）」論点は先送りし、tayk の公開/配布を具体的に検討する段階で本 ADR を改訂して再判断する
+4. **node-av の GPLv3 ネイティブバイナリ依存を許容する。** 配布時の「結合著作物（実効 GPLv3）」論点は先送りし、nyacast の公開/配布を具体的に検討する段階で本 ADR を改訂して再判断する
 5. **追加のエラーラッパーは設けない。** mediabunny/node-av の失敗は通常の throw / Promise reject で表面化し、ADR-0001「内部throw、境界で変換」にそのまま乗る
 
 （以下、改訂 2026-07-31 / #178 で追加）
@@ -75,14 +77,14 @@ accepted (2026-07-24) / 改訂 2026-07-31（#178。動画生成工程を「agent
 
 （以下、改訂 2026-08-22 / #332 で追加）
 
-- **動画生成基盤を Remotion へ置き換え**: 「公式 Agent Skills の充実」と「mediabunny の内部採用」を動機に wayfinder セッションで検討した（#332。地図は作らず撤回で決着）。不採用の理由は 3 点 — (a) mediabunny 採用はブラウザ側スタック限定（`@remotion/web-renderer` と旧 Media Parser / WebCodecs の後継系譜）で、tayk が Bun から叩くサーバーサイドの `renderMedia()` は FFmpeg バイナリ同梱（`@remotion/compositor-*`）のまま。エンコード層を mediabunny にする動機は決定 1・6 が既に満たしている。(b) Remotion のライセンスは頒布ではなく**利用**に有償条件が掛かる（無償は「Remotion を操作する関係者 3 人以下」の組織まで。CLI/API の自動レンダリングは Automators 区分 $0.01/render・最低 $100/月）。tayk には将来的に有償ツールとして公開する意向があり、下流利用者それぞれに free/有償のライセンス判定が波及する構図は配布性を損なう。(c) 公式 Agent Skills（remotion-dev/skills の 12 skill・llms.txt・AI 向けシステムプロンプト文書）は事実として確認できたが、上記 2 点を覆すには足りない。不採用。再検討トリガ: Remotion のサーバーサイドレンダリングの mediabunny 移行が完了し、かつライセンス条件が tayk の利用・配布形態と両立すると判断できたとき（新規の wayfinder 効力として起こし、#332 の記録を出発点にする）。主な根拠（2026-08-22 時点）: ライセンス <https://www.remotion.dev/docs/terms> / <https://www.remotion.pro/license>、mediabunny 移行範囲 <https://www.remotion.dev/blog/mediabunny> / <https://www.remotion.dev/docs/ffmpeg>、公式 skills <https://www.remotion.dev/docs/ai/skills>、Bun <https://www.remotion.dev/docs/bun>、決定論 <https://www.remotion.dev/docs/using-randomness>
+- **動画生成基盤を Remotion へ置き換え**: 「公式 Agent Skills の充実」と「mediabunny の内部採用」を動機に wayfinder セッションで検討した（#332。地図は作らず撤回で決着）。不採用の理由は 3 点 — (a) mediabunny 採用はブラウザ側スタック限定（`@remotion/web-renderer` と旧 Media Parser / WebCodecs の後継系譜）で、nyacast が Bun から叩くサーバーサイドの `renderMedia()` は FFmpeg バイナリ同梱（`@remotion/compositor-*`）のまま。エンコード層を mediabunny にする動機は決定 1・6 が既に満たしている。(b) Remotion のライセンスは頒布ではなく**利用**に有償条件が掛かる（無償は「Remotion を操作する関係者 3 人以下」の組織まで。CLI/API の自動レンダリングは Automators 区分 $0.01/render・最低 $100/月）。nyacast には将来的に有償ツールとして公開する意向があり、下流利用者それぞれに free/有償のライセンス判定が波及する構図は配布性を損なう。(c) 公式 Agent Skills（remotion-dev/skills の 12 skill・llms.txt・AI 向けシステムプロンプト文書）は事実として確認できたが、上記 2 点を覆すには足りない。不採用。再検討トリガ: Remotion のサーバーサイドレンダリングの mediabunny 移行が完了し、かつライセンス条件が nyacast の利用・配布形態と両立すると判断できたとき（新規の wayfinder 効力として起こし、#332 の記録を出発点にする）。主な根拠（2026-08-22 時点）: ライセンス <https://www.remotion.dev/docs/terms> / <https://www.remotion.pro/license>、mediabunny 移行範囲 <https://www.remotion.dev/blog/mediabunny> / <https://www.remotion.dev/docs/ffmpeg>、公式 skills <https://www.remotion.dev/docs/ai/skills>、Bun <https://www.remotion.dev/docs/bun>、決定論 <https://www.remotion.dev/docs/using-randomness>
 
 ## Consequences
 
 - `audio.master`・動画生成用 primitive tool・アップロード前検証 tool は `@mediabunny/server`（node-av）に直接依存する。node-av の GPLv3 ネイティブバイナリは通常の（optionalDependencies ではない）依存としてインストールされる
 - v0.1.0 dogfood（社内・first-party チャンネルでの利用、配布なし）の間は GPL の頒布義務は発生しない
-- tayk の公開/配布（npm public 化・OSS 化・バイナリ配布等）を具体的に検討する際は、本 ADR を改訂し、node-av の依存位置（必須 or optional）・結合著作物の解釈・ライセンス表記を再判断する
-- `@audio/loudness-lufs` は 2026 年発足・star 0 の若いパッケージ。EBU Tech 3341 相当の回帰テストを tayk 側のテストスイートに置き、上流の破壊的変更/放棄を検知する。メンテが止まった場合は同アルゴリズムの vendor 化（~220 行、実装コストは調査済みで小さい）で緩和する
+- nyacast の公開/配布（npm public 化・OSS 化・バイナリ配布等）を具体的に検討する際は、本 ADR を改訂し、node-av の依存位置（必須 or optional）・結合著作物の解釈・ライセンス表記を再判断する
+- `@audio/loudness-lufs` は 2026 年発足・star 0 の若いパッケージ。EBU Tech 3341 相当の回帰テストを nyacast 側のテストスイートに置き、上流の破壊的変更/放棄を検知する。メンテが止まった場合は同アルゴリズムの vendor 化（~220 行、実装コストは調査済みで小さい）で緩和する
 - true peak ガードは増幅方向のケース（元音源が -14 LUFS より静かな場合）のみ発火する。通常の音楽ミックス（-14 LUFS より大きいのが通例）では素通りする
 - Bun 実機での動作は issue #45 / #46 のプロトタイプ（PR #51 / #52、いずれも merge しない前提の draft）で検証済み。本採用時は同等のロジックを `src/` 配下の実装として書き起こす。Bun 固有の追加対応は `trustedDependencies: ["node-av"]` の明示のみ
 - サムネ生成・動的映像の実装本体・EQ/コンプレッション等の本格マスタリング加工は本 ADR のスコープ外（マップ issue #42 の Out of scope を参照）
@@ -90,7 +92,7 @@ accepted (2026-07-24) / 改訂 2026-07-31（#178。動画生成工程を「agent
 （以下、改訂 2026-07-31 / #178 で追加）
 
 - 旧 Consequences の「動画生成用 primitive tool」は `video.render` / `video.preview` と読む。両 tool は `@mediabunny/server`（node-av）に加えて `@puppeteer/browsers` と pin 済み chrome-headless-shell に依存し、初回実行はダウンロードのためネットワークを要する。供給失敗は通常の throw で表面化する（決定 5 のエラーモデルのまま）
-- 契約の正書は `docs/reference/composition-contract.md`。codec は執筆レシピの根拠として、`video.render` / `video.preview` は検証実装の根拠として、本 ADR は決定記録として参照する。決定論化の知識（GSAP `updateRoot(t)` 外部駆動・WAAPI `currentTime` seek 等のレシピ）は `collection-lifecycle` codec が持ち、執行は agent（composition に埋め込む）、検証は render（サンプルフレームの同一 t 再 seek バイト比較。不一致は非決定論として throw）が担う — tayk 本体にブラウザ内 runtime 資産を持たない
+- 契約の正書は `docs/reference/composition-contract.md`。codec は執筆レシピの根拠として、`video.render` / `video.preview` は検証実装の根拠として、本 ADR は決定記録として参照する。決定論化の知識（GSAP `updateRoot(t)` 外部駆動・WAAPI `currentTime` seek 等のレシピ）は `collection-lifecycle` codec が持ち、執行は agent（composition に埋め込む）、検証は render（サンプルフレームの同一 t 再 seek バイト比較。不一致は非決定論として throw）が担う — nyacast 本体にブラウザ内 runtime 資産を持たない
 - composition HTML・プレビュー PNG はデータ 4 分類 ③（生成成果物）として collection ディレクトリ配下に置く。プレビュー手順の WHEN/HOW（提示 → GO/NO → 修正ループ）は codec の動画生成節が持ち、tool description は WHAT のみ
 - 撤退トリガ（決定 11）に専用の監視機構は作らない — いずれも通常運用の失敗（ダウンロード失敗・起動失敗・決定論検証の throw）として表面化する
 - v0.2 動的映像はこの基盤の上に乗る。残る課題はブラウザ内アニメーション手段の codec レシピ拡充のみで、パイプライン側の作り直しは発生しない

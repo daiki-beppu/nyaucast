@@ -24,18 +24,18 @@
 </script>
 ```
 
-`duration` + `seek(t)` は HyperFrames capture engine の要求と互換のプロトコル。それ以外（`width` / `height` / `fps` / `segments`)は tayk 拡張キーで、HyperFrames engine は未知キーとして無視するため互換を壊さない。
+`duration` + `seek(t)` は HyperFrames capture engine の要求と互換のプロトコル。それ以外（`width` / `height` / `fps` / `segments`)は nyacast 拡張キーで、HyperFrames engine は未知キーとして無視するため互換を壊さない。
 
 ## キー定義
 
-| キー       | 型                              | 必須              | 意味                                                                      |
-| ---------- | ------------------------------- | ----------------- | ------------------------------------------------------------------------- |
-| `width`    | number（正の整数、px）          | 必須              | 撮影 viewport の幅。デザイン寸法と撮影寸法の SSOT                         |
-| `height`   | number（正の整数、px）          | 必須              | 撮影 viewport の高さ                                                      |
-| `fps`      | number（正）                    | 必須              | capture レート                                                            |
-| `duration` | number（正、秒）                | 必須              | タイムライン全長                                                          |
-| `seek`     | `(t: number) => void`           | 必須              | 時刻 `t`（秒、`0 <= t < duration`）の描画状態へ遷移させる。純関数性は次節 |
-| `segments` | `{ start, duration, static }[]` | 必須（tayk 拡張） | 静的シーンの自己申告。規則は後述                                          |
+| キー       | 型                              | 必須                 | 意味                                                                      |
+| ---------- | ------------------------------- | -------------------- | ------------------------------------------------------------------------- |
+| `width`    | number（正の整数、px）          | 必須                 | 撮影 viewport の幅。デザイン寸法と撮影寸法の SSOT                         |
+| `height`   | number（正の整数、px）          | 必須                 | 撮影 viewport の高さ                                                      |
+| `fps`      | number（正）                    | 必須                 | capture レート                                                            |
+| `duration` | number（正、秒）                | 必須                 | タイムライン全長                                                          |
+| `seek`     | `(t: number) => void`           | 必須                 | 時刻 `t`（秒、`0 <= t < duration`）の描画状態へ遷移させる。純関数性は次節 |
+| `segments` | `{ start, duration, static }[]` | 必須（nyacast 拡張） | 静的シーンの自己申告。規則は後述                                          |
 
 capture plan に必要な事実（`duration`・`segments`・寸法・`fps`）はすべて `__hf` に同居し、`Runtime.evaluate` 1 発で取得できる。channel config（データ 4 分類 ①）は**執筆時**のインテントとして codec 経由で参照するもので、**render 時**の SSOT は composition 側の申告である。
 
