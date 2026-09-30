@@ -24,8 +24,6 @@ tayk 固有の workflow 資産は持たない — `.takt/` は `config.yaml` の
 - **バグ修正の実装** — **takt を使わない**。`issue-direct` skill（Claude Code 直接: worktree 作成 → 実装 → PR 作成 → CI green まで監視）で実装し、品質ゲートは PR レビューの builtin **`review-fix-default`** が担う（実装とレビューの分担。ADR-0008）。
 - **PR のレビュー** — builtin workflow **`review-fix-default`**（remediation ループ内蔵）。単体起動専用。
 
-過渡注記: 旧監査 workflow `tayk-audit-runs`（takt 実行トレース・workflow 定義の監査）は撤去が決定済みで（ADR-0008。撤去実装は後続の scrap issue）、撤去までは旧運用の契約 — 実行入口は手動で作った linked worktree に限定し、独立 clone / 隔離 clone 内からの実行は対象外とする・監査レポート冒頭の対象範囲宣言に辿れない meta の件数と各 `branch` 名を列挙する — を契約テスト（`test/workflow/`）が固定している。この段落はテストと同時に削除する。
-
 共通の規約:
 
 - worktree 必須。メイン作業ツリーで直接ブランチを切らない。main を最新化した後、`git worktree add --detach .claude/worktrees/<slug> main` で detached HEAD の worktree を作り、依存 install を実行する
