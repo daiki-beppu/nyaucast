@@ -18,7 +18,7 @@ function wireName(name: string): string {
 }
 
 export async function serveMcp(tools: ToolDefinition[]): Promise<void> {
-  const server = new McpServer({ name: "tayk", version: "0.0.2" });
+  const server = new McpServer({ name: "nyacast", version: "0.0.2" });
   for (const tool of tools) {
     server.registerTool(
       wireName(tool.name),

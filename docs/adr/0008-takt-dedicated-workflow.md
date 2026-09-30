@@ -1,14 +1,16 @@
-# takt は builtin 直用 — tayk 固有の workflow 資産を持たない
+# takt は builtin 直用 — nyacast 固有の workflow 資産を持たない
+
+旧称 tayk
 
 ## Status
 
-accepted (2026-08-22。takt 0.59.0 で廃止された Finding Contract を review-adjudication / verified remediation / final-gate へ移行し、0.60.0 の capability / instruction composition / final-gate contract に追従) / 改訂 2026-08-26（#368。map #353「開発基盤スクラップアンドビルド」の決定を実装に先行して反映 — **主旨転換**: 「takt の builtin を基礎に、tayk 固有の開発ゲートだけを重ねる」→「builtin 直用。tayk 固有の workflow 資産を持たない」。自作 workflow 5 本・steps / facets / schemas・監査 workflow 2 本を全廃する。骨子は issue #358 の resolution、前提事実は #357 の調査）
+accepted (2026-08-22。takt 0.59.0 で廃止された Finding Contract を review-adjudication / verified remediation / final-gate へ移行し、0.60.0 の capability / instruction composition / final-gate contract に追従) / 改訂 2026-08-26（#368。map #353「開発基盤スクラップアンドビルド」の決定を実装に先行して反映 — **主旨転換**: 「takt の builtin を基礎に、nyacast 固有の開発ゲートだけを重ねる」→「builtin 直用。nyacast 固有の workflow 資産を持たない」。自作 workflow 5 本・steps / facets / schemas・監査 workflow 2 本を全廃する。骨子は issue #358 の resolution、前提事実は #357 の調査）
 
 ## Context
 
-旧 ADR は「builtin を基礎に、tayk 固有の開発ゲート（intake・設計 / 診断ゲート・独自 REQ 採番・spillover 起票・監査 2 本）だけを重ねる」構成を採り、自作 workflow 5 本（計 1,087 行）と `.takt/` の steps / facets / schemas を保守してきた。
+旧 ADR は「builtin を基礎に、nyacast 固有の開発ゲート（intake・設計 / 診断ゲート・独自 REQ 採番・spillover 起票・監査 2 本）だけを重ねる」構成を採り、自作 workflow 5 本（計 1,087 行）と `.takt/` の steps / facets / schemas を保守してきた。
 
-map #353 の再検討（#357 の実態調査 + #358 の決定）で前提が変わった。品質装置の本体 — 5 並列レビュー → review-adjudication → 検証付き remediation → final-gate、および test-first — は takt 0.60 の builtin がフル装備しており、tayk は既に builtin 呼び出しで使っていた。自作部分に固有なのは「規約の届け方」（facet 注入）だけだが、takt が起動する agent はリポジトリの `AGENTS.md`（= `CLAUDE.md` への symlink）を読むため、規約は facet 注入なしで全 agent に届く。また CLI から builtin の params を指定する手段は無く、facet 注入には最低 1 本の wrapper workflow が要るため「注入だけ残す」は全廃と両立しない。map #353 は「map 直読み intake の廃止・self-contained issue 起票を正とする」も決定しており（#287 vs #294 の実証）、intake ゲートの存在理由も消滅した。
+map #353 の再検討（#357 の実態調査 + #358 の決定）で前提が変わった。品質装置の本体 — 5 並列レビュー → review-adjudication → 検証付き remediation → final-gate、および test-first — は takt 0.60 の builtin がフル装備しており、nyacast は既に builtin 呼び出しで使っていた。自作部分に固有なのは「規約の届け方」（facet 注入）だけだが、takt が起動する agent はリポジトリの `AGENTS.md`（= `CLAUDE.md` への symlink）を読むため、規約は facet 注入なしで全 agent に届く。また CLI から builtin の params を指定する手段は無く、facet 注入には最低 1 本の wrapper workflow が要るため「注入だけ残す」は全廃と両立しない。map #353 は「map 直読み intake の廃止・self-contained issue 起票を正とする」も決定しており（#287 vs #294 の実証）、intake ゲートの存在理由も消滅した。
 
 痛みが実測されたら git 履歴から 20 行級 wrapper を再導入すればよい（YAGNI）。
 
@@ -22,7 +24,7 @@ map #353 の再検討（#357 の実態調査 + #358 の決定）で前提が変�
 
 - **feature**（新機能・機能拡張）: builtin **`experimental`**。起動形は現行互換 — main から作った detached HEAD の手動 worktree 内で `takt --pipeline --auto-pr -b issue-<N>-<slug> -w experimental -i <N>`。選定根拠は Requirement Scenarios（`SCN-{contract ID}-P/N` の Given/When/Then）を持つ唯一の builtin であること（`default` の base plan には無い）
 - **fix**（バグ修正・回帰修正）: **takt を使わない**。issue-direct（Claude Code 直接: worktree → 実装 → PR 作成 → CI green まで監視）で実装し、品質ゲートは PR レビュー標準の `review-fix-default` が担う（実装とレビューの分担）
-- **PR レビュー**: builtin **`review-fix-default`**（remediation ループ内蔵）。旧 `review-takt-default` は takt 自体の開発用 knowledge を tayk コードのレビューに混ぜる誤適合だったため変更する
+- **PR レビュー**: builtin **`review-fix-default`**（remediation ループ内蔵）。旧 `review-takt-default` は takt 自体の開発用 knowledge を nyacast コードのレビューに混ぜる誤適合だったため変更する
 
 ### 3. 要求追跡
 
@@ -60,7 +62,7 @@ pre-push フックの `workflow-doctor` を除去する（自作ゼロでは引�
 
 ## Consequences
 
-- takt は host が供給する開発 orchestration tool のまま、tayk の runtime / package 依存には加えない
+- takt は host が供給する開発 orchestration tool のまま、nyacast の runtime / package 依存には加えない
 - `.takt/` は開発 orchestration であり、ADR-0006 が禁じる製品 lifecycle orchestration には使わない
 - レビュー・裁定・remediation・final-gate・要求シナリオの改善は builtin の進化として自動的に受ける。project 側の追従作業（旧 Update procedure の fragment 差分確認）は消滅する
 - **本改訂は実装に先行する**（スクラップアンドビルド前提）。改訂時点の `.takt/` には自作資産が残っており、後続の実装 issue が撤去する。乖離は意図した過渡状態であって黙認ではない

@@ -1,5 +1,7 @@
 # takt を製品の collection lifecycle orchestration に採用しない
 
+旧称 tayk
+
 ## Status
 
 accepted (2026-07-27)
@@ -14,7 +16,7 @@ accepted (2026-07-27)
 
 - issue #58（調査）: takt workflow は collection lifecycle の要件を表現できるか → 人間ゲートは表現可（ただし fail-closed は step レベル `requires_user_input` のみ）/ 長時間待ちの宣言的手段は無い / resume は step 境界まで・最後の failed run 限定 / `mcp_servers` は claude 系 provider のみで非対応時は無言破棄
 - issue #60（決定）: 決定的境界の確定 → 決定的境界は「遷移」ではなく tool の事前条件として表現する
-- issue #61（決定）: 状態の SSOT 確定 → tayk は `.takt/` を一切読まない
+- issue #61（決定）: 状態の SSOT 確定 → nyacast は `.takt/` を一切読まない
 - issue #62（決定）: 誤公開ガードの担保方式 → ガードは takt 採否と非結合
 - issue #63（試作）: 旧 `collection-ideate` skill（741 行）を facets + workflow YAML へ分解 → 便益の実測
 - issue #64（決定）: 置き場所と配布経路の確定 → 4 経路とも塞がっていることを実測で確認
@@ -23,7 +25,7 @@ accepted (2026-07-27)
 
 ## Decision
 
-1. **takt を tayk 製品の orchestration に採用しない。** workflow YAML / facets を tayk リポにも下流チャンネルリポにも置かない。`takt` を製品の runtime 依存にしない
+1. **takt を nyacast 製品の orchestration に採用しない。** workflow YAML / facets を nyacast リポにも下流チャンネルリポにも置かない。`takt` を製品の runtime 依存にしない
 2. **代替は knowledge codec を読んだ agent が primitive tool を呼ぶ形とする**（詳細は ADR-0007）
 3. **開発側の takt 利用は本 ADR の対象外**であり、CLAUDE.md / AGENTS.md / `docs/agents/issue-tracker.md` の記述は改訂しない
 
@@ -45,8 +47,8 @@ accepted (2026-07-27)
 
 配布経路 4 つを個別に潰した（記号 A / B / C / E は issue #64 の検討時の採番をそのまま引き継ぐ）。**どれか 1 つの否定では理由にならないため 4 つとも記録する。**
 
-- **A: 人間が `takt <workflow-name> "<task>"` を叩く** — 利用者ペルソナが非エンジニアであるため不採用。ターミナルで workflow 名を指定し**自然文の task を書く**操作は想定しない。なお ADR-0007 が定める「人間が `tayk collection produce <id>` を叩く」は操作の質が異なる — 決まったサブコマンドと collection id だけであり、自然文の task 記述を求めない
-- **B: tayk が takt を subprocess spawn する** — `TAKT_CONFIG_DIR` がユーザーの `~/.takt` を奪う（下流リポの利用者は #55 により開発でも takt を使うため衝突する）。加えて ADR-0001 の「adapter に業務ロジックを書かない」に対して adapter が厚くなりすぎる。不採用
+- **A: 人間が `takt <workflow-name> "<task>"` を叩く** — 利用者ペルソナが非エンジニアであるため不採用。ターミナルで workflow 名を指定し**自然文の task を書く**操作は想定しない。なお ADR-0007 が定める「人間が `nyacast collection produce <id>` を叩く」は操作の質が異なる — 決まったサブコマンドと collection id だけであり、自然文の task 記述を求めない
+- **B: nyacast が takt を subprocess spawn する** — `TAKT_CONFIG_DIR` がユーザーの `~/.takt` を奪う（下流リポの利用者は #55 により開発でも takt を使うため衝突する）。加えて ADR-0001 の「adapter に業務ロジックを書かない」に対して adapter が厚くなりすぎる。不採用
 - **C: `WorkflowEngine` を import して埋め込む** — ADR-0002「core に LLM を入れない」に正面衝突する（`WorkflowEngineOptions` が provider / model / autoRouting を取る）。さらに `.takt/runs/` を無条件で掘る / `loadGlobalConfig` への依存が切れない / 内部型 `WorkflowConfig`（0.x）に依存する。不採用
 - **E: `takt export-cc` で Claude Code skill として配る** — **そもそも takt の導入ではない。** 出力は `SKILL.md` + `references/` + `workflows/` + `facets/` を配る自己完結パッケージであり、実行時に takt のコードは 1 行も動かない。実体は「takt の書式」と「interpreter 698 行」の vendoring であって、takt への依存でも takt の便益でもない。不採用
 

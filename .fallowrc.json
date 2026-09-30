@@ -1,7 +1,7 @@
 {
   "$schema": "./node_modules/fallow/schema.json",
   "entry": [
-    "bin/tayk.js",
+    "bin/nyacast.js",
     "src/index.ts",
     "test/helpers.ts",
     "test/package-smoke-support.ts",

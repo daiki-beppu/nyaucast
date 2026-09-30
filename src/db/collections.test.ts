@@ -26,7 +26,7 @@ async function withCollection(
 
 describe("collection store", () => {
   test("reports no downstream records for a collection by itself", async () => {
-    await withCollection("tayk-collection-empty-", async (store) => {
+    await withCollection("nyacast-collection-empty-", async (store) => {
       await expect(createCollectionStore(store).hasDownstreamRecords(collection.id)).resolves.toBe(
         false,
       );
@@ -34,7 +34,7 @@ describe("collection store", () => {
   });
 
   test("detects a thumbnail as a downstream record", async () => {
-    await withCollection("tayk-collection-thumbnail-", async (store) => {
+    await withCollection("nyacast-collection-thumbnail-", async (store) => {
       await store.db.insert(thumbnails).values({
         collectionId: collection.id,
         createdAt: "2026-08-27T00:00:00.000Z",
@@ -48,7 +48,7 @@ describe("collection store", () => {
   });
 
   test("detects an approval as a downstream record", async () => {
-    await withCollection("tayk-collection-approval-", async (store) => {
+    await withCollection("nyacast-collection-approval-", async (store) => {
       await recordApproval(store, { collectionId: collection.id, gate: "produce" }, clock);
 
       await expect(createCollectionStore(store).hasDownstreamRecords(collection.id)).resolves.toBe(
@@ -58,7 +58,7 @@ describe("collection store", () => {
   });
 
   test("detects a rejection as a downstream record", async () => {
-    await withCollection("tayk-collection-rejection-", async (store) => {
+    await withCollection("nyacast-collection-rejection-", async (store) => {
       await recordRejection(store, { collectionId: collection.id, gate: "produce" }, clock);
 
       await expect(createCollectionStore(store).hasDownstreamRecords(collection.id)).resolves.toBe(

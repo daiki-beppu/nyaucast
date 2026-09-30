@@ -19,9 +19,9 @@ function runAuthCli(
   return spawnSync(
     process.execPath,
     [
-      "--conditions=tayk-source",
+      "--conditions=nyacast-source",
       "--experimental-strip-types",
-      resolve(packageRoot, "bin", "tayk.js"),
+      resolve(packageRoot, "bin", "nyacast.js"),
       "auth",
       ...arguments_,
     ],
@@ -34,21 +34,21 @@ function runAuthCli(
   );
 }
 
-describe("tayk auth CLI", () => {
+describe("nyacast auth CLI", () => {
   test.each([{ arguments_: [] }, { arguments_: [channel, "extra"] }])(
     "requires exactly one channel argument",
     ({ arguments_ }) => {
-      withTemporaryDirectory("tayk-auth-cli-args-", (directory) => {
+      withTemporaryDirectory("nyacast-auth-cli-args-", (directory) => {
         const result = runAuthCli(directory, directory, arguments_);
 
         expect(result.status).not.toBe(0);
-        expect(result.stderr).toContain("usage: tayk auth <channel>");
+        expect(result.stderr).toContain("usage: nyacast auth <channel>");
       });
     },
   );
 
   test("reports the fixed client secrets location without using environment or repository fallbacks", () => {
-    withTemporaryDirectory("tayk-auth-cli-location-", (directory) => {
+    withTemporaryDirectory("nyacast-auth-cli-location-", (directory) => {
       const homeDirectory = join(directory, "home");
       const repository = join(directory, "channel-repository");
       const repositoryAuth = join(repository, "auth");
@@ -64,7 +64,7 @@ describe("tayk auth CLI", () => {
       });
 
       expect(result.status).not.toBe(0);
-      expect(result.stderr).toContain(`~/.config/tayk/${channel}/client_secrets.json`);
+      expect(result.stderr).toContain(`~/.config/nyacast/${channel}/client_secrets.json`);
       expect(result.stderr).not.toContain(homeDirectory);
       expect(result.stderr).not.toContain(repositoryAuth);
       expect(result.stderr).not.toContain(clientSecret);

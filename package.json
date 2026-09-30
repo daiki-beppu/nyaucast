@@ -1,13 +1,13 @@
 {
-  "name": "@daiki-beppu/tayk",
+  "name": "nyacast",
   "version": "0.0.2",
   "description": "YouTube channel operations toolkit",
   "repository": {
     "type": "git",
-    "url": "https://github.com/daiki-beppu/tayk.git"
+    "url": "https://github.com/daiki-beppu/nyacast.git"
   },
   "bin": {
-    "tayk": "bin/tayk.js"
+    "nyacast": "bin/nyacast.js"
   },
   "files": [
     "dist",
@@ -16,8 +16,8 @@
   ],
   "type": "module",
   "imports": {
-    "#tayk-entry": {
-      "tayk-source": "./src/index.ts",
+    "#nyacast-entry": {
+      "nyacast-source": "./src/index.ts",
       "types": "./src/index.ts",
       "default": "./dist/index.js"
     }
