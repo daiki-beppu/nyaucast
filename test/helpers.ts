@@ -2,10 +2,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-export function withTemporaryDirectory(prefix: string, execute: (directory: string) => void): void {
+export function withTemporaryDirectory<T>(prefix: string, execute: (directory: string) => T): T {
   const directory = mkdtempSync(join(tmpdir(), prefix));
   try {
-    execute(directory);
+    return execute(directory);
   } finally {
     rmSync(directory, { force: true, recursive: true });
   }

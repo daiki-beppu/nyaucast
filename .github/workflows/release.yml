@@ -40,12 +40,15 @@ jobs:
           node-version-file: package.json
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      # Trusted Publisher は stage publish のみ許可し、公開は npmjs.com でパスキー承認する。
+      # タグ push の checkout は detached HEAD で pnpm の branch 検査が必ず落ちるため
+      # --no-git-checks で外す。main 到達性は上の Verify ステップが担保している。
       - name: Publish package
         env:
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
           if [ "$DRY_RUN" = "true" ]; then
-            pnpm publish --dry-run
+            pnpm stage publish --dry-run --no-git-checks
             exit 0
           fi
           package_version=$(node --print 'require("./package.json").version')
@@ -54,4 +57,4 @@ jobs:
             echo "tag version $tag_version does not match package version $package_version" >&2
             exit 1
           fi
-          pnpm publish
+          pnpm stage publish --no-git-checks

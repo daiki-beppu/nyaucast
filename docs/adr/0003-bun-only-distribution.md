@@ -4,7 +4,7 @@
 
 ## Status
 
-accepted (2026-07-11) / 改訂 2026-08-02（#185 #113。npm CLI の配布互換境界例外として決定 5 を追加）/ 改訂 2026-08-25（#351。map #343「Stryker mutation testing 導入」の決定を実装に先行して反映 — 決定 1 を「配布物コードは Node 互換表面のみ」へ、決定 4 を「テストは vitest（Node 実行）へ統合」へ差し替え）/ 改訂 2026-08-26（#368。map #353「開発基盤スクラップアンドビルド」の決定を実装に先行して反映 — **主旨転換**: 実行ランタイム Bun 必須 → Node、bin の Bun 委譲ランチャ → dist を import する素の Node entry、ビルドレス出荷 → tsc emit の dist 出荷（開発時ビルドレスは維持）、契約テストの被検体 bun → node、npm CLI 限定例外 → 例外全廃（パッケージ操作は pnpm 全面）。ファイル名 `0003-bun-only-distribution.md` は歴史的識別子として据え置く。骨子は issue #363 / #354 の resolution）/ 改訂 2026-09-02（#387。pnpm v12 native binary へ更新し、ローカル供給と lockfile 可視性の境界を明文化）
+accepted (2026-07-11) / 改訂 2026-08-02（#185 #113。npm CLI の配布互換境界例外として決定 5 を追加）/ 改訂 2026-08-25（#351。map #343「Stryker mutation testing 導入」の決定を実装に先行して反映 — 決定 1 を「配布物コードは Node 互換表面のみ」へ、決定 4 を「テストは vitest（Node 実行）へ統合」へ差し替え）/ 改訂 2026-08-26（#368。map #353「開発基盤スクラップアンドビルド」の決定を実装に先行して反映 — **主旨転換**: 実行ランタイム Bun 必須 → Node、bin の Bun 委譲ランチャ → dist を import する素の Node entry、ビルドレス出荷 → tsc emit の dist 出荷（開発時ビルドレスは維持）、契約テストの被検体 bun → node、npm CLI 限定例外 → 例外全廃（パッケージ操作は pnpm 全面）。ファイル名 `0003-bun-only-distribution.md` は歴史的識別子として据え置く。骨子は issue #363 / #354 の resolution）/ 改訂 2026-09-02（#387。pnpm v12 native binary へ更新し、ローカル供給と lockfile 可視性の境界を明文化）/ 改訂 2026-10-01（#448。release の publish を staged publishing へ切り替え、決定 5 を改訂）
 
 ## Context
 
@@ -26,7 +26,7 @@ map #353「開発基盤スクラップアンドビルド」で **bun の完全�
 2. **bin は dist を import する素の Node entry**（改訂 2026-08-26。旧: Bun の存在チェック → `bun` へ委譲するランチャ）。ランタイムの存在チェックや委譲は行わない
 3. **配布はビルドあり、開発はビルドレス**（改訂 2026-08-26。旧: ビルドステップを持たない）。配布物は tsc（`rewriteRelativeImportExtensions`）で `dist/` へ 1:1 emit して出荷し（`package.json` の `files` は dist + bin）、dist 生成は `prepack` のみが行う — 開発ループにビルドを挟まない。開発時は checkout 直下の Node type stripping（v24 で Stable）で TS ソースを直接実行する
 4. **テスト runner は vitest（Node 実行）。改変拒否契約テストの被検体は node**（改訂 2026-08-26。旧: bun 被検体）。unit / 改変拒否契約テストを vitest の projects で分離する二層構造は不変。Stryker の mutation 対象は unit project のみとする
-5. **パッケージ操作は pnpm に一本化し、npm CLI の例外を全廃する**（改訂 2026-08-26。旧: release の `npm publish` / package 統合テストの `npm pack` / `npm install` を限定例外として許可）。release の publish は `pnpm publish` + OIDC trusted publishing、package 統合テストは `pnpm pack` + 一時 consumer への `pnpm install`。npm / yarn / bun とそのラッパは使わない
+5. **パッケージ操作は pnpm に一本化し、npm CLI の例外を全廃する**（改訂 2026-08-26。旧: release の `npm publish` / package 統合テストの `npm pack` / `npm install` を限定例外として許可）。release の publish は `pnpm stage publish` + OIDC trusted publishing（改訂 2026-10-01。旧: `pnpm publish`）で、公開の最終承認は npmjs.com の Staged Packages でのメンテナのパスキー承認とする。package 統合テストは `pnpm pack` + 一時 consumer への `pnpm install`。npm / yarn / bun とそのラッパは使わない
 
 ## Why
 
@@ -56,6 +56,8 @@ map #353「開発基盤スクラップアンドビルド」で **bun の完全�
 - **本改訂は実装に先行する**（スクラップアンドビルド前提）。改訂時点の実装（Bun 委譲 bin ランチャ・`bun run check`・flake 供給・npm 例外を使う統合テスト）は旧決定のままであり、後続の実装 issue 列（#369〜#373）が本改訂へ追従する。乖離は意図した過渡状態であって黙認ではない
 - Stryker は監査ツールであり check の直列チェーンに入れない。運用の正書は `docs/agents/mutation-audit.md`
 - 用語の正書は CONTEXT.md — 「Node 互換表面」「mutation testing」「改変拒否契約テスト」
+- Trusted Publisher は stage publish のみを許可し（Allow npm publish なし）、パッケージ設定は 2FA 必須・bypass 2FA token 禁止とする。CI 単独では公開できず、長期 token も存在しない（#448）
+- **新規パッケージの初回作成は pnpm で成立しない**（2026-10-01 実測、pnpm 12.2.1）: `pnpm stage publish` は未存在パッケージで placeholder（`0.0.0-stage`）を作らず 404、`pnpm publish` / `pnpm login` のブラウザ認証はパスキー承認の完了を検知せず `ERR_PNPM_WEBAUTH_TIMEOUT`。Trusted Publisher はパッケージ存在後にしか登録できないため、`nyaucast@0.0.2` は `pnpm pack` の tarball をリポジトリ外から `npm publish` して作成した。これは Considered Options の「OIDC 登録でつまずいた場合のみ npm CLI へ退避」の適用であり、継続的な例外ではない
 
 ## Related
 
