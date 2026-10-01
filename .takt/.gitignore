@@ -1,0 +1,5 @@
+# nyaucast は config.yaml 以外の .takt/ 配下を持たない（ADR-0008）。
+# takt はこのファイルが無いときだけ既定版を生成するため、追跡して再生成を止める。
+*
+!.gitignore
+!config.yaml
