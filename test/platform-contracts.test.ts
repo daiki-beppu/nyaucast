@@ -92,6 +92,31 @@ function isolatedEnvironment(overrides: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   );
 }
 
+function runPublishWithFakePnpm(overrides: NodeJS.ProcessEnv) {
+  return withTemporaryDirectory("nyaucast-release-publish-", (directory) => {
+    const bin = join(directory, "bin");
+    const callsFile = join(directory, "pnpm-calls.txt");
+    mkdirSync(bin);
+    writeFileSync(join(directory, "package.json"), '{"version":"0.0.0"}\n');
+    writeFileSync(
+      join(bin, "pnpm"),
+      `#!/bin/sh\nprintf '%s\\n' "$*" >> ${JSON.stringify(callsFile)}\n`,
+    );
+    chmodSync(join(bin, "pnpm"), 0o755);
+    const path = process.env["PATH"];
+    if (path === undefined) {
+      throw new Error("PATH is required");
+    }
+
+    const result = runBash(
+      publishScript(),
+      directory,
+      isolatedEnvironment({ ...overrides, PATH: `${bin}:${path}` }),
+    );
+    return { result, calls: readFileSync(callsFile, "utf8").trim() };
+  });
+}
+
 describe("K1 three identical check surfaces", () => {
   test("local, pre-push, and CI cannot silently diverge from the canonical check", () => {
     const manifest = readJson(join(packageRoot, "package.json"));
@@ -219,38 +244,29 @@ describe("K2 release guard", () => {
     expect(result.stderr).toContain("does not match package version");
   });
 
-  test("manual dispatch can invoke only a dry-run publish", () => {
-    withTemporaryDirectory("nyaucast-release-dispatch-", (directory) => {
-      const bin = join(directory, "bin");
-      const calls = join(directory, "pnpm-calls.txt");
-      mkdirSync(bin);
-      writeFileSync(join(directory, "package.json"), '{"version":"0.0.0"}\n');
-      writeFileSync(
-        join(bin, "pnpm"),
-        `#!/bin/sh\nprintf '%s\\n' "$*" >> ${JSON.stringify(calls)}\n`,
-      );
-      chmodSync(join(bin, "pnpm"), 0o755);
-      const path = process.env["PATH"];
-      if (path === undefined) {
-        throw new Error("PATH is required");
-      }
-
-      const result = runBash(
-        publishScript(),
-        directory,
-        isolatedEnvironment({
-          DRY_RUN: "true",
-          GITHUB_EVENT_NAME: "workflow_dispatch",
-          GITHUB_REF_NAME: "main",
-          PATH: `${bin}:${path}`,
-        }),
-      );
-      expect(requireRecord(publishStep()["env"], "publish environment")["DRY_RUN"]).toBe(
-        "${{ github.event_name == 'workflow_dispatch' }}",
-      );
-      expect(result.status).toBe(0);
-      expect(readFileSync(calls, "utf8").trim()).toBe("publish --dry-run");
+  test("manual dispatch can invoke only a dry-run staged publish", () => {
+    const { result, calls } = runPublishWithFakePnpm({
+      DRY_RUN: "true",
+      GITHUB_EVENT_NAME: "workflow_dispatch",
+      GITHUB_REF_NAME: "main",
     });
+
+    expect(requireRecord(publishStep()["env"], "publish environment")["DRY_RUN"]).toBe(
+      "${{ github.event_name == 'workflow_dispatch' }}",
+    );
+    expect(result.status).toBe(0);
+    expect(calls).toBe("stage publish --dry-run --no-git-checks");
+  });
+
+  test("a matching release tag stages the package instead of publishing it directly", () => {
+    const { result, calls } = runPublishWithFakePnpm({
+      DRY_RUN: "false",
+      GITHUB_EVENT_NAME: "push",
+      GITHUB_REF_NAME: "v0.0.0",
+    });
+
+    expect(result.status).toBe(0);
+    expect(calls).toBe("stage publish --no-git-checks");
   });
 
   test("package metadata identifies the package name and the single bin entry", () => {
