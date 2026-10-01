@@ -50,7 +50,7 @@ map #353「開発基盤スクラップアンドビルド」で **bun の完全�
 
 - 開発・CI の Node 版は `package.json` の `devEngines.runtime`（24.x 線）が定め、CI（setup-node）が導入する。ローカルはホスト供給とし強制しない。`engines.node` は消費者契約として維持する
 - pnpm は `packageManager` の exact pin を CI setup とローカル導入版の SSOT とする。ローカルはリポジトリ外で pin 版の native binary を事前導入し、リポジトリ内の自動切替には依存しない
-- `pnpm-lock.yaml` は GitHub dependency graph と Dependabot が実依存を読める単一 YAML document を維持する
+- `pnpm-lock.yaml` は GitHub dependency graph が実依存を読める単一 YAML document を維持する
 - 消費者は JS（dist）を受け取るため、`engines.node` は type stripping の版制約から自由になる
 - dist ビルドの破綻は `prepack` が publish 前に検出する — 「静かに進行する事故」にはならない
 - **本改訂は実装に先行する**（スクラップアンドビルド前提）。改訂時点の実装（Bun 委譲 bin ランチャ・`bun run check`・flake 供給・npm 例外を使う統合テスト）は旧決定のままであり、後続の実装 issue 列（#369〜#373）が本改訂へ追従する。乖離は意図した過渡状態であって黙認ではない
