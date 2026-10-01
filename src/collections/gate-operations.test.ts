@@ -34,7 +34,7 @@ describe("collection gate operations", () => {
   test.each(["produce", "publish"] as const)(
     "records one %s approval and treats a repeated approval as success",
     async (gate) => {
-      await withCollection("nyacast-approve-gate-", async ({ clock, store }) => {
+      await withCollection("nyaucast-approve-gate-", async ({ clock, store }) => {
         await expect(approveCollectionGate(store, { collectionId, gate }, clock)).resolves.toEqual({
           collectionId,
           gate,
@@ -52,7 +52,7 @@ describe("collection gate operations", () => {
   );
 
   test("rejects a missing collection before recording an approval", async () => {
-    await withTemporaryDirectoryAsync("nyacast-missing-collection-", async (channelRoot) => {
+    await withTemporaryDirectoryAsync("nyaucast-missing-collection-", async (channelRoot) => {
       const store = await openLocalStore(channelRoot);
       try {
         await expect(
@@ -70,7 +70,7 @@ describe("collection gate operations", () => {
   });
 
   test("does not append a second rejection while the existing rejection is current", async () => {
-    await withCollection("nyacast-current-rejection-", async ({ clock, store }) => {
+    await withCollection("nyaucast-current-rejection-", async ({ clock, store }) => {
       await expect(
         rejectCollectionGate(store, { collectionId, gate: "produce" }, clock),
       ).resolves.toEqual({ collectionId, gate: "produce", recorded: true });
@@ -83,7 +83,7 @@ describe("collection gate operations", () => {
   });
 
   test("appends a new rejection after a later approval without deleting history", async () => {
-    await withCollection("nyacast-reject-after-approval-", async ({ store }) => {
+    await withCollection("nyaucast-reject-after-approval-", async ({ store }) => {
       await rejectCollectionGate(
         store,
         { collectionId, gate: "produce" },
@@ -153,7 +153,7 @@ describe("collection gate operations", () => {
   ])(
     "$gate operations preserve fact order with a $clockType clock",
     async ({ clockTimes, gate }) => {
-      await withCollection("nyacast-ordered-gate-facts-", async ({ store }) => {
+      await withCollection("nyaucast-ordered-gate-facts-", async ({ store }) => {
         let clockCall = 0;
         const clock = {
           now: () => {
@@ -201,7 +201,7 @@ describe("collection gate operations", () => {
   );
 
   test("rejects a missing collection before recording a rejection", async () => {
-    await withTemporaryDirectoryAsync("nyacast-missing-rejection-", async (channelRoot) => {
+    await withTemporaryDirectoryAsync("nyaucast-missing-rejection-", async (channelRoot) => {
       const store = await openLocalStore(channelRoot);
       try {
         await expect(

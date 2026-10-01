@@ -24,7 +24,7 @@ function objectKeysDeep(value: unknown): string[] {
 
 describe("collection status MCP tool", () => {
   test("lists and calls the read tool without exposing a gate write tool", async () => {
-    await withTemporaryDirectoryAsync("nyacast-collection-status-", async (channelRoot) => {
+    await withTemporaryDirectoryAsync("nyaucast-collection-status-", async (channelRoot) => {
       const store = await openLocalStore(channelRoot);
       try {
         await createCollectionStore(store).create({ id: collectionId, title: "Night Drive" });
@@ -40,9 +40,9 @@ describe("collection status MCP tool", () => {
       const server = spawn(
         process.execPath,
         [
-          "--conditions=nyacast-source",
+          "--conditions=nyaucast-source",
           "--experimental-strip-types",
-          join(packageRoot, "bin", "nyacast.js"),
+          join(packageRoot, "bin", "nyaucast.js"),
           "mcp",
         ],
         { cwd: channelRoot, env: process.env, stdio: "pipe" },
@@ -55,7 +55,7 @@ describe("collection status MCP tool", () => {
           method: "initialize",
           params: {
             capabilities: {},
-            clientInfo: { name: "nyacast-contract-test", version: "1.0.0" },
+            clientInfo: { name: "nyaucast-contract-test", version: "1.0.0" },
             protocolVersion: "2025-06-18",
           },
         });

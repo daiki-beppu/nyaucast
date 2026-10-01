@@ -1,13 +1,13 @@
 {
-  "name": "nyacast",
+  "name": "nyaucast",
   "version": "0.0.2",
   "description": "YouTube channel operations toolkit",
   "repository": {
     "type": "git",
-    "url": "https://github.com/daiki-beppu/nyacast.git"
+    "url": "https://github.com/daiki-beppu/nyaucast.git"
   },
   "bin": {
-    "nyacast": "bin/nyacast.js"
+    "nyaucast": "bin/nyaucast.js"
   },
   "files": [
     "dist",
@@ -16,8 +16,8 @@
   ],
   "type": "module",
   "imports": {
-    "#nyacast-entry": {
-      "nyacast-source": "./src/index.ts",
+    "#nyaucast-entry": {
+      "nyaucast-source": "./src/index.ts",
       "types": "./src/index.ts",
       "default": "./dist/index.js"
     }

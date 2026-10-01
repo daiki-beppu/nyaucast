@@ -9,7 +9,7 @@ import { withTemporaryDirectory } from "./helpers";
 
 const packageRoot = resolve(import.meta.dirname, "..");
 const canonicalCheckCommand = "pnpm run check";
-const trustedRepositoryUrl = "https://github.com/daiki-beppu/nyacast.git";
+const trustedRepositoryUrl = "https://github.com/daiki-beppu/nyaucast.git";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -157,7 +157,7 @@ describe("K1 three identical check surfaces", () => {
 
 describe("K2 release guard", () => {
   test("a release commit outside main is rejected before publish", () => {
-    withTemporaryDirectory("nyacast-release-ancestor-", (directory) => {
+    withTemporaryDirectory("nyaucast-release-ancestor-", (directory) => {
       const environment = isolatedEnvironment({
         GIT_CONFIG_GLOBAL: "/dev/null",
         GIT_CONFIG_NOSYSTEM: "1",
@@ -220,7 +220,7 @@ describe("K2 release guard", () => {
   });
 
   test("manual dispatch can invoke only a dry-run publish", () => {
-    withTemporaryDirectory("nyacast-release-dispatch-", (directory) => {
+    withTemporaryDirectory("nyaucast-release-dispatch-", (directory) => {
       const bin = join(directory, "bin");
       const calls = join(directory, "pnpm-calls.txt");
       mkdirSync(bin);
@@ -255,8 +255,8 @@ describe("K2 release guard", () => {
 
   test("package metadata identifies the package name and the single bin entry", () => {
     const manifest = readJson(join(packageRoot, "package.json"));
-    expect(manifest["name"]).toBe("nyacast");
-    expect(manifest["bin"]).toEqual({ nyacast: "bin/nyacast.js" });
+    expect(manifest["name"]).toBe("nyaucast");
+    expect(manifest["bin"]).toEqual({ nyaucast: "bin/nyaucast.js" });
   });
 
   test("package metadata identifies the trusted publishing repository", () => {

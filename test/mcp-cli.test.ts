@@ -10,15 +10,15 @@ import { createJsonRpcClient, requireRecord, stopChildProcess } from "./mcp-stdi
 
 const packageRoot = resolve(import.meta.dirname, "..");
 
-describe("nyacast mcp", () => {
+describe("nyaucast mcp", () => {
   test("serves the plan and collection status tools from the startup working directory", async () => {
-    await withTemporaryDirectoryAsync("nyacast-mcp-", async (channelRoot) => {
+    await withTemporaryDirectoryAsync("nyaucast-mcp-", async (channelRoot) => {
       const server = spawn(
         process.execPath,
         [
-          "--conditions=nyacast-source",
+          "--conditions=nyaucast-source",
           "--experimental-strip-types",
-          join(packageRoot, "bin", "nyacast.js"),
+          join(packageRoot, "bin", "nyaucast.js"),
           "mcp",
         ],
         {
@@ -35,7 +35,7 @@ describe("nyacast mcp", () => {
           method: "initialize",
           params: {
             capabilities: {},
-            clientInfo: { name: "nyacast-contract-test", version: "1.0.0" },
+            clientInfo: { name: "nyaucast-contract-test", version: "1.0.0" },
             protocolVersion: "2025-06-18",
           },
         });
@@ -46,7 +46,7 @@ describe("nyacast mcp", () => {
             requireRecord(initialized.result, "initialize result")["serverInfo"],
             "serverInfo",
           )["name"],
-        ).toBe("nyacast");
+        ).toBe("nyaucast");
         writeMessage({ jsonrpc: "2.0", method: "notifications/initialized", params: {} });
         writeMessage({ id: 2, jsonrpc: "2.0", method: "tools/list", params: {} });
 

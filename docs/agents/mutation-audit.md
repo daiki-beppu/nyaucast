@@ -33,5 +33,5 @@ Stryker（<https://stryker-mutator.io/>）を監査ツールとして運用す�
 
 ## 構成の注意（spike #346 の実測）
 
-- `stryker.config.json` に `"ignorePatterns": ["tsconfig.json"]` を置く。core の tsconfig preprocessor が TS6 の compiler API を呼ぶ（[stryker-js#6111](https://github.com/stryker-mutator/stryker-js/issues/6111)）ため、typescript 7 単独構成では必須の回避策。nyacast の tsconfig は単一ファイル・`extends` / `references` 無しなので、この前処理を外しても失うものは無い。**tsconfig に `extends` / `references` / paths 依存を入れる場合は回避策を再評価する**
+- `stryker.config.json` に `"ignorePatterns": ["tsconfig.json"]` を置く。core の tsconfig preprocessor が TS6 の compiler API を呼ぶ（[stryker-js#6111](https://github.com/stryker-mutator/stryker-js/issues/6111)）ため、typescript 7 単独構成では必須の回避策。nyaucast の tsconfig は単一ファイル・`extends` / `references` 無しなので、この前処理を外しても失うものは無い。**tsconfig に `extends` / `references` / paths 依存を入れる場合は回避策を再評価する**
 - typescript-checker は不採用（Stryker の TS7 対応が本実装されたら再評価）。typescript@6 は併設しない

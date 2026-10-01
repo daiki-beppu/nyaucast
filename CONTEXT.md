@@ -1,4 +1,4 @@
-# nyacast
+# nyaucast
 
 YouTube チャンネル運営を自動化するツールキット。skill に蓄積されたワークフロー知識を型付き MCP tool に結晶化する、仕様ベースの新規プロダクト（Python 版 `youtube-channels-automation` の移植ではない — 出自と転換の経緯は旧リポの ADR-0021 を参照）。本ファイルは実装詳細ではなく、本プロジェクト固有の用語の正書を定める **グロッサリ**である。
 
@@ -6,12 +6,12 @@ YouTube チャンネル運営を自動化するツールキット。skill に蓄
 
 ## プロダクト・配布
 
-**nyacast**:
-本ツールの公開ブランド = npm package 名 = bin 名。下流からの canonical 起動は `npx`/`nlx` 互換の `nyacast <cmd>`（runtime は Node）。展開文: Nyacast Your Agent-ready Creation Automated Social Tool。
+**nyaucast**:
+本ツールの公開ブランド = npm package 名 = bin 名。下流からの canonical 起動は `npx`/`nlx` 互換の `nyaucast <cmd>`（runtime は Node）。展開文: Nyaucast Your Agent-ready Unified Creation Automated Social Tool。
 _Avoid_: youtube-channels-automation, yt-automation, yt (旧 bin 名)
 
 **dogfood**:
-first-party 2 リポ (soulful-grooves / deepfocus365) で collection のフルライフサイクル 1 周（TTP 収集・分析 → 企画 → サムネ生成 → 音源生成 → MIX/マスタリング → 動画生成 → upload → 公開後運用）を nyacast だけで実走させる受け入れ検証。`v0.1.0` の唯一のリリースゲート。期間ではなく完走で判定する。
+first-party 2 リポ (soulful-grooves / deepfocus365) で collection のフルライフサイクル 1 周（TTP 収集・分析 → 企画 → サムネ生成 → 音源生成 → MIX/マスタリング → 動画生成 → upload → 公開後運用）を nyaucast だけで実走させる受け入れ検証。`v0.1.0` の唯一のリリースゲート。期間ではなく完走で判定する。
 _Avoid_: ベータ, トライアル, 試運転
 
 **critical regression**:
@@ -32,7 +32,7 @@ _Avoid_: 第三者 consumer なし
 ## アーキテクチャ
 
 **MCP tool**:
-nyacast が expose する型付き操作。agent (Claude Code / Codex 等) が直接呼ぶ第一級インターフェース。primitive tool (細粒度) 1 層と、local store への読み口で構成される (ADR-0007)。設計ベンチマーク: [html2pptx.app](https://html2pptx.app/) の Skill + MCP tool + REST 3 層。ドット表記 (`benchmark.collect`) が正書。MCP protocol 上の wire 名はドットをアンダースコアへ機械変換した `benchmark_collect` 形式（Claude API の tool 名制約 `^[a-zA-Z0-9_-]{1,64}$` にドットが含まれないため）。
+nyaucast が expose する型付き操作。agent (Claude Code / Codex 等) が直接呼ぶ第一級インターフェース。primitive tool (細粒度) 1 層と、local store への読み口で構成される (ADR-0007)。設計ベンチマーク: [html2pptx.app](https://html2pptx.app/) の Skill + MCP tool + REST 3 層。ドット表記 (`benchmark.collect`) が正書。MCP protocol 上の wire 名はドットをアンダースコアへ機械変換した `benchmark_collect` 形式（Claude API の tool 名制約 `^[a-zA-Z0-9_-]{1,64}$` にドットが含まれないため）。
 _Avoid_: API endpoint, command (MCP tool は MCP protocol で expose される typed operation)、wire 名にドットを使うこと
 
 **primitive tool**:
@@ -40,7 +40,7 @@ _Avoid_: API endpoint, command (MCP tool は MCP protocol で expose される t
 _Avoid_: workflow tool (粗粒度の MCP tool を置く設計は ADR-0007 で廃止した。区間を歩くのは codec を読んだ agent であり、tool ではない)
 
 **ゲート承認**:
-collection lifecycle の GO/NO-GO ゲートを人間が越えた記録。`nyacast collection produce <id>` / `nyacast collection publish <id>` を**人間が叩いた事実そのもの**が承認であり、`approve` という独立操作は存在しない。書き込みは CLI 専用 (agent は書けない)、読み取りは MCP に開く (ADR-0007)。
+collection lifecycle の GO/NO-GO ゲートを人間が越えた記録。`nyaucast collection produce <id>` / `nyaucast collection publish <id>` を**人間が叩いた事実そのもの**が承認であり、`approve` という独立操作は存在しない。書き込みは CLI 専用 (agent は書けない)、読み取りは MCP に開く (ADR-0007)。
 _Avoid_: approve, 承認フロー (独立した承認操作は作らない。起動 = 承認)
 
 **knowledge codec**:
@@ -48,7 +48,7 @@ _Avoid_: approve, 承認フロー (独立した承認操作は作らない。起
 _Avoid_: skill guide, routing layer (knowledge codec は知識の bundled 提供であり、単なるルーティングではない)
 
 **adapter**:
-core の MCP tool を各プロトコルへ橋渡しする薄いラッパ。MCP adapter (primary) と CLI adapter (`nyacast <cmd>`) がある。2 本立ての存在理由は分業 — **人間が叩くものは CLI、agent が叩くものは MCP**。CLI は人間が直接触る唯一の面であり、ゲート承認の書き込み口を独占する。業務ロジックは core に置き、adapter は呼ぶだけ (ADR-0001)。
+core の MCP tool を各プロトコルへ橋渡しする薄いラッパ。MCP adapter (primary) と CLI adapter (`nyaucast <cmd>`) がある。2 本立ての存在理由は分業 — **人間が叩くものは CLI、agent が叩くものは MCP**。CLI は人間が直接触る唯一の面であり、ゲート承認の書き込み口を独占する。業務ロジックは core に置き、adapter は呼ぶだけ (ADR-0001)。
 _Avoid_: thin client, thin wrapper (同一概念。canonical は adapter)
 
 **tracer**:
@@ -58,8 +58,8 @@ _Avoid_: PoC (PoC は撤退判定用の別物)
 ## 設定・データ形式
 
 **config format**:
-nyacast が読み書きするファイルはすべて JSON。YAML パーサー依存を持たない。takt / CI 等の外部ツール所有ファイルは各ツールの規約に従う (YAML 等)。
-_Avoid_: YAML / JSONC / JSON5 を nyacast が読み書きするファイルに使うこと
+nyaucast が読み書きするファイルはすべて JSON。YAML パーサー依存を持たない。takt / CI 等の外部ツール所有ファイルは各ツールの規約に従う (YAML 等)。
+_Avoid_: YAML / JSONC / JSON5 を nyaucast が読み書きするファイルに使うこと
 
 **skill config**:
 チャンネル固有のスキル挙動パラメータ。`config/skills/<skill>.json` のフルファイル 1 本。default + override の deep merge は行わず、zod schema の `.default()` が省略キーを補完する。
@@ -106,7 +106,7 @@ _Avoid_: アルバム, プレイリスト (collection は YouTube 動画単位�
 **collection lifecycle**:
 collection の制作フロー。人間の GO/NO-GO ゲートで 3 区間に分かれる:
 `TTP 収集・分析 → 企画 →[GO/NO-GO]→ サムネ生成 →[GO/NO-GO]→ 音源生成 → MIX/マスタリング → 動画生成 → upload → 公開後運用`。
-ゲート 1 (企画後): 「作る / 作らない」。ゲート 2 (サムネ後): 「出す / 出さない」。各区間は人間のゲート承認 (`nyacast collection <gate> <id>`) で区切られ、区間を歩くのは knowledge codec を読んだ agent (ADR-0007)。区間名は plan (TTP 収集・分析→企画) / produce (サムネ生成) / publish (音源生成→MIX/マスタリング→動画生成→upload→公開後運用)。
+ゲート 1 (企画後): 「作る / 作らない」。ゲート 2 (サムネ後): 「出す / 出さない」。各区間は人間のゲート承認 (`nyaucast collection <gate> <id>`) で区切られ、区間を歩くのは knowledge codec を読んだ agent (ADR-0007)。区間名は plan (TTP 収集・分析→企画) / produce (サムネ生成) / publish (音源生成→MIX/マスタリング→動画生成→upload→公開後運用)。
 _Avoid_: pipeline, workflow (lifecycle は collection 固有の制作工程を指す。汎用の概念ではない)
 
 **master（マスター音源）**:
@@ -115,11 +115,11 @@ collection 内の個別トラックをクロスフェード結合した最終音
 ## マルチチャンネル運用
 
 **channel registry**:
-運営者が所有する全 first-party チャンネルリポのパス一覧。`~/.config/nyacast/channels.json` に JSON 配列で格納する。各エントリはチャンネルリポの絶対パスのみを持ち、表示名等のメタデータは各リポの `config/channel/meta.json` から動的に解決する（二重管理の回避）。
+運営者が所有する全 first-party チャンネルリポのパス一覧。`~/.config/nyaucast/channels.json` に JSON 配列で格納する。各エントリはチャンネルリポの絶対パスのみを持ち、表示名等のメタデータは各リポの `config/channel/meta.json` から動的に解決する（二重管理の回避）。
 _Avoid_: channel list, channel config (config は `config/channel/*.json` のこと)
 
 **channel bootstrap**:
-`nyacast init` が行う新規チャンネルリポの立ち上げ工程。
+`nyaucast init` が行う新規チャンネルリポの立ち上げ工程。
 _Avoid_: channel registry への既存リポ登録（bootstrap は新規作成を指す）
 
 **dashboard** (v0.2 以降):

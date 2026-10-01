@@ -1,4 +1,4 @@
-# nyacast
+# nyaucast
 
 YouTube チャンネル運営を自動化するツールキット。skill に蓄積されたワークフロー知識を型付き MCP tool に結晶化する。
 
@@ -22,20 +22,20 @@ YouTube チャンネル運営を自動化するツールキット。skill に蓄
 - **registry を置かない** — tool 一覧は entry point のフラットな import 配列だけ
 - **Result 型 / createService フレームを導入しない** — エラーは内部で throw し、adapter 境界で変換する
 - **1 MCP tool = 実装 1 ファイル + テスト 1 ファイル** — zod schema・description・handler を tool 定義ファイルに同居させる
-- adapter は MCP (primary) と CLI (`nyacast <cmd>`) の 2 本。ここに業務ロジックを書かない
+- adapter は MCP (primary) と CLI (`nyaucast <cmd>`) の 2 本。ここに業務ロジックを書かない
 - **ADR から黙って逸脱しない。** 逸脱するなら該当 ADR の改訂を同じ差分に含める（ADR-0001 決定 7）
 
 ## データ
 
 - SSOT は `CONTEXT.md` の「データ 4 分類」で機械的に決まる。**設定 JSON と YouTube 上の実状態は local store のミラーであって SSOT ではない** — 読み取りは read model に一本化する
-- nyacast が読み書きするファイルはすべて JSON。YAML は使わない（外部ツールが所有するファイルは除く）
+- nyaucast が読み書きするファイルはすべて JSON。YAML は使わない（外部ツールが所有するファイルは除く）
 
 ## 開発フロー
 
 - **worktree 必須・main 直コミット禁止**。worktree セットアップは「`git worktree add --detach .claude/worktrees/<slug> main` → 依存 install」の 2 コマンド。ブランチは takt の pipeline モードに作らせるため、worktree 作成時に `-b` を付けない
 - **feature の実装は takt（builtin `default`）**。detached HEAD の手動 worktree 内から直接 `takt --pipeline --auto-pr -b <新規ブランチ名> -w default -i <issue番号>` を実行する。`--auto-pr` は `--pipeline` が必須、pipeline の issue 指定は positional 引数ではなく `-i` が必須であり、`-b` のブランチは実行前に存在してはならない。review-adjudication 経路の隔離 clone 実走行が未検証のため、検証完了までは `worktree: true` のキュー実行を使わない。要求追跡は builtin の Completion Contracts ledger + `SCN-{contract ID}-P/N` 構造が持つ（`docs/agents/issue-tracker.md` / ADR-0008）
 - **fix は takt を使わず issue-direct で実装する**（worktree → 実装 → PR 作成 → CI green まで監視）。品質ゲートは PR レビュー標準の builtin `review-fix-default` が担う
-- nyacast 固有の workflow 資産は持たない — `.takt/` は `config.yaml` のみ（ADR-0008）。workflow・steps / facets / schemas を足す提案は ADR-0008 の改訂を同じ差分に含めない限り規約違反
+- nyaucast 固有の workflow 資産は持たない — `.takt/` は `config.yaml` のみ（ADR-0008）。workflow・steps / facets / schemas を足す提案は ADR-0008 の改訂を同じ差分に含めない限り規約違反
 - スコープ外で見つけた問題は、直さず捨てず issue にする
 - commit: 日本語 Conventional Commits + タイトル末尾に `(#<issue番号>)`
 

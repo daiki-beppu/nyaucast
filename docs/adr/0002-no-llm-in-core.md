@@ -8,11 +8,11 @@ accepted (2026-07-10) / 改訂 2026-07-29（ADR-0007 Decision 0 に合わせ、t
 
 ## Context
 
-tracer となる plan 区間の設計で「企画候補のテーマ案を誰が生成するか」が問われた。primitive tool 内部で LLM API を呼んで文言まで生成する案と、決定的ロジックに留める案がある。nyacast の MCP tool は agent (Claude Code 等) から呼ばれる側であり、WHEN/HOW の知識は knowledge codec が agent に提供する構造（CONTEXT.md「MCP tool」「knowledge codec」）。
+tracer となる plan 区間の設計で「企画候補のテーマ案を誰が生成するか」が問われた。primitive tool 内部で LLM API を呼んで文言まで生成する案と、決定的ロジックに留める案がある。nyaucast の MCP tool は agent (Claude Code 等) から呼ばれる側であり、WHEN/HOW の知識は knowledge codec が agent に提供する構造（CONTEXT.md「MCP tool」「knowledge codec」）。
 
 ## Decision
 
-**nyacast core (MCP tool の handler) は LLM を呼ばない。** tool は型付きの決定的操作（データ収集・クエリ・フィルタ・ランキング・構造化）に徹し、テーマの創造的な肉付け・文言生成・意思決定は tool を呼ぶ agent + knowledge codec の領分とする。plan 区間では agent が primitive tool を順に呼び、tool は当たり動画の抽出と根拠データの構造化出力までを担う。
+**nyaucast core (MCP tool の handler) は LLM を呼ばない。** tool は型付きの決定的操作（データ収集・クエリ・フィルタ・ランキング・構造化）に徹し、テーマの創造的な肉付け・文言生成・意思決定は tool を呼ぶ agent + knowledge codec の領分とする。plan 区間では agent が primitive tool を順に呼び、tool は当たり動画の抽出と根拠データの構造化出力までを担う。
 
 ## Why
 

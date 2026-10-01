@@ -21,7 +21,7 @@ function tableColumns(databasePath: string, table: string): string[] {
 
 describe("local store", () => {
   test("creates and migrates data/local.db when it is first opened", async () => {
-    await withTemporaryDirectoryAsync("nyacast-local-store-", async (channelRoot) => {
+    await withTemporaryDirectoryAsync("nyaucast-local-store-", async (channelRoot) => {
       const store = await openLocalStore(channelRoot);
       await store.close();
       const databasePath = join(channelRoot, "data", "local.db");
@@ -44,7 +44,7 @@ describe("local store", () => {
   });
 
   test("stores no derived progress column in any application table", async () => {
-    await withTemporaryDirectoryAsync("nyacast-local-store-schema-", async (channelRoot) => {
+    await withTemporaryDirectoryAsync("nyaucast-local-store-schema-", async (channelRoot) => {
       const store = await openLocalStore(channelRoot);
       await store.close();
       const databasePath = join(channelRoot, "data", "local.db");
@@ -70,7 +70,7 @@ describe("local store", () => {
   });
 
   test("backs up an existing database before applying pending migrations", async () => {
-    await withTemporaryDirectoryAsync("nyacast-local-store-backup-", async (channelRoot) => {
+    await withTemporaryDirectoryAsync("nyaucast-local-store-backup-", async (channelRoot) => {
       const dataDirectory = join(channelRoot, "data");
       mkdirSync(dataDirectory);
       const databasePath = join(dataDirectory, "local.db");

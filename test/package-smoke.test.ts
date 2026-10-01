@@ -12,7 +12,7 @@ describe("K3 package smoke", () => {
     expect(packedPaths).not.toContainEqual(expect.stringMatching(/\.test\.ts$/));
     expect(packedPaths).not.toContainEqual(expect.stringMatching(/^src\//));
     expect(packedPaths).toEqual(
-      expect.arrayContaining(["package.json", "bin/nyacast.js", "dist/index.js"]),
+      expect.arrayContaining(["package.json", "bin/nyaucast.js", "dist/index.js"]),
     );
     expect(packedPaths).toContainEqual(expect.stringMatching(/^drizzle\/.*\.sql$/));
     const npmMetadata = new Set(["package.json", "README.md", "LICENSE"]);

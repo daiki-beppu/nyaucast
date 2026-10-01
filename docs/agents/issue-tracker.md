@@ -6,7 +6,7 @@ Issues and PRDs for this repo live as GitHub issues. Use the `gh` CLI for all op
 
 ### host 前提: takt
 
-takt は host が供給する開発 orchestration tool であり、nyacast の runtime / package dependency には含めない（ADR-0008）。導入・更新は host 側の責務で、repository の依存管理には現れない。
+takt は host が供給する開発 orchestration tool であり、nyaucast の runtime / package dependency には含めない（ADR-0008）。導入・更新は host 側の責務で、repository の依存管理には現れない。
 
 pipeline を開始する前に、次の preflight を実行する:
 
@@ -17,7 +17,7 @@ takt --version
 
 `command -v takt` で存在を確認できたら、後続の pipeline 手順へ進む。不在の場合は host 側で導入し、preflight をやり直す。`takt --version` の出力は記録として残すだけで、特定の版を進行条件にしない。版の互換確認は、下記「共通の規約」の takt 更新時の `takt workflow doctor` で行う。
 
-nyacast 固有の workflow 資産は持たない — `.takt/` は `config.yaml` のみで、実装は builtin workflow を直用する（[ADR-0008](../adr/0008-takt-dedicated-workflow.md)）。用途ごとの使い分け:
+nyaucast 固有の workflow 資産は持たない — `.takt/` は `config.yaml` のみで、実装は builtin workflow を直用する（[ADR-0008](../adr/0008-takt-dedicated-workflow.md)）。用途ごとの使い分け:
 
 - **新機能・機能拡張の実装** — builtin **`default`**（ADR-0008）。detached HEAD の手動 worktree 内で `takt --pipeline --auto-pr -b issue-<N>-<slug> -w default -i <N>`。
   要求追跡は builtin の Completion Contracts ledger + `SCN-{contract ID}-P/N`（Given/When/Then）構造が持つ。品質装置（5 並列レビュー → review-adjudication → 検証付き remediation → final-gate、test-first）も builtin 側。

@@ -8,7 +8,7 @@ accepted (2026-07-27)
 
 ## Context
 
-ADR-0006 で takt の不採用が決まり、**「区間を歩く主体」が空席になった。** issue #61 は「`nyacast collection produce <id>` を叩いた事実が承認 → 承認記録を書いて takt run を起動する」という設計だったが、その起動先が takt と一緒に消えた。
+ADR-0006 で takt の不採用が決まり、**「区間を歩く主体」が空席になった。** issue #61 は「`nyaucast collection produce <id>` を叩いた事実が承認 → 承認記録を書いて takt run を起動する」という設計だったが、その起動先が takt と一緒に消えた。
 
 同時に、マップ issue #57 の子チケット #60 / #61 / #62 で確定した決定群は **takt 採否と独立に有効**であるにもかかわらず、issue の解決コメントにしか存在せず、実装チケット（#1 / #31 / #32 / #36 ほか）が参照すべき正本が無い。#60 は「原則は採否 ADR に書く」と明示的に申し送っている。
 
@@ -32,20 +32,20 @@ MCP tool は **primitive tool 1 層 + 読み口**で構成する。粗粒度の 
 
 ### 2. `.takt/` を読まない。進捗は実体行から導出する（#61）
 
-nyacast は `.takt/` を一切読まず、read model にミラーもしない。collection の進捗を表す列（`status = planned / produced / published` 等）を**持たない**。進捗は実体行（tracks / master / video / upload …）の存在から read model が導出する。
+nyaucast は `.takt/` を一切読まず、read model にミラーもしない。collection の進捗を表す列（`status = planned / produced / published` 等）を**持たない**。進捗は実体行（tracks / master / video / upload …）の存在から read model が導出する。
 
-collection の成果物はすべて nyacast tool が書く。agent が生成した企画テキストも tool の引数として渡して書かせる。
+collection の成果物はすべて nyaucast tool が書く。agent が生成した企画テキストも tool の引数として渡して書かせる。
 
 ### 3. 承認は「次の区間を起動する CLI 実行」そのもの（#61）
 
 ```
-nyacast collection produce <id>   # 叩いた事実が gate='produce' の承認
-nyacast collection publish <id>   # 叩いた事実が gate='publish' の承認
+nyaucast collection produce <id>   # 叩いた事実が gate='produce' の承認
+nyaucast collection publish <id>   # 叩いた事実が gate='publish' の承認
 ```
 
 `approve` という独立操作は存在しない。**CLI は承認記録を書き、人間が次に取る行動を stdout に示して終わる。agent を起動しない。** agent の発動は人間が Claude Code 側で行い、knowledge codec のトリガー発話がその入口になる。
 
-この分担により **nyacast core は LLM を一切知らない**（ADR-0002）。
+この分担により **nyaucast core は LLM を一切知らない**（ADR-0002）。
 
 ### 4. 再開は頭から再実行し、tool が冪等に受け止める（#61）
 
@@ -98,7 +98,7 @@ CONTEXT.md の `workflow tool` 定義（`produce` = 音源→動画→サムネ 
 
 - **workflow tool を維持し、core が区間を決定論的に回す** — CONTEXT.md の現行記述を最小の修正（区間割りの訂正）で維持できる。しかし LLM 判定が要る箇所（企画・サムネ品質）のたびに区間が分断され、`plan` と `produce` は通しで回せない。加えて #61 が代償として受け入れた「再開のたび agent が全 step を歩き直す LLM トークン代」という記述の前提が崩れる。不採用
 - **ハイブリッド（LLM 判定を含まない `publish` だけ workflow tool 化）** — 決定論的に回せるところは回す案。しかし #62 は publish の入口を「agent が `collection_id` 1 個だけ渡す」前提で設計済みで、形はすでにほぼ同じである。2 つの駆動モデルを codec と実装の両方が覚えるコストに見合わない。不採用
-- **CLI が Claude Code を subprocess spawn する** — 人間の操作が 1 回で済み、非エンジニア向けの導線が単純になる。しかし #64 で経路 B（nyacast が takt を spawn）を落とした理由（ADR-0001 の adapter に厚すぎる / どの agent CLI を使うかを nyacast が決めることになる）がそのまま返る。さらに agent 自身も Bash で同じ CLI を叩けるため、**agent が自分で承認して自分を起動する自己ループ**が開き、Decision 3 の脅威モデルが崩れる。不採用
+- **CLI が Claude Code を subprocess spawn する** — 人間の操作が 1 回で済み、非エンジニア向けの導線が単純になる。しかし #64 で経路 B（nyaucast が takt を spawn）を落とした理由（ADR-0001 の adapter に厚すぎる / どの agent CLI を使うかを nyaucast が決めることになる）がそのまま返る。さらに agent 自身も Bash で同じ CLI を叩けるため、**agent が自分で承認して自分を起動する自己ループ**が開き、Decision 3 の脅威モデルが崩れる。不採用
 - **`collection.next` 的な tool が「次にやるべきこと」を返す** — 安全性は落ちない（agent が無視しても tool が throw する）。しかし「どの順に何をやるか」は knowledge codec の領分であり、tool 側にも置くと ADR-0002 が警戒した判断ロジックの二重化が起きる。不採用（#61）
 - **独立した `approve` 操作を作る** — 承認と実行が時間的に分離し、3 つの事故が生える。特に「承認は collection のどの版に対するものか」を記録して失効判定する仕組みが設計要件として追加される。起動 = 承認ならその要件ごと消える。不採用（#61）
 - **workflow を再開単位に細分し、途中から起動できるようにする** — #60 で「人間ゲート = 区間境界」と決め、区間の粒度をゲート設計に紐付けたばかりである。再開の都合がゲート設計を動かすのは順序が逆。不採用（#61）
