@@ -1,6 +1,6 @@
 # Mutation 監査: Stryker の運用
 
-Stryker（<https://stryker-mutator.io/>）を監査ツールとして運用する際の正書。決定の出典は wayfinder map #343 とその ticket resolution（監査運用は #347、runner 経路は #345、実測は #346）。導入の実装は後続の実装 issue が行う — 本書は仕様として実装に先行して置かれた（issue #351）。
+Stryker（<https://stryker-mutator.io/>）を監査ツールとして運用する際の正書。決定の出典は wayfinder map #343 とその ticket resolution（監査運用は #347、runner 経路は #345、実測は #346）。
 
 ## 位置づけ
 

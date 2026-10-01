@@ -4,9 +4,8 @@ How the engineering skills should consume this repo's domain documentation when 
 
 ## Before exploring, read these
 
-- **`CONTEXT.md`** at the repo root, or
-- **`CONTEXT-MAP.md`** at the repo root if it exists — it points at one `CONTEXT.md` per context. Read each one relevant to the topic.
-- **`docs/adr/`** — read ADRs that touch the area you're about to work in. In multi-context repos, also check `src/<context>/docs/adr/` for context-scoped decisions.
+- **`CONTEXT.md`** at the repo root
+- **`docs/adr/`** — read ADRs that touch the area you're about to work in.
 
 If any of these files don't exist, **proceed silently**. Don't flag their absence; don't suggest creating them upfront. The `/domain-modeling` skill (reached via `/grill-with-docs` and `/improve-codebase-architecture`) creates them lazily when terms or decisions actually get resolved.
 
@@ -21,7 +20,11 @@ Single-context repo (this repo):
 │   ├── 0001-thin-architecture.md
 │   ├── 0002-no-llm-in-core.md
 │   ├── 0003-bun-only-distribution.md
-│   └── 0004-auto-migration.md
+│   ├── 0004-auto-migration.md
+│   ├── 0005-media-processing-foundation.md
+│   ├── 0006-no-takt-for-product-orchestration.md
+│   ├── 0007-collection-lifecycle-execution-model.md
+│   └── 0008-takt-dedicated-workflow.md
 └── src/
 ```
 

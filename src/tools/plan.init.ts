@@ -29,7 +29,13 @@ interface PlanInitDependencies {
 
 const inputSchema = z
   .object({
-    force: z.boolean().optional().default(false),
+    force: z
+      .boolean()
+      .optional()
+      .default(false)
+      .describe(
+        "Recreate an existing collection with the same title. Fails if it already has downstream records.",
+      ),
     title: titleSchema,
   })
   .strict();
@@ -79,7 +85,11 @@ async function initializeNewCollection(title: string, dependencies: PlanInitDepe
 
 export function createPlanInitTool(dependencies: PlanInitDependencies) {
   return {
-    description: "Initialize a flat collection directory and its local-store record.",
+    description:
+      "Create a collection: a flat directory under collections/<id> plus its local-store record. " +
+      "If a collection with the same title exists, returns it unchanged with created: false, unless force is true. " +
+      "With force, the existing directory and record are recreated; this fails when the collection already has downstream records. " +
+      "Returns the collection ID, whether anything was created, and the directory path.",
     handler: async (input: unknown) => {
       const parsed = inputSchema.parse(input);
       const existing = await dependencies.collectionStore.findByTitle(parsed.title);

@@ -34,11 +34,11 @@ nyaucast 固有の workflow 資産は持たない — `.takt/` は `config.yaml`
 
 ## takt に渡す issue の書き方
 
-intake が BLOCKED を返す原因は、文章が曖昧だったことではなく **起票側が決着をつけていない**ことである。監査レポート（`docs/audits/`）は read-only 工程の成果物なので「A するか B する」と選択肢を並べるのが正しい形をしている。それを issue へ写す作業は翻訳ではなく**決定**であり、写経すると未決定がそのまま下流へ漏れる。
+実装が BLOCKED で止まる原因は、文章が曖昧だったことではなく **起票側が決着をつけていない**ことである。監査レポート（`docs/audits/`）は read-only 工程の成果物なので「A するか B する」と選択肢を並べるのが正しい形をしている。それを issue へ写す作業は翻訳ではなく**決定**であり、写経すると未決定がそのまま下流へ漏れる。
 
 **検出器は 1 つ**: 本文を読んだ実装者が「どちらにしますか」と聞き返せる文が 1 つでもあれば、投入せず書き直す。
 
-決められないときは、決めるための実測を先に行う。仕様を書くなら**その仕様が適用される全パターンで実測する** — linked worktree で確認した挙動が独立 clone でも成り立つとは限らない（#288 はこれを見落として 2 度目の BLOCKED を受けた）。
+決められないときは、決めるための実測を先に行う。仕様を書くなら**その仕様が適用される全パターンで実測する** — linked worktree で確認した挙動が独立 clone でも成り立つとは限らない。
 
 本文に置く節:
 
@@ -48,8 +48,6 @@ intake が BLOCKED を返す原因は、文章が曖昧だったことではな�
 - **対象の特定方法** — 行番号を書かない。起票から着手までの間に別 PR がずらす。「現行コードで対象を特定すること」と書く
 
 **1 issue 1 要件系統**。監査 finding を機械的にグルーピングして複数の要件系統を束ねると、実装が発散したときにどちらが原因か切り分けられない。
-
-実証: #287 は 2 要件を束ね、設計指針を書かず、受け入れ基準を定性的な語で書いた結果、3.5 時間で `test/check.test.ts` を 2.7 倍（+2,607 行）に膨張させて中断した。同じ要件をこの節に沿って書き直した #294 は +150 行で完走した。差は issue の書き方だけである。
 
 ## Conventions
 
@@ -95,9 +93,9 @@ Used by `/wayfinder`. The **map** is a single issue with **child** issues as tic
 
 ### 地図から実装への引き渡し
 
-map issue を takt に直接渡す経路（map 直読み intake）は廃止した（map #353 の決定。intake ゲートの廃止は ADR-0008）。**self-contained な実装 issue の起票を正とする**:
+takt には map issue ではなく、**self-contained な実装 issue を起票して渡す**（ADR-0008）:
 
 1. wayfinder が地図を描き終えたら（全 ticket closed・`Not yet specified` が空）、map の決定群を「takt に渡す issue の書き方」の節に従って self-contained な実装 issue へ**翻訳して起票**する。決定の本体は各 ticket の resolution コメントにあり、map の Decisions-so-far は索引として扱う。`Out of scope` は実装対象から明示的に除外する
 2. 起票した実装 issue を経路へ渡す — feature は `takt --pipeline --auto-pr -b issue-<N>-<slug> -w default -i <N>`、fix は `issue-direct`
 
-実装 issue は map を参照しなくても着手できる内容にする。決定の未決を issue へ写さない（写すと下流で BLOCKED 相当の手戻りになる。#287 vs #294 の実証）。地図の claim / resolve / close は wayfinder セッションの責務のまま。
+実装 issue は map を参照しなくても着手できる内容にする。決定の未決を issue へ写さない（写すと下流で BLOCKED 相当の手戻りになる）。地図の claim / resolve / close は wayfinder セッションの責務のまま。
