@@ -4,7 +4,7 @@
 
 ## Status
 
-accepted (2026-08-22。takt 0.59.0 で廃止された Finding Contract を review-adjudication / verified remediation / final-gate へ移行し、0.60.0 の capability / instruction composition / final-gate contract に追従) / 改訂 2026-08-26（#368。map #353「開発基盤スクラップアンドビルド」の決定を実装に先行して反映 — **主旨転換**: 「takt の builtin を基礎に、nyaucast 固有の開発ゲートだけを重ねる」→「builtin 直用。nyaucast 固有の workflow 資産を持たない」。自作 workflow 5 本・steps / facets / schemas・監査 workflow 2 本を全廃する。骨子は issue #358 の resolution、前提事実は #357 の調査） / 改訂 2026-10-01（#441。feature 経路に指定していた builtin `experimental` が nrslib/takt#1424 で `default` に統合されたため、workflow 名を `default` に改める。起動経路は変えない）
+accepted (2026-08-22。takt 0.59.0 で廃止された Finding Contract を review-adjudication / verified remediation / final-gate へ移行し、0.60.0 の capability / instruction composition / final-gate contract に追従) / 改訂 2026-08-26（#368。map #353「開発基盤スクラップアンドビルド」の決定を実装に先行して反映 — **主旨転換**: 「takt の builtin を基礎に、nyaucast 固有の開発ゲートだけを重ねる」→「builtin 直用。nyaucast 固有の workflow 資産を持たない」。自作 workflow 5 本・steps / facets / schemas・監査 workflow 2 本を全廃する。骨子は issue #358 の resolution、前提事実は #357 の調査） / 改訂 2026-10-01（#441。feature 経路に指定していた builtin `experimental` が nrslib/takt#1424 で `default` に統合されたため、workflow 名を `default` に改める。起動経路は変えない） / 改訂 2026-10-01（#450。provider 割り当てがグローバルの `~/.takt/runtime.yaml` へ移ったことに合わせ、`config.yaml` に残すキーの記述から provider_routing / personas を外す）
 
 ## Context
 
@@ -18,7 +18,7 @@ map #353 の再検討（#357 の実態調査 + #358 の決定）で前提が変�
 
 ### 1. workflow 資産の全廃
 
-`.takt/` は `config.yaml`（provider_routing / personas）のみ残す。自作 workflow 5 本（`tayk-feature` / `tayk-fix` / `tayk-intake` / 監査 2 本）と steps / facets / schemas を全廃する。builtin の一般 prompt をコピーした facet・wrapper workflow は今後も作らない。
+`.takt/` は `config.yaml` のみ残す。provider / model の割り当てはグローバルの `~/.takt/runtime.yaml` が持ち、`config.yaml` には provider 系のキー（provider / model / provider_routing / persona_providers）を書かない（混在すると "Mixed provider configuration" で agent 実行前に止まる）。自作 workflow 5 本（`tayk-feature` / `tayk-fix` / `tayk-intake` / 監査 2 本）と steps / facets / schemas を全廃する。builtin の一般 prompt をコピーした facet・wrapper workflow は今後も作らない。
 
 ### 2. 経路
 

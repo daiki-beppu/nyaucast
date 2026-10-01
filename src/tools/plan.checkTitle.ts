@@ -4,7 +4,10 @@ export interface CollectionTitleLookup {
   findCollectionByTitle(title: string): Promise<{ id: string; title: string } | undefined>;
 }
 
-export const titleSchema = z.string().max(100);
+export const titleSchema = z
+  .string()
+  .max(100)
+  .describe("Collection title, at most 100 characters.");
 
 async function assertTitleAvailable(title: string, lookup: CollectionTitleLookup): Promise<void> {
   titleSchema.parse(title);
@@ -18,7 +21,10 @@ const outputSchema = z.object({ ok: z.literal(true) }).strict();
 
 export function createPlanCheckTitleTool(lookup: CollectionTitleLookup) {
   return {
-    description: "Validate that a collection title is within the limit and unused.",
+    description:
+      "Check that a collection title is at most 100 characters and not already used by another collection. " +
+      "Returns { ok: true } when the title is available; throws an error when it is too long or already in use. " +
+      "Read-only: it does not reserve the title. Call plan.init to create the collection.",
     handler: async (input: unknown) => {
       const parsed = inputSchema.parse(input);
       await assertTitleAvailable(parsed.title, lookup);
