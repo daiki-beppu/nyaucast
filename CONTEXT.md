@@ -1,6 +1,6 @@
 # nyaucast
 
-YouTube チャンネル運営を自動化するツールキット。skill に蓄積されたワークフロー知識を型付き MCP tool に結晶化する、仕様ベースの新規プロダクト（Python 版 `youtube-channels-automation` の移植ではない — 出自と転換の経緯は旧リポの ADR-0021 を参照）。本ファイルは実装詳細ではなく、本プロジェクト固有の用語の正書を定める **グロッサリ**である。
+非属人チャンネルの運営を自動化するツールキット。制作物は音楽の collection と解説動画のエピソードの 2 種類で、YouTube・TikTok・Instagram・X へ配信する（ADR-0009）。skill に蓄積されたワークフロー知識を型付き MCP tool に結晶化する、仕様ベースの新規プロダクト（Python 版 `youtube-channels-automation` の移植ではない — 出自と転換の経緯は旧リポの ADR-0021 を参照）。本ファイルは実装詳細ではなく、本プロジェクト固有の用語の正書を定める **グロッサリ**である。
 
 用語は旧リポ (00-automation) の CONTEXT.md から引き継ぎ・更新したもの。旧リポ固有の用語（cutover / Phase / Tier / Chrome 拡張系）は持ち込まない。
 
@@ -11,11 +11,11 @@ YouTube チャンネル運営を自動化するツールキット。skill に蓄
 _Avoid_: youtube-channels-automation, yt-automation, yt (旧 bin 名)
 
 **dogfood**:
-first-party 2 リポ (soulful-grooves / deepfocus365) で collection のフルライフサイクル 1 周（TTP 収集・分析 → 企画 → サムネ生成 → 音源生成 → MIX/マスタリング → 動画生成 → upload → 公開後運用）を nyaucast だけで実走させる受け入れ検証。`v0.1.0` の唯一のリリースゲート。期間ではなく完走で判定する。
+first-party の解説動画チャンネルで、エピソード lifecycle を 1 周させ、4 つの SNS のアカウントへ公開するまでを nyaucast だけで実走させる受け入れ検証。`v0.1.0` の唯一のリリースゲート。期間ではなく完走で判定する。音楽チャンネル (soulful-grooves / deepfocus365) での collection lifecycle の 1 周は `v0.2` 以降のゲートに回す (ADR-0009)。
 _Avoid_: ベータ, トライアル, 試運転
 
 **critical regression**:
-リリースをブロックする欠陥。**3 種のみ** — ①誤公開・誤メタデータ ②データ破壊 (analytics 履歴 / collection 成果物) ③auth 破壊。これ以外はリリースをブロックしない bug として issue 化する。
+リリースをブロックする欠陥。**3 種のみ** — ①誤公開・誤メタデータ (投稿先アカウントの取り違えを含む) ②データ破壊 (analytics 履歴 / collection・エピソードの成果物) ③auth 破壊。これ以外はリリースをブロックしない bug として issue 化する。
 _Avoid_: 重大バグ (範囲が曖昧)
 
 **first-party (下流)**:
@@ -44,7 +44,7 @@ collection lifecycle の GO/NO-GO ゲートを人間が越えた記録。`nyauca
 _Avoid_: approve, 承認フロー (独立した承認操作は作らない。起動 = 承認)
 
 **knowledge codec**:
-「いつ・どの MCP tool を・どう使うか」のドメイン知識パッケージ。MCP tool の description (WHAT) に対し、knowledge codec は WHEN/HOW を提供する。粗粒度の workflow tool を置かないため (ADR-0007)、**区間を歩く手順を持つ唯一の担い手**でもある。5 本構成: `collection-lifecycle` / `channel-management` / `analytics` / `content-quality` / `distribution`。**v0.1 で実装するのは `collection-lifecycle` のみ**。下流へ配布する操作面は codec のみで、旧個別 skill は配布しない。旧 skill は codec の設計材料として扱う。
+「いつ・どの MCP tool を・どう使うか」のドメイン知識パッケージ。MCP tool の description (WHAT) に対し、knowledge codec は WHEN/HOW を提供する。粗粒度の workflow tool を置かないため (ADR-0007)、**区間を歩く手順を持つ唯一の担い手**でもある。6 本構成: `collection-lifecycle` / `episode-lifecycle` / `channel-management` / `analytics` / `content-quality` / `distribution`。`distribution` は SNS ごとの投稿文・投稿時刻・AI 生成の開示を扱い、collection とエピソードの両方が使う。**v0.1 で実装するのは `episode-lifecycle` と `distribution`**。下流へ配布する操作面は codec のみで、旧個別 skill は配布しない。旧 skill は codec の設計材料として扱う。
 _Avoid_: skill guide, routing layer (knowledge codec は知識の bundled 提供であり、単なるルーティングではない)
 
 **adapter**:
@@ -68,7 +68,7 @@ _Avoid_: config.default.yaml, deep merge (Python 版の旧方式)
 ## データ
 
 **データ 4 分類**:
-チャンネルリポのデータの SSOT を種類で機械的に決める分類。① 宣言的インテント (config 等、SSOT = git 管理 JSON) / ② ランタイム状態・履歴 (SSOT = local store) / ③ 生成成果物 (再生成可能。キャッシュ扱いで SSOT を持たない) / ④ リモート実状態 (SSOT = YouTube。ローカルにあるのは reconcile 対象のミラー)。「どこを見ればいいか」は種類の判定だけで答えが出る。
+チャンネルリポのデータの SSOT を種類で機械的に決める分類。① 宣言的インテント (config 等、SSOT = git 管理 JSON) / ② ランタイム状態・履歴 (SSOT = local store) / ③ 生成成果物 (再生成可能。キャッシュ扱いで SSOT を持たない) / ④ リモート実状態 (SSOT = 各 SNS。ローカルにあるのは reconcile 対象のミラー)。「どこを見ればいいか」は種類の判定だけで答えが出る。
 _Avoid_: 「SSOT は DB に全部集約」(① の git レビュー可能性と ④ の原理的なリモート性を壊す)
 
 **local store**:
@@ -125,3 +125,55 @@ _Avoid_: channel registry への既存リポ登録（bootstrap は新規作成�
 **dashboard** (v0.2 以降):
 全 first-party チャンネルの analytics スナップショットを一覧表示するローカル Web UI。データ収集は行わずビューア専用 — 読み口は各チャンネルの local store (read model)。channel registry で対象チャンネルを解決する。
 _Avoid_: analytics dashboard (analytics は収集+分析を含意する。dashboard は表示のみ)
+
+## 配信
+
+**チャンネル**:
+コンテンツの人格・ジャンルの単位（例: 技術解説チャンネル）。1 つのチャンネルリポに対応し、複数の SNS のアカウントを束ねる。
+_Avoid_: アカウント（SNS 側の認証単位は別概念）
+
+**アカウント**:
+1 つの SNS 上の投稿先であり、認証の単位（例: TikTok の @xxx）。必ずどれか 1 つのチャンネルに属する。YouTube のチャンネルも、本ツールではアカウントとして扱う。
+_Avoid_: チャンネル（YouTube 上の呼び名であっても）
+
+**投稿**:
+1 本のカットを 1 つのアカウントへ公開した単位。予定時刻・公開状態・削除などの状態は投稿が持ち、カットやエピソードには波及しない。1 本のカットを複数のアカウントへ投稿するとき、ファイルは共通で、投稿文だけをアカウントごとに書き分ける。
+_Avoid_: アップロード（投稿の手段の一部にすぎない）
+
+## 解説動画の制作
+
+**エピソード**:
+1 つの題材から作る解説動画の制作物一式。長尺 1 本とショート N 本のカットを含む。
+_Avoid_: collection（楽曲群を指す音楽専用の語）、動画（長尺かショートかが曖昧）
+
+**カット**:
+エピソードから書き出した 1 本の動画ファイル。種類は長尺・切り抜きショート・専用ショートの 3 つ。
+_Avoid_: 動画、クリップ
+
+**切り抜きショート**:
+長尺カットの一区間を、縦型のショートとして書き出したカット。
+_Avoid_: クリップ
+
+**専用ショート**:
+長尺の台本の見どころをもとに、縦型のレイアウトで新たに組み直したカット。
+_Avoid_: 縦型版（切り抜きショートも縦型なので区別できない）
+
+**エピソード lifecycle**:
+エピソードの制作フロー。人間の GO/NO-GO ゲートで区切られる:
+`題材収集 → 企画 →[企画ゲート]→ 台本・図解 → 音声 → 描画 →[公開ゲート]→ 投稿 → 公開後運用`。
+題材収集は TTP で当たる型とジャンルを決め、フィードから個別の題材を選ぶ。区間を歩くのは knowledge codec を読んだ agent (ADR-0007)。
+_Avoid_: pipeline, workflow
+
+**企画ゲート**:
+エピソードを「作る / 作らない」を人間が決めるゲート。
+
+**公開ゲート**:
+プレビューを見たうえで、エピソードのカットを「公開する / しない」を人間が決めるゲート。ショートの候補ごとに、切り抜きショートと専用ショートのどちらを採用するかもここで選ぶ。採用しなかったカットの投稿は作らない。サムネイルと投稿の予定時刻もここで確定する。
+_Avoid_: 投稿承認
+
+**ボイス**:
+チャンネルに固定されたナレーションの声。音声合成のサービスと声の組で決まる。チャンネルの「顔」の代わりであり、エピソードごとには変えない。
+
+**BGM プール**:
+チャンネルごとに用意する、ループ再生できるインスト曲の集まり。エピソードの BGM はここから選び、エピソードごとには生成しない。プールの曲は Content ID に登録しない。
+_Avoid_: 音楽ライブラリ（第三者に配布する素材集を連想させる）
