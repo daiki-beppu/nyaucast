@@ -4,7 +4,7 @@
 
 ## Status
 
-accepted (2026-07-08) / 改訂 2026-08-27（#387。tracer 実装でディレクトリ・local store・channel registry schema の規約を確定）
+accepted (2026-07-08) / 改訂 2026-08-27（#387。tracer 実装でディレクトリ・local store・channel registry schema の規約を確定）/ 改訂 2026-10-01（#463。決定 8 に解説動画のゲート事実の表を追加）
 
 ## Context
 
@@ -22,7 +22,7 @@ accepted (2026-07-08) / 改訂 2026-08-27（#387。tracer 実装でディレク�
 8. **tracer で確定した配置と schema**:
    - tool は `src/tools/<domain>.<name>.ts`、tool 単体テストは同層の `<domain>.<name>.test.ts`
    - collection 成果物は channel root 直下の `collections/<collection_id>/` にフラット配置する
-   - local store は `<CHANNEL_DIR>/data/local.db`。`collections` は `id` / `title`、produce 区間の成果物実体行は `thumbnails(collection_id, path, created_at)`、ゲート事実は append-only の `approvals(collection_id, gate, approved_at)` / `rejections(collection_id, gate, rejected_at)` に保存する。進捗列は持たない
+   - local store は `<CHANNEL_DIR>/data/local.db`。`collections` は `id` / `title`、produce 区間の成果物実体行は `thumbnails(collection_id, path, created_at)`、ゲート事実は append-only の `approvals(collection_id, gate, approved_at)` / `rejections(collection_id, gate, rejected_at)` に保存する。進捗列は持たない。解説動画のゲート事実は、同形の append-only な表を解説動画専用に別に持つ（ADR-0009 決定 7。表名は実装 ticket で決める）
    - channel registry は `~/.config/nyaucast/channels.json` の絶対パス文字列の JSON 配列とする
 
 ## Why
