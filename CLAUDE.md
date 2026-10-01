@@ -41,7 +41,7 @@ YouTube チャンネル運営を自動化するツールキット。skill に蓄
 
 ## v0.1.0 のスコープ
 
-ゲートは first-party の解説動画チャンネルでエピソード lifecycle を 1 周させ（題材収集 → 企画 → 台本・図解 → 音声 → 描画 → 投稿 → 公開後運用）、YouTube・TikTok・Instagram・X の 4 SNS へ公開するまでを dogfood 完走すること（ADR-0009）。`episode-lifecycle` codec と `distribution` codec は v0.1 の中心成果物とする。**それ以外（音楽チャンネルでの collection lifecycle 1 周 / 自チャンネル実績分析 / dashboard / Remotion / 上記 2 つ以外の codec）は v0.2 以降**に 1 リリース 1 テーマで直列に積む。スコープを広げる提案は issue 化して先送りする。
+ゲートは first-party の解説動画チャンネルで解説動画 lifecycle を 1 周させ（題材収集 → 企画 → 台本・図解 → 音声 → 描画 → 投稿 → 公開後運用）、YouTube・TikTok・Instagram・X の 4 SNS へ公開するまでを dogfood 完走すること（ADR-0009）。`explainer-lifecycle` codec と `distribution` codec は v0.1 の中心成果物とする。**それ以外（音楽チャンネルでの collection lifecycle 1 周 / 自チャンネル実績分析 / dashboard / Remotion / 上記 2 つ以外の codec）は v0.2 以降**に 1 リリース 1 テーマで直列に積む。スコープを広げる提案は issue 化して先送りする。
 
 ## Agent 向けドキュメント
 
