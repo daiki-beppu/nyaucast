@@ -19,9 +19,9 @@ function runAuthCli(
   return spawnSync(
     process.execPath,
     [
-      "--conditions=nyacast-source",
+      "--conditions=nyaucast-source",
       "--experimental-strip-types",
-      resolve(packageRoot, "bin", "nyacast.js"),
+      resolve(packageRoot, "bin", "nyaucast.js"),
       "auth",
       ...arguments_,
     ],
@@ -34,21 +34,21 @@ function runAuthCli(
   );
 }
 
-describe("nyacast auth CLI", () => {
+describe("nyaucast auth CLI", () => {
   test.each([{ arguments_: [] }, { arguments_: [channel, "extra"] }])(
     "requires exactly one channel argument",
     ({ arguments_ }) => {
-      withTemporaryDirectory("nyacast-auth-cli-args-", (directory) => {
+      withTemporaryDirectory("nyaucast-auth-cli-args-", (directory) => {
         const result = runAuthCli(directory, directory, arguments_);
 
         expect(result.status).not.toBe(0);
-        expect(result.stderr).toContain("usage: nyacast auth <channel>");
+        expect(result.stderr).toContain("usage: nyaucast auth <channel>");
       });
     },
   );
 
   test("reports the fixed client secrets location without using environment or repository fallbacks", () => {
-    withTemporaryDirectory("nyacast-auth-cli-location-", (directory) => {
+    withTemporaryDirectory("nyaucast-auth-cli-location-", (directory) => {
       const homeDirectory = join(directory, "home");
       const repository = join(directory, "channel-repository");
       const repositoryAuth = join(repository, "auth");
@@ -64,7 +64,7 @@ describe("nyacast auth CLI", () => {
       });
 
       expect(result.status).not.toBe(0);
-      expect(result.stderr).toContain(`~/.config/nyacast/${channel}/client_secrets.json`);
+      expect(result.stderr).toContain(`~/.config/nyaucast/${channel}/client_secrets.json`);
       expect(result.stderr).not.toContain(homeDirectory);
       expect(result.stderr).not.toContain(repositoryAuth);
       expect(result.stderr).not.toContain(clientSecret);

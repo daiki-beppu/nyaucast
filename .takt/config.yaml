@@ -1,10 +1,10 @@
-# nyacast リポジトリの takt 設定
+# nyaucast リポジトリの takt 設定
 # language はグローバル設定 (~/.takt/config.yaml)、provider / model の割り当てと companion は
 # グローバルの ~/.takt/runtime.yaml を継承する。ここに provider 系のキー（provider / model /
 # provider_routing / persona_providers）を書くと runtime.yaml と混在して
 # "Mixed provider configuration" で agent 実行前に止まる。
 #
-# 実装は builtin workflow を直用し、nyacast 固有の workflow 資産は持たない（ADR-0008）。
+# 実装は builtin workflow を直用し、nyaucast 固有の workflow 資産は持たない（ADR-0008）。
 # workflow の使い分けは docs/agents/issue-tracker.md を参照。
 draft_pr: false
 base_branch: main

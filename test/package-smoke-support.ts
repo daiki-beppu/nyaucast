@@ -105,8 +105,8 @@ function toolNamesFrom(result: unknown): string[] {
 }
 
 export async function inspectInstalledPackage(): Promise<PackageSmokeResult> {
-  return withTemporaryDirectoryAsync("nyacast-package-smoke-", async (directory) => {
-    const packed = spawnSync("pnpm", ["pack", "--json", "--out", join(directory, "nyacast.tgz")], {
+  return withTemporaryDirectoryAsync("nyaucast-package-smoke-", async (directory) => {
+    const packed = spawnSync("pnpm", ["pack", "--json", "--out", join(directory, "nyaucast.tgz")], {
       cwd: packageRoot,
       encoding: "utf8",
       env: { ...process.env, VP_GIT_HOOKS: "0" },
@@ -119,7 +119,7 @@ export async function inspectInstalledPackage(): Promise<PackageSmokeResult> {
     mkdirSync(consumer);
     writeFileSync(
       join(consumer, "package.json"),
-      `${JSON.stringify({ name: "nyacast-smoke-consumer", private: true })}\n`,
+      `${JSON.stringify({ name: "nyaucast-smoke-consumer", private: true })}\n`,
     );
     const installed = spawnSync(
       "pnpm",
@@ -129,7 +129,7 @@ export async function inspectInstalledPackage(): Promise<PackageSmokeResult> {
     requireSuccess("isolated pnpm install", installed);
 
     const packageDirectory = join(consumer, "node_modules", manifest.name);
-    const server = spawn(process.execPath, [join(packageDirectory, "bin", "nyacast.js"), "mcp"], {
+    const server = spawn(process.execPath, [join(packageDirectory, "bin", "nyaucast.js"), "mcp"], {
       cwd: consumer,
       env: process.env,
       stdio: "pipe",
@@ -142,7 +142,7 @@ export async function inspectInstalledPackage(): Promise<PackageSmokeResult> {
         method: "initialize",
         params: {
           capabilities: {},
-          clientInfo: { name: "nyacast-package-smoke", version: "1.0.0" },
+          clientInfo: { name: "nyaucast-package-smoke", version: "1.0.0" },
           protocolVersion: "2025-06-18",
         },
       });

@@ -29,9 +29,9 @@ function runCollectionCli(
   return spawnSync(
     process.execPath,
     [
-      "--conditions=nyacast-source",
+      "--conditions=nyaucast-source",
       "--experimental-strip-types",
-      resolve(packageRoot, "bin", "nyacast.js"),
+      resolve(packageRoot, "bin", "nyaucast.js"),
       "collection",
       ...arguments_,
     ],
@@ -48,11 +48,11 @@ function cliEnvironment(path: string): NodeJS.ProcessEnv {
   return { ...process.env, PATH: path };
 }
 
-describe("nyacast collection CLI", () => {
+describe("nyaucast collection CLI", () => {
   test.each(["produce", "publish"] as const)(
     "%s records one approval and repeated execution succeeds without another record",
     async (gate) => {
-      await withTemporaryDirectoryAsync("nyacast-collection-approval-", async (channelRoot) => {
+      await withTemporaryDirectoryAsync("nyaucast-collection-approval-", async (channelRoot) => {
         await seedCollection(channelRoot);
 
         const first = runCollectionCli(channelRoot, [gate, collectionId], cliEnvironment(""));
@@ -81,7 +81,7 @@ describe("nyacast collection CLI", () => {
   );
 
   test.each(["produce", "publish"] as const)("%s does not invoke an agent", async (gate) => {
-    await withTemporaryDirectoryAsync("nyacast-collection-no-agent-", async (channelRoot) => {
+    await withTemporaryDirectoryAsync("nyaucast-collection-no-agent-", async (channelRoot) => {
       await seedCollection(channelRoot);
       const invocationRecord = resolve(channelRoot, "agent-invocation");
       const agentExecutable = resolve(channelRoot, "claude");
@@ -99,7 +99,7 @@ describe("nyacast collection CLI", () => {
   });
 
   test("reject treats produce as the rejection gate rather than an approval command", async () => {
-    await withTemporaryDirectoryAsync("nyacast-collection-reject-", async (channelRoot) => {
+    await withTemporaryDirectoryAsync("nyaucast-collection-reject-", async (channelRoot) => {
       await seedCollection(channelRoot);
 
       const result = runCollectionCli(
@@ -112,7 +112,7 @@ describe("nyacast collection CLI", () => {
       expect(result.stdout).toBe(
         `NO-GO を記録しました: collection ${collectionId} / gate=produce\n` +
           "この collection は produce ゲートで停止します。判断を覆して先へ進める場合は\n" +
-          `nyacast collection produce ${collectionId} を実行してください（NO-GO より後に承認を積むと覆ります）。\n`,
+          `nyaucast collection produce ${collectionId} を実行してください（NO-GO より後に承認を積むと覆ります）。\n`,
       );
       const store = await openLocalStore(channelRoot);
       try {
@@ -127,7 +127,7 @@ describe("nyacast collection CLI", () => {
   });
 
   test("repeating a current rejection reports success without appending a row", async () => {
-    await withTemporaryDirectoryAsync("nyacast-collection-repeat-reject-", async (channelRoot) => {
+    await withTemporaryDirectoryAsync("nyaucast-collection-repeat-reject-", async (channelRoot) => {
       await seedCollection(channelRoot);
       expect(
         runCollectionCli(channelRoot, ["reject", "publish", collectionId], cliEnvironment(""))
@@ -155,7 +155,7 @@ describe("nyacast collection CLI", () => {
 
   test("reject appends a new record after approval has overturned the previous rejection", async () => {
     await withTemporaryDirectoryAsync(
-      "nyacast-collection-reject-after-approval-",
+      "nyaucast-collection-reject-after-approval-",
       async (channelRoot) => {
         await seedCollection(channelRoot);
         expect(
@@ -176,7 +176,7 @@ describe("nyacast collection CLI", () => {
         expect(rejectedAgain.stdout).toBe(
           `NO-GO を記録しました: collection ${collectionId} / gate=produce\n` +
             "この collection は produce ゲートで停止します。判断を覆して先へ進める場合は\n" +
-            `nyacast collection produce ${collectionId} を実行してください（NO-GO より後に承認を積むと覆ります）。\n`,
+            `nyaucast collection produce ${collectionId} を実行してください（NO-GO より後に承認を積むと覆ります）。\n`,
         );
         const store = await openLocalStore(channelRoot);
         try {
@@ -189,7 +189,7 @@ describe("nyacast collection CLI", () => {
   });
 
   test("rejects an invalid rejection gate without writing a gate fact", async () => {
-    await withTemporaryDirectoryAsync("nyacast-collection-invalid-gate-", async (channelRoot) => {
+    await withTemporaryDirectoryAsync("nyaucast-collection-invalid-gate-", async (channelRoot) => {
       await seedCollection(channelRoot);
 
       const result = runCollectionCli(
@@ -219,7 +219,7 @@ describe("nyacast collection CLI", () => {
     { arguments_: ["produce", "01JMISSING0000000000000000"] },
     { arguments_: ["reject", "produce", "01JMISSING0000000000000000"] },
   ])("rejects a command for a missing collection", async ({ arguments_ }) => {
-    await withTemporaryDirectoryAsync("nyacast-collection-missing-", async (channelRoot) => {
+    await withTemporaryDirectoryAsync("nyaucast-collection-missing-", async (channelRoot) => {
       const store = await openLocalStore(channelRoot);
       await store.close();
 

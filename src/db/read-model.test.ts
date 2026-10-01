@@ -27,7 +27,7 @@ async function createStore(channelRoot: string) {
 
 describe("local store read model", () => {
   test("derives that a newly initialized collection awaits produce approval", async () => {
-    await withTemporaryDirectoryAsync("nyacast-progress-", async (channelRoot) => {
+    await withTemporaryDirectoryAsync("nyaucast-progress-", async (channelRoot) => {
       const store = await createStore(channelRoot);
 
       await expect(deriveCollectionProgress(store, collectionId)).resolves.toMatchObject({
@@ -39,7 +39,7 @@ describe("local store read model", () => {
   });
 
   test("a rejection with no approval terminates collection progress", async () => {
-    await withTemporaryDirectoryAsync("nyacast-rejected-", async (channelRoot) => {
+    await withTemporaryDirectoryAsync("nyaucast-rejected-", async (channelRoot) => {
       const store = await createStore(channelRoot);
       await recordRejection(
         store,
@@ -55,7 +55,7 @@ describe("local store read model", () => {
   });
 
   test("an approval later than the latest rejection clears termination", async () => {
-    await withTemporaryDirectoryAsync("nyacast-approved-after-rejection-", async (channelRoot) => {
+    await withTemporaryDirectoryAsync("nyaucast-approved-after-rejection-", async (channelRoot) => {
       const store = await createStore(channelRoot);
       await recordRejection(
         store,
@@ -76,7 +76,7 @@ describe("local store read model", () => {
   });
 
   test("an approval at the same instant as the latest rejection keeps progress terminated", async () => {
-    await withTemporaryDirectoryAsync("nyacast-same-time-gates-", async (channelRoot) => {
+    await withTemporaryDirectoryAsync("nyaucast-same-time-gates-", async (channelRoot) => {
       const store = await createStore(channelRoot);
       const clock = { now: () => new Date("2026-08-27T00:00:00.000Z") };
       await recordRejection(store, { collectionId, gate: "produce" }, clock);
@@ -90,7 +90,7 @@ describe("local store read model", () => {
   });
 
   test("awaits publish approval only after a thumbnail artifact exists", async () => {
-    await withTemporaryDirectoryAsync("nyacast-thumbnail-progress-", async (channelRoot) => {
+    await withTemporaryDirectoryAsync("nyaucast-thumbnail-progress-", async (channelRoot) => {
       const store = await createStore(channelRoot);
       await recordApproval(
         store,

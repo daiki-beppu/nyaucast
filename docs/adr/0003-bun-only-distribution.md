@@ -8,11 +8,11 @@ accepted (2026-07-11) / 改訂 2026-08-02（#185 #113。npm CLI の配布互換�
 
 ## Context
 
-ADR-0001 は当初「runtime は Bun」と定めたが、配布実行モデルは未確定だった。CONTEXT.md の canonical 起動は `npx`/`nlx` 互換の `nyacast <cmd>` であり、`npx` の bin 実行は Node を前提とするため、「利用者マシンに Bun を必須とするか、出荷物を Node 互換 JS にするか」の決定が必要になった。v0.1.0 の利用者は first-party チャンネルリポのみ（external user は Python 版に留まる）。開発は AI agent が主体で、機械的に強制できない規約はレビュー指摘面になる（ADR-0001 の教訓）。初版はこの前提の下で「Bun 必須配布・ビルドレス TS 直接出荷・bin のみ Node 委譲ランチャ」を採った。
+ADR-0001 は当初「runtime は Bun」と定めたが、配布実行モデルは未確定だった。CONTEXT.md の canonical 起動は `npx`/`nlx` 互換の `nyaucast <cmd>` であり、`npx` の bin 実行は Node を前提とするため、「利用者マシンに Bun を必須とするか、出荷物を Node 互換 JS にするか」の決定が必要になった。v0.1.0 の利用者は first-party チャンネルリポのみ（external user は Python 版に留まる）。開発は AI agent が主体で、機械的に強制できない規約はレビュー指摘面になる（ADR-0001 の教訓）。初版はこの前提の下で「Bun 必須配布・ビルドレス TS 直接出荷・bin のみ Node 委譲ランチャ」を採った。
 
 ### 改訂の経緯（2026-08-25 / #351）
 
-wayfinder map #343「Stryker mutation testing 導入」の 2 決定が旧決定 1・4 の改訂を要求した。① ランタイム戦略の再検討（#349）: nyacast を有償ツールとして公開する意向により「利用者に Bun を強制しない」が長期方針となり、配布物コードを Node 互換 API のみで書く「Node 互換表面」を定義して lint で機械強制する。② runner 経路の決定（#345）: Stryker の公式 bun runner が存在せず、監査ツールとしての Stryker 導入の現実的経路は公式 vitest runner のみのため、テスト全層を vitest（Node 実行）へ統合する。この時点では実行ランタイムは Bun のままだった。
+wayfinder map #343「Stryker mutation testing 導入」の 2 決定が旧決定 1・4 の改訂を要求した。① ランタイム戦略の再検討（#349）: nyaucast を有償ツールとして公開する意向により「利用者に Bun を強制しない」が長期方針となり、配布物コードを Node 互換 API のみで書く「Node 互換表面」を定義して lint で機械強制する。② runner 経路の決定（#345）: Stryker の公式 bun runner が存在せず、監査ツールとしての Stryker 導入の現実的経路は公式 vitest runner のみのため、テスト全層を vitest（Node 実行）へ統合する。この時点では実行ランタイムは Bun のままだった。
 
 ### 改訂の経緯（2026-08-26 / #368）
 
@@ -59,7 +59,7 @@ map #353「開発基盤スクラップアンドビルド」で **bun の完全�
 
 ## Related
 
-- ADR-0001（runtime は Node / 境界で変換）/ CONTEXT.md「nyacast」「first-party (下流)」「external user」「Node 互換表面」「mutation testing」「改変拒否契約テスト」
+- ADR-0001（runtime は Node / 境界で変換）/ CONTEXT.md「nyaucast」「first-party (下流)」「external user」「Node 互換表面」「mutation testing」「改変拒否契約テスト」
 - wayfinder map #353「開発基盤スクラップアンドビルド」とその ticket #354（ツールチェーン供給 — Node 版管理の出所）/ #363（bun 撤去の範囲と後継 — 決定 1〜5 改訂の出所）/ #364（Node type stripping 実測。findings: `docs/research/node-type-stripping.md`）/ #365（pnpm 事実調査。findings: `docs/research/pnpm-toolchain.md`）/ #362（Vite+ 実態調査。findings: `docs/research/vite-plus.md`）
 - wayfinder map #343「Stryker mutation testing 導入」（2026-08-25 改訂の出所。#345 / #349 / #351）
 - issue #368（本改訂の docs 先行反映）/ `docs/agents/mutation-audit.md`（mutation 監査の運用）

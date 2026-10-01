@@ -40,7 +40,7 @@ function gateOperationMessage(
   return (
     `NO-GO を記録しました: collection ${collectionId} / gate=${gate}\n` +
     `この collection は ${gate} ゲートで停止します。判断を覆して先へ進める場合は\n` +
-    `nyacast collection ${gate} ${collectionId} を実行してください（NO-GO より後に承認を積むと覆ります）。\n`
+    `nyaucast collection ${gate} ${collectionId} を実行してください（NO-GO より後に承認を積むと覆ります）。\n`
   );
 }
 
@@ -63,12 +63,12 @@ async function runGateOperation(
 async function runCollection(arguments_: string[]): Promise<void> {
   const subcommand = arguments_[0];
   if (subcommand === "produce" || subcommand === "publish") {
-    requireArguments(arguments_, 2, `nyacast collection ${subcommand} <id>`);
+    requireArguments(arguments_, 2, `nyaucast collection ${subcommand} <id>`);
     await runGateOperation(process.cwd(), subcommand, arguments_[1] as string, "approval");
     return;
   }
   if (subcommand === "reject") {
-    requireArguments(arguments_, 3, "nyacast collection reject <gate> <id>");
+    requireArguments(arguments_, 3, "nyaucast collection reject <gate> <id>");
     await runGateOperation(
       process.cwd(),
       parseGate(arguments_[1]),
@@ -102,7 +102,7 @@ async function runMcp(): Promise<void> {
 async function runAuth(command: string, arguments_: string[]): Promise<void> {
   // fallow-ignore-next-line code-duplication -- Top-level auth dispatch and collection existence checks have different effects.
   if (command !== "auth") throw new Error(`unknown command: ${command}`);
-  requireArguments(arguments_, 1, "nyacast auth <channel>");
+  requireArguments(arguments_, 1, "nyaucast auth <channel>");
   await createProductionYouTubeAuth().authenticate(arguments_[0] as string);
 }
 
@@ -112,7 +112,7 @@ async function main(): Promise<void> {
     return;
   }
   if (command === "mcp") {
-    requireArguments(arguments_, 0, "nyacast mcp");
+    requireArguments(arguments_, 0, "nyaucast mcp");
     await runMcp();
     return;
   }

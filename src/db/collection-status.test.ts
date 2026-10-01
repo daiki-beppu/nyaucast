@@ -10,7 +10,7 @@ const collectionId = "01JCOLLECTION00000000000000";
 
 describe("collection status read model", () => {
   test("derives pending gate facts for a new collection", async () => {
-    await withTemporaryDirectoryAsync("nyacast-fresh-status-", async (channelRoot) => {
+    await withTemporaryDirectoryAsync("nyaucast-fresh-status-", async (channelRoot) => {
       const store = await openLocalStore(channelRoot);
       try {
         await createCollectionStore(store).create({ id: collectionId, title: "Night Drive" });
@@ -27,7 +27,7 @@ describe("collection status read model", () => {
   });
 
   test("uses the current rejection for both the gate fact and terminal progress", async () => {
-    await withTemporaryDirectoryAsync("nyacast-rejected-status-", async (channelRoot) => {
+    await withTemporaryDirectoryAsync("nyaucast-rejected-status-", async (channelRoot) => {
       const store = await openLocalStore(channelRoot);
       try {
         await createCollectionStore(store).create({ id: collectionId, title: "Night Drive" });
@@ -49,7 +49,7 @@ describe("collection status read model", () => {
   });
 
   test("a later approval replaces rejection as the current fact without deleting history", async () => {
-    await withTemporaryDirectoryAsync("nyacast-approved-status-", async (channelRoot) => {
+    await withTemporaryDirectoryAsync("nyaucast-approved-status-", async (channelRoot) => {
       const store = await openLocalStore(channelRoot);
       try {
         await createCollectionStore(store).create({ id: collectionId, title: "Night Drive" });

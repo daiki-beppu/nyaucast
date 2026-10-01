@@ -24,7 +24,7 @@ async function seedCollection(channelRoot: string): Promise<void> {
 
 describe("gate facts", () => {
   test("records produce and publish approvals with a core-owned timestamp", async () => {
-    await withTemporaryDirectoryAsync("nyacast-approvals-", async (channelRoot) => {
+    await withTemporaryDirectoryAsync("nyaucast-approvals-", async (channelRoot) => {
       await seedCollection(channelRoot);
       const store = await openLocalStore(channelRoot);
       const clock = { now: () => new Date("2026-08-27T00:00:00.000Z") };
@@ -52,7 +52,7 @@ describe("gate facts", () => {
   });
 
   test("records a rejection independently from approvals", async () => {
-    await withTemporaryDirectoryAsync("nyacast-rejections-", async (channelRoot) => {
+    await withTemporaryDirectoryAsync("nyaucast-rejections-", async (channelRoot) => {
       await seedCollection(channelRoot);
       const store = await openLocalStore(channelRoot);
 
@@ -80,7 +80,7 @@ describe("gate facts", () => {
   });
 
   test("rejects gate values outside produce and publish", async () => {
-    await withTemporaryDirectoryAsync("nyacast-invalid-gate-", async (channelRoot) => {
+    await withTemporaryDirectoryAsync("nyaucast-invalid-gate-", async (channelRoot) => {
       await seedCollection(channelRoot);
       const store = await openLocalStore(channelRoot);
 
@@ -96,7 +96,7 @@ describe("gate facts", () => {
   });
 
   test.each(["approvals", "rejections"])("enforces %s as append-only", async (table) => {
-    await withTemporaryDirectoryAsync("nyacast-append-only-", async (channelRoot) => {
+    await withTemporaryDirectoryAsync("nyaucast-append-only-", async (channelRoot) => {
       await seedCollection(channelRoot);
       const store = await openLocalStore(channelRoot);
       const clock = { now: () => new Date("2026-08-27T00:00:00.000Z") };
