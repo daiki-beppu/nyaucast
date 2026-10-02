@@ -20,8 +20,8 @@ YouTube チャンネル運営を自動化するツールキット。skill に蓄
 「良かれと思って足すと規約違反になる」ものだけ挙げる。全体は `docs/adr/0001-thin-architecture.md`。
 
 - **registry を置かない** — tool 一覧は entry point のフラットな import 配列だけ
-- **Result 型 / createService フレームを導入しない** — エラーは内部で throw し、adapter 境界で変換する
-- **1 MCP tool = 実装 1 ファイル + テスト 1 ファイル** — zod schema・description・handler を tool 定義ファイルに同居させる
+- **コードは全面 Effect 4.0 で書く**（決定 9）— エラーは `Schema.TaggedError` の型付きの失敗として持ち、adapter 境界で変換する。手書きの Result 型・createService フレームは導入しない。Layer を組んで `runMain` を呼ぶのは entry point の 1 か所だけ。Effect の API は v3 と大きく違うので、書く前に `node_modules/effect/AGENTS.md` を読む
+- **1 MCP tool = 実装 1 ファイル + テスト 1 ファイル** — Effect Schema・description・handler を tool 定義ファイルに同居させる
 - adapter は MCP (primary) と CLI (`nyaucast <cmd>`) の 2 本。ここに業務ロジックを書かない
 - **ADR から黙って逸脱しない。** 逸脱するなら該当 ADR の改訂を同じ差分に含める（ADR-0001 決定 7）
 
