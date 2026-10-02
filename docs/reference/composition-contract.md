@@ -2,7 +2,7 @@
 
 動画生成パイプライン（ADR-0005 決定 6）における composition と capturer の契約の**正書**。composition は「`window.__hf` を実装した自己完結 HTML 1 枚」であり、契約はこのオブジェクトの形だけで定まる。シーン構造・アニメーション手段は本書で縛らない（執筆レシピは `collection-lifecycle` codec が持つ）。
 
-消費者は 3 者 — `collection-lifecycle` codec（執筆レシピの根拠）、`video.render` / `video.preview`（検証実装の根拠）、ADR-0005（決定記録）。出所は issue #176（記述規約の設計）と issue #175（プロトタイプ実証）。
+消費者は 3 者 — `collection-lifecycle` codec（執筆レシピの根拠。解説動画では composition を組み立ての tool が作る — ADR-0005 決定 12）、`video.render` / `video.preview`（検証実装の根拠）、ADR-0005（決定記録）。出所は issue #176（記述規約の設計）と issue #175（プロトタイプ実証）。
 
 ## 契約スケッチ
 
@@ -59,7 +59,7 @@ capture plan に必要な事実（`duration`・`segments`・寸法・`fps`）は
 
 `static: true` は「区間内のどの `t` に seek しても同一の描画状態になる」ことの**自己申告**である。実行時検出はせず、申告を SSOT とする（issue #174 の決定）。capturer は static 区間の capture を代表 1 フレームに省略し、エンコード側で引き延ばしてよい（mediabunny `CanvasSource.add(timestamp, duration)`）。
 
-申告の誤りは構造的に検出される — `video.preview` が各 segment の中点を撮るため誤申告は絵に出るほか、static 区間内の再 seek バイト比較でも不一致として表面化する。
+申告の誤りは構造的に検出される — `video.preview` が各 segment の終わる直前のフレームを撮るため誤申告は絵に出るほか（ADR-0005 決定 13）、static 区間内の再 seek バイト比較でも不一致として表面化する。
 
 ## settle は capturer の責務
 

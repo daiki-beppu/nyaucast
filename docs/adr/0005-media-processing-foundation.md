@@ -4,7 +4,7 @@
 
 ## Status
 
-accepted (2026-07-24) / 改訂 2026-07-31（#178。動画生成工程を「agent が書く HTML composition → Chrome rasterize → mediabunny エンコード」のパイプラインへ載せ替え — 決定 6〜11 を追加。エンコード層の mediabunny + node-av 統一（決定 1）と ffmpeg CLI 不採用（決定 3）は不変。Chrome 依存は `video.render` / `video.preview` の 2 tool に限定して許容する）/ 改訂 2026-08-22（#332。Remotion への置き換え検討を不採用として Considered Options に追記 — 決定 1〜11 は不変）
+accepted (2026-07-24) / 改訂 2026-07-31（#178。動画生成工程を「agent が書く HTML composition → Chrome rasterize → mediabunny エンコード」のパイプラインへ載せ替え — 決定 6〜11 を追加。エンコード層の mediabunny + node-av 統一（決定 1）と ffmpeg CLI 不採用（決定 3）は不変。Chrome 依存は `video.render` / `video.preview` の 2 tool に限定して許容する）/ 改訂 2026-08-22（#332。Remotion への置き換え検討を不採用として Considered Options に追記 — 決定 1〜11 は不変）/ 改訂 2026-10-02（#467。解説動画の composition は agent が書かず、図解から組み立ての tool が作る — 決定 12・13 を追加。Chrome 依存の許可リスト（決定 7）は変えない）
 
 ## Context
 
@@ -44,6 +44,11 @@ accepted (2026-07-24) / 改訂 2026-07-31（#178。動画生成工程を「agent
 10. **実装配置は tool 1 ファイル + プロトコル汎用インフラのみ `src/lib/` 許可。** ADR-0001「1 MCP tool = 実装 1 ファイル」の解釈を明文化する（ADR-0001 決定 7 に基づく改訂手続き）: CDP transport / chrome 供給・pin・起動のようなプロトコル汎用インフラに限り `src/lib/` に置いてよい。業務ロジック（契約検証規則・capture plan・サンプリング規則）の lib 化は禁止し、tool 実装ファイルに同居させる
 11. **撤退先は issue #46 の mediabunny 静止画パス（実証済み・1h 動画 78.7 秒）とし、撤退トリガを列挙・発動は都度判断とする。** トリガは 3 群 — (a) Chrome 供給不能（pin 版 chrome-headless-shell の配布消滅・プラットフォーム廃止）、(b) 上流の破壊的変更（`@puppeteer/browsers` の Bun 非互換化・CDP プロトコル変更で自前 client が修復不能）、(c) 決定論の破れ（Chrome 更新後に再 seek バイト比較が恒常的に失敗する）。いずれも修復不能と判断した時点で本 ADR を再改訂して発動する。数値基準（N 日等）は設けず、撤退先実装の常時保守もしない
 
+（以下、改訂 2026-10-02 / #467 で追加）
+
+12. **解説動画の composition は agent が書かず、Chrome を使わない組み立ての tool が作る。** agent が書くのはシーンごとの図解（演出の時刻を台本上の位置で宣言し、script を持たない HTML）だけで、組み立ての tool がタイミング表で位置を秒に直し、字幕・テーマ・`window.__hf`（seek と segments）を加えて、カット 1 本 = composition 1 枚を作る。seek を実装するタイムラインの runtime は、組み立ての tool が composition にインラインで埋め込む。これは改訂 2026-07-31 の Consequences「nyaucast 本体にブラウザ内 runtime 資産を持たない」を、解説動画について改めるものである。runtime と演出の語彙は業務ロジックなので、決定 10 に従い `src/lib/` に置かず組み立ての tool の実装に同居させる。collection（BGM 動画）は agent が composition 全体を書く形のまま変えない。組み立ては Chrome を使わないので、決定 7 の許可リストは広げない
+13. **`video.preview` は各 segment の終わる直前のフレームを撮る。** 中点では、解説動画のシーンが組み上がる途中を撮ってしまう。static 区間ではどの時刻でも同じ絵なので、collection のプレビューは変わらない
+
 ## Why
 
 - **実測で裏付けられた成立確実性**: 音声・動画とも合格ライン（実時間 2 倍以内）に対し 36〜90 倍の余裕。動的映像（毎フレーム描画）も 1080p30 で 165 frames/s と拡張性十分（残る課題は Bun 用描画ライブラリ選定のみ）
@@ -59,6 +64,10 @@ accepted (2026-07-24) / 改訂 2026-07-31（#178。動画生成工程を「agent
 - **tool 列挙で限定する理由**（決定 7）: 「動画工程」「rasterize 用途」のような概念での限定は境界解釈に幅が出て、マップ #172 が out of scope と判断したサムネ同基盤化が黙って入り込める。tool 名の列挙は検証可能で、拡大を ADR 改訂という明示的な決定に強制できる
 - **初回実行時自動ダウンロードの理由**（決定 8）: 既存 Why の「セットアップ摩擦の低さ」と同じ価値基準。明示 setup コマンドは CLI が 1 本増えた上に実行忘れで tool が失敗するケースを生み、Nix devShell 供給は ADR-0003（Bun 必須配布）の外へ runtime 依存を出し #175 でも未検証
 - **トリガ列挙 + 都度判断の理由**（決定 11）: 性能面の撤退トリガは #175 で消え、残るのは環境・上流起因のみ。発動頻度の実データがない段階で数値基準を作るのは投機的で、決定 4（node-av GPL 論点の「検討段階で再判断」）と同じ時点判断 + ADR 改訂パターンに揃える。撤退先の常時グリーン保守は二重実装の保守コストを恒常化させ、基盤一本化の動機と矛盾する
+
+（以下、改訂 2026-10-02 / #467 で追加）
+
+- **秒を書くのは nyaucast だけにする**（決定 12）: 尺は音声が決め、agent は台本上の位置で時刻を指す（#466）。agent が composition 全体を書くと、タイミング表から秒を写す工程が戻り、写し間違いや古い時刻表のまま書く事故を防げない。字幕・縦型のレイアウト（切り抜きショートの帯）・図解の安全性の検査も、組み立ての tool の 1 か所に集まる。先行実装の `life` の動画ダイジェストが同じ分担（LLM はシーンの断片、決定的なビルダーが時間軸と字幕）で動いている
 
 ## Considered Options
 
@@ -79,6 +88,12 @@ accepted (2026-07-24) / 改訂 2026-07-31（#178。動画生成工程を「agent
 
 - **動画生成基盤を Remotion へ置き換え**: 「公式 Agent Skills の充実」と「mediabunny の内部採用」を動機に wayfinder セッションで検討した（#332。地図は作らず撤回で決着）。不採用の理由は 3 点 — (a) mediabunny 採用はブラウザ側スタック限定（`@remotion/web-renderer` と旧 Media Parser / WebCodecs の後継系譜）で、nyaucast が Bun から叩くサーバーサイドの `renderMedia()` は FFmpeg バイナリ同梱（`@remotion/compositor-*`）のまま。エンコード層を mediabunny にする動機は決定 1・6 が既に満たしている。(b) Remotion のライセンスは頒布ではなく**利用**に有償条件が掛かる（無償は「Remotion を操作する関係者 3 人以下」の組織まで。CLI/API の自動レンダリングは Automators 区分 $0.01/render・最低 $100/月）。nyaucast には将来的に有償ツールとして公開する意向があり、下流利用者それぞれに free/有償のライセンス判定が波及する構図は配布性を損なう。(c) 公式 Agent Skills（remotion-dev/skills の 12 skill・llms.txt・AI 向けシステムプロンプト文書）は事実として確認できたが、上記 2 点を覆すには足りない。不採用。再検討トリガ: Remotion のサーバーサイドレンダリングの mediabunny 移行が完了し、かつライセンス条件が nyaucast の利用・配布形態と両立すると判断できたとき（新規の wayfinder 効力として起こし、#332 の記録を出発点にする）。主な根拠（2026-08-22 時点）: ライセンス <https://www.remotion.dev/docs/terms> / <https://www.remotion.pro/license>、mediabunny 移行範囲 <https://www.remotion.dev/blog/mediabunny> / <https://www.remotion.dev/docs/ffmpeg>、公式 skills <https://www.remotion.dev/docs/ai/skills>、Bun <https://www.remotion.dev/docs/bun>、決定論 <https://www.remotion.dev/docs/using-randomness>
 
+（以下、改訂 2026-10-02 / #467 で追加）
+
+- **解説動画も agent が composition 全体を書く**: ADR は変わらないが、上の Why のとおり秒の写しが戻り、字幕と縦型レイアウトを毎回 agent が組むことになる。不採用
+- **切り抜きショートを、長尺のカットの再エンコードで作る**: 縦型への配置と帯の合成を mediabunny 側で行う処理が要る。組み立ての tool が長尺の図解を縦型レイアウトに置き直し、長尺のタイミング表を区間の開始だけずらして使えば、Chrome の描画 1 本で済む。不採用
+- **字幕をエンコード時に重ねる**: Chrome 以外の文字描画系が要り、決定 6 の一本化に反する。不採用
+
 ## Consequences
 
 - `audio.master`・動画生成用 primitive tool・アップロード前検証 tool は `@mediabunny/server`（node-av）に直接依存する。node-av の GPLv3 ネイティブバイナリは通常の（optionalDependencies ではない）依存としてインストールされる
@@ -97,10 +112,16 @@ accepted (2026-07-24) / 改訂 2026-07-31（#178。動画生成工程を「agent
 - 撤退トリガ（決定 11）に専用の監視機構は作らない — いずれも通常運用の失敗（ダウンロード失敗・起動失敗・決定論検証の throw）として表面化する
 - v0.2 動的映像はこの基盤の上に乗る。残る課題はブラウザ内アニメーション手段の codec レシピ拡充のみで、パイプライン側の作り直しは発生しない
 
+（以下、改訂 2026-10-02 / #467 で追加）
+
+- 解説動画では、図解の書き方の知識は `explainer-lifecycle` codec が持ち、演出の語彙（`data-beat` 等）と並べ方の規則は組み立ての tool の定数とする。図解の契約の正書は `docs/reference/` に新しく置く（実装 ticket で書く）。図解・composition・カット・プレビューは、データ 4 分類 ③ として動画のディレクトリの下に置く
+- 図解が検査に落ちたら、組み立ての tool は違反をすべて列挙して throw する（そのシーンだけ縮退して続ける形は採らない）
+
 - ADR-0001（内部throw・境界で変換 / 1 tool = 1 file — 決定 10 はその解釈明文化）/ ADR-0003（Bun 必須配布・ビルドレス出荷）/ ADR-0007（決定 9 の鮮度付き冪等はその決定 4 の解釈精緻化。本体は改訂しない）
 - マップ issue #42「メディア処理基盤の技術選定マップ」とその子チケット #43 / #44 / #45 / #46 / #49
 - マップ issue #172「動画生成 HTML パイプライン化マップ」とその子チケット #173 / #174 / #175 / #176 / #177 / #178（改訂 2026-07-31 の出所）
 - issue #332「Remotion 置き換え検討の不採用記録」（改訂 2026-08-22 の出所。wayfinder セッションで検討し、地図は作らず撤回で決着）
+- issue #467「カット 3 種の描画方式と字幕の焼き込み」（改訂 2026-10-02 の出所。地図 #457 の決定 ticket）
 - `docs/research/mediabunny-bun-codec-support.md`（issue #43 / PR #48）/ `docs/research/lufs-pure-ts-normalization.md`（issue #44 / PR #50）/ `docs/research/node-av-ffmpeg-license.md`（issue #49 / PR #53）
 - `docs/research/hyperframes-internals-partial-use.md`（issue #173 / PR #179）/ `docs/research/browser-frame-capture-deterministic.md`（issue #174 / PR #180）
 - `docs/reference/composition-contract.md` — `window.__hf` 契約の正書
