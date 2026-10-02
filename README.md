@@ -24,7 +24,7 @@ lockfile と `package.json` の乖離は check の最初のゲートが検出す
 
 ## Status
 
-v0.1.0 に向けて開発中。ゲートは first-party の解説動画チャンネルでの dogfood 完走（解説動画 lifecycle 1 周と 4 SNS への公開。ADR-0009）。Python 版 (`youtube-channels-automation`) は nyaucast が実運用カバレッジに達するまでメンテナンスモードで維持される。
+v0.1.0 に向けて開発中。ゲートは first-party の解説動画チャンネルでの dogfood 完走（解説動画 lifecycle 1 周と 3 SNS（YouTube・Instagram・X）への公開。ADR-0009）。Python 版 (`youtube-channels-automation`) は nyaucast が実運用カバレッジに達するまでメンテナンスモードで維持される。
 
 ## 旧称 tayk からの移行
 
