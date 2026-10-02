@@ -61,7 +61,9 @@ nyaucast はこれまで、音楽チャンネルの collection を YouTube へ�
   - ADR-0004 の `cp` によるバックアップの作り直し
   - 同時実行の排他
   - VM での secret の扱い
+
   さらに、VM で node-av と headless Chrome が動くかは確かめていない。この検証は「Devin の VM で nyaucast を動かす検証」（#506）で先に行い、移行は #505 で扱う。置き場の候補は、local store が Turso のリモート DB、成果物が R2 である。D1 は Workers の外で使う drizzle の実行時ドライバが無く、ADR-0004 の起動時 `migrate()` を保てないので、候補から外れる。
+
 - **Instagram に渡す動画を GCS の署名付き URL で渡す**（決定 3 の前の決定）: 採らない。R2 は外向きの転送が無料で、#505 の成果物の置き場の候補とも同じになる。
 - **Jinba Flow でワークフローを MCP 化する**: 採らない。理由は次のとおり。
   - クラウドで実行されるため、Mac 上の local store とヘッドレス Chrome に届かない。
