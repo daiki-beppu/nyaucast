@@ -6,6 +6,7 @@ How the engineering skills should consume this repo's domain documentation when 
 
 - **`CONTEXT.md`** at the repo root
 - **`docs/adr/`** — read ADRs that touch the area you're about to work in.
+  - 改訂を重ねた ADR（ADR-0009 など）は長い。`grep -n '^[0-9]*\. \*\*' <ADR>` で決定の見出しと行番号を先に引き、必要な決定の範囲だけ読む
 
 If any of these files don't exist, **proceed silently**. Don't flag their absence; don't suggest creating them upfront. The `/domain-modeling` skill (reached via `/grill-with-docs` and `/improve-codebase-architecture`) creates them lazily when terms or decisions actually get resolved.
 
@@ -16,15 +17,7 @@ Single-context repo (this repo):
 ```
 /
 ├── CONTEXT.md          ← グロッサリ（用語の正書。実装詳細は書かない）
-├── docs/adr/
-│   ├── 0001-thin-architecture.md
-│   ├── 0002-no-llm-in-core.md
-│   ├── 0003-bun-only-distribution.md
-│   ├── 0004-auto-migration.md
-│   ├── 0005-media-processing-foundation.md
-│   ├── 0006-no-takt-for-product-orchestration.md
-│   ├── 0007-collection-lifecycle-execution-model.md
-│   └── 0008-takt-dedicated-workflow.md
+├── docs/adr/          ← 決定の記録（NNNN-<slug>.md）
 └── src/
 ```
 
