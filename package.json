@@ -36,15 +36,18 @@
     "prepare": "vp hooks enable"
   },
   "dependencies": {
+    "@effect/platform-node": "4.0.0",
     "@libsql/client": "0.17.4",
     "@modelcontextprotocol/sdk": "1.30.0",
     "drizzle-orm": "0.45.2",
+    "effect": "4.0.0",
     "google-auth-library": "11.0.2",
     "oauth-callback": "2.2.0",
     "open": "11.0.2",
     "zod": "4.4.3"
   },
   "devDependencies": {
+    "@effect/tsgo": "0.47.2",
     "@stryker-mutator/core": "10.0.0",
     "@stryker-mutator/vitest-runner": "10.0.0",
     "@types/node": "24.13.3",

@@ -1,0 +1,5 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": { "skipLibCheck": true, "plugins": [{ "name": "@effect/language-service" }] },
+  "include": ["./**/*.ts"]
+}
