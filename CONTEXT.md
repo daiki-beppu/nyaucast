@@ -62,7 +62,7 @@ nyaucast が読み書きするファイルはすべて JSON。YAML パーサー�
 _Avoid_: YAML / JSONC / JSON5 を nyaucast が読み書きするファイルに使うこと
 
 **skill config**:
-チャンネル固有のスキル挙動パラメータ。`config/skills/<skill>.json` のフルファイル 1 本。default + override の deep merge は行わず、zod schema の `.default()` が省略キーを補完する。
+チャンネル固有のスキル挙動パラメータ。`config/skills/<skill>.json` のフルファイル 1 本。default + override の deep merge は行わず、schema の既定値が省略キーを補完する。
 _Avoid_: config.default.yaml, deep merge (Python 版の旧方式)
 
 ## データ
