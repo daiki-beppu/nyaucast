@@ -4,7 +4,7 @@
 
 ## Status
 
-accepted (2026-07-24) / 改訂 2026-07-31（#178。動画生成工程を「agent が書く HTML composition → Chrome rasterize → mediabunny エンコード」のパイプラインへ載せ替え — 決定 6〜11 を追加。エンコード層の mediabunny + node-av 統一（決定 1）と ffmpeg CLI 不採用（決定 3）は不変。Chrome 依存は `video.render` / `video.preview` の 2 tool に限定して許容する）/ 改訂 2026-08-22（#332。Remotion への置き換え検討を不採用として Considered Options に追記 — 決定 1〜11 は不変）/ 改訂 2026-10-02（#467。解説動画の composition は agent が書かず、図解から組み立ての tool が作る — 決定 12・13 を追加。Chrome 依存の許可リスト（決定 7）は変えない）
+accepted (2026-07-24) / 改訂 2026-07-31（#178。動画生成工程を「agent が書く HTML composition → Chrome rasterize → mediabunny エンコード」のパイプラインへ載せ替え — 決定 6〜11 を追加。エンコード層の mediabunny + node-av 統一（決定 1）と ffmpeg CLI 不採用（決定 3）は不変。Chrome 依存は `video.render` / `video.preview` の 2 tool に限定して許容する）/ 改訂 2026-08-22（#332。Remotion への置き換え検討を不採用として Considered Options に追記 — 決定 1〜11 は不変）/ 改訂 2026-10-02（#467。解説動画の composition は agent が書かず、図解から組み立ての tool が作る — 決定 12・13 を追加。Chrome 依存の許可リスト（決定 7）は変えない） / 改訂 2026-10-02（#494。図解を ③ から外し、agent が書く入力として扱う。ADR-0009 決定 11）
 
 ## Context
 
@@ -114,7 +114,7 @@ accepted (2026-07-24) / 改訂 2026-07-31（#178。動画生成工程を「agent
 
 （以下、改訂 2026-10-02 / #467 で追加）
 
-- 解説動画では、図解の書き方の知識は `explainer-lifecycle` codec が持ち、演出の語彙（`data-beat` 等）と並べ方の規則は組み立ての tool の定数とする。図解の契約の正書は `docs/reference/` に新しく置く（実装 ticket で書く）。図解・composition・カット・プレビューは、データ 4 分類 ③ として動画のディレクトリの下に置く
+- 解説動画では、図解の書き方の知識は `explainer-lifecycle` codec が持ち、演出の語彙（`data-beat` 等）と並べ方の規則は組み立ての tool の定数とする。図解の契約の正書は `docs/reference/` に新しく置く（実装 ticket で書く）。図解・composition・カット・プレビューは、動画のディレクトリの下に置く。composition・カット・プレビューはデータ 4 分類 ③ である。図解は agent が書く入力で、決定的には作り直せないので ③ に含めず、消してはいけないものとして扱う（改訂 2026-10-02 / #494。ADR-0009 決定 11）
 - 図解が検査に落ちたら、組み立ての tool は違反をすべて列挙して throw する（そのシーンだけ縮退して続ける形は採らない）
 
 - ADR-0001（内部throw・境界で変換 / 1 tool = 1 file — 決定 10 はその解釈明文化）/ ADR-0003（Bun 必須配布・ビルドレス出荷）/ ADR-0007（決定 9 の鮮度付き冪等はその決定 4 の解釈精緻化。本体は改訂しない）
@@ -122,6 +122,7 @@ accepted (2026-07-24) / 改訂 2026-07-31（#178。動画生成工程を「agent
 - マップ issue #172「動画生成 HTML パイプライン化マップ」とその子チケット #173 / #174 / #175 / #176 / #177 / #178（改訂 2026-07-31 の出所）
 - issue #332「Remotion 置き換え検討の不採用記録」（改訂 2026-08-22 の出所。wayfinder セッションで検討し、地図は作らず撤回で決着）
 - issue #467「カット 3 種の描画方式と字幕の焼き込み」（改訂 2026-10-02 の出所。地図 #457 の決定 ticket）
+- issue #494「解説動画の成果物の実体行と、進捗の導出」（改訂 2026-10-02 の出所。地図 #457 の決定 ticket）
 - `docs/research/mediabunny-bun-codec-support.md`（issue #43 / PR #48）/ `docs/research/lufs-pure-ts-normalization.md`（issue #44 / PR #50）/ `docs/research/node-av-ffmpeg-license.md`（issue #49 / PR #53）
 - `docs/research/hyperframes-internals-partial-use.md`（issue #173 / PR #179）/ `docs/research/browser-frame-capture-deterministic.md`（issue #174 / PR #180）
 - `docs/reference/composition-contract.md` — `window.__hf` 契約の正書
