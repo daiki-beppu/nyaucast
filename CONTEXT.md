@@ -44,7 +44,7 @@ _Avoid_: workflow tool (粗粒度の MCP tool を置く設計は ADR-0007 で廃
 _Avoid_: approve, 承認フロー (独立した承認操作は作らない。起動 = 承認)
 
 **knowledge codec**:
-「いつ・どの MCP tool を・どう使うか」のドメイン知識パッケージ。MCP tool の description (WHAT) に対し、knowledge codec は WHEN/HOW を提供する。粗粒度の workflow tool を置かないため (ADR-0007)、**区間を歩く手順を持つ唯一の担い手**でもある。6 本構成: `collection-lifecycle` / `explainer-lifecycle` / `channel-management` / `analytics` / `content-quality` / `distribution`。`distribution` は SNS ごとの投稿文・投稿時刻・AI 生成の開示を扱い、collection と解説動画の両方が使う。**v0.1 で実装するのは `explainer-lifecycle` と `distribution`**。下流へ配布する操作面は codec のみで、旧個別 skill は配布しない。旧 skill は codec の設計材料として扱う。
+「いつ・どの MCP tool を・どう使うか」のドメイン知識パッケージ。MCP tool の description (WHAT) に対し、knowledge codec は WHEN/HOW を提供する。粗粒度の workflow tool を置かないため (ADR-0007)、**区間を歩く手順を持つ唯一の担い手**でもある。6 本構成: `collection-lifecycle` / `explainer-lifecycle` / `channel-management` / `analytics` / `content-quality` / `distribution`。`distribution` は SNS ごとの投稿文・投稿時刻・AI 生成の開示を扱い、collection と解説動画の両方が使う。**v0.1 で実装するのは `explainer-lifecycle` と `distribution`**。下流へ配布する操作面は codec のみで、旧個別 skill は配布しない。旧 skill は codec の設計材料として扱う。codec は nyaucast のパッケージに同梱し、下流のチャンネルリポは、自分が固定した版のパッケージから codec を読む。そのため codec と MCP tool の版は常に一致する (ADR-0010)。
 _Avoid_: skill guide, routing layer (knowledge codec は知識の bundled 提供であり、単なるルーティングではない)
 
 **adapter**:
