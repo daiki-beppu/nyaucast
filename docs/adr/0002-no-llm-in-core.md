@@ -4,7 +4,7 @@
 
 ## Status
 
-accepted (2026-07-10) / 改訂 2026-07-29（ADR-0007 Decision 0 に合わせ、tracer を `collection.plan` MCP tool ではなく plan 区間として記述）
+accepted (2026-07-10) / 改訂 2026-07-29（ADR-0007 Decision 0 に合わせ、tracer を `collection.plan` MCP tool ではなく plan 区間として記述）/ 改訂 2026-10-02（#468。メディアの生成モデルと、生成専用に使う agent CLI の扱いを追加）
 
 ## Context
 
@@ -14,6 +14,8 @@ tracer となる plan 区間の設計で「企画候補のテーマ案を誰が�
 
 **nyaucast core (MCP tool の handler) は LLM を呼ばない。** tool は型付きの決定的操作（データ収集・クエリ・フィルタ・ランキング・構造化）に徹し、テーマの創造的な肉付け・文言生成・意思決定は tool を呼ぶ agent + knowledge codec の領分とする。plan 区間では agent が primitive tool を順に呼び、tool は当たり動画の抽出と根拠データの構造化出力までを担う。
 
+**メディアの生成モデルは「LLM を呼ぶ」に当たらない**（改訂 2026-10-02 / #468）。音声合成と画像生成の API は、agent が渡した文言と描写をメディアに変えるだけで、文言も判断も生まない。そのため primitive tool から呼んでよい。codex CLI のような agent の CLI も、tool が組み立てた決まった形のプロンプトと参照画像を渡し、画像の生成だけに使う限り同じ扱いとする。agent の CLI に、文言の生成・候補の選別・成否の判断をさせてはならない。
+
 ## Why
 
 - **テストの決定性**: handler が決定的なら fake は YouTube API だけで済み、テストが安定する
@@ -22,6 +24,8 @@ tracer となる plan 区間の設計で「企画候補のテーマ案を誰が�
 - **非対称な可逆性**: 後から LLM を足すのは容易だが、出力仕様が LLM 前提になった後に除去するのは高コスト
 
 ## Considered Options
+
+- **codex CLI は tool から呼ばず、agent の側で描かせて登録だけ tool に渡す**: ADR-0002 の線引きは単純になるが、禁止語の検査・版権を避ける句・参照画像の順番を tool が保証できなくなる。不採用（#468）
 
 - **core が LLM を呼ぶ**: 出力はリッチになるが、上記の依存軸と非決定性が core に入り、agent 側 (codec) との判断二重化を招く。不採用
 - **生データを返すだけ**: 「企画候補 + 根拠」という構造化出力の要件 (issue #1) を満たさない。フィルタ・ランキングまでは tool の決定的責務とする
