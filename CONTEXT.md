@@ -1,6 +1,6 @@
 # nyaucast
 
-非属人チャンネルの運営を自動化するツールキット。制作物は動画で、種類は解説動画と BGM 動画（音楽の collection）の 2 つ。YouTube・TikTok・Instagram・X へ配信する（ADR-0009）。skill に蓄積されたワークフロー知識を型付き MCP tool に結晶化する、仕様ベースの新規プロダクト（Python 版 `youtube-channels-automation` の移植ではない — 出自と転換の経緯は旧リポの ADR-0021 を参照）。本ファイルは実装詳細ではなく、本プロジェクト固有の用語の正書を定める **グロッサリ**である。
+非属人チャンネルの運営を自動化するツールキット。制作物は動画で、種類は解説動画と BGM 動画（音楽の collection）の 2 つ。YouTube・Instagram・X へ配信する（ADR-0009。TikTok は v0.2 以降）。skill に蓄積されたワークフロー知識を型付き MCP tool に結晶化する、仕様ベースの新規プロダクト（Python 版 `youtube-channels-automation` の移植ではない — 出自と転換の経緯は旧リポの ADR-0021 を参照）。本ファイルは実装詳細ではなく、本プロジェクト固有の用語の正書を定める **グロッサリ**である。
 
 用語は旧リポ (00-automation) の CONTEXT.md から引き継ぎ・更新したもの。旧リポ固有の用語（cutover / Phase / Tier / Chrome 拡張系）は持ち込まない。
 
@@ -11,7 +11,7 @@
 _Avoid_: youtube-channels-automation, yt-automation, yt (旧 bin 名)
 
 **dogfood**:
-first-party の解説動画チャンネルで、解説動画 lifecycle を 1 周させ、4 つの SNS のアカウントへ公開するまでを nyaucast だけで実走させる受け入れ検証。`v0.1.0` の唯一のリリースゲート。期間ではなく完走で判定する。音楽チャンネル (soulful-grooves / deepfocus365) での collection lifecycle の 1 周は `v0.2` 以降のゲートに回す (ADR-0009)。
+first-party の解説動画チャンネルで、解説動画 lifecycle を 1 周させ、3 つの SNS（YouTube・Instagram・X）のアカウントへ公開するまでを nyaucast だけで実走させる受け入れ検証。`v0.1.0` の唯一のリリースゲート。期間ではなく完走で判定する。音楽チャンネル (soulful-grooves / deepfocus365) での collection lifecycle の 1 周は `v0.2` 以降のゲートに回す (ADR-0009)。
 _Avoid_: ベータ, トライアル, 試運転
 
 **critical regression**:
@@ -133,7 +133,7 @@ _Avoid_: analytics dashboard (analytics は収集+分析を含意する。dashbo
 _Avoid_: アカウント（SNS 側の認証単位は別概念）
 
 **アカウント**:
-1 つの SNS 上の投稿先であり、認証の単位（例: TikTok の @xxx）。必ずどれか 1 つのチャンネルに属する。YouTube のチャンネルも、本ツールではアカウントとして扱う。
+1 つの SNS 上の投稿先であり、認証の単位（例: X の @xxx）。必ずどれか 1 つのチャンネルに属する。YouTube のチャンネルも、本ツールではアカウントとして扱う。
 _Avoid_: チャンネル（YouTube 上の呼び名であっても）
 
 **投稿**:
