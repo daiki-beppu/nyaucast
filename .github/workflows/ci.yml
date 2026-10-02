@@ -1,7 +1,11 @@
 name: CI
 
 on:
-  pull_request: {}
+  # 学びの記録（docs/knowledge）だけの PR では走らせない。Markdown の整形は
+  # pre-commit / pre-push の hook が担う。main に required status check は
+  # 無いため、スキップされた PR が「チェック待ち」で merge 不能にはならない。
+  pull_request:
+    paths-ignore: ["docs/knowledge/**"]
   push: { branches: [main] }
   workflow_call: {}
 
