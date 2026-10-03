@@ -1,21 +1,16 @@
-import {
-  chmodSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  readdirSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { NodeServices } from "@effect/platform-node";
 import { assert, describe, expect, it, vi } from "@effect/vitest";
-import { Effect, FileSystem, Layer } from "effect";
+import { Effect, Layer } from "effect";
+import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 import type { Credentials } from "google-auth-library";
 
-import { temporaryDirectory } from "../../test/helpers.ts";
+import { failureFacts, setClock, temporaryDirectory } from "../../test/helpers.ts";
+import { CredentialStore } from "../auth/credential-store.ts";
+import { StaticSecrets } from "../auth/secrets.ts";
 import { YouTubeAuth } from "./auth.ts";
 
 const channel = "deepfocus365";
@@ -23,6 +18,7 @@ const accessToken = "ACCESS_TOKEN_SENTINEL";
 const refreshToken = "REFRESH_TOKEN_SENTINEL";
 const clientId = "CLIENT_ID_SENTINEL";
 const clientSecret = "CLIENT_SECRET_SENTINEL";
+const identityUrl = "https://youtube.googleapis.com/youtube/v3/channels?part=id&mine=true";
 
 const expectedScopes = [
   "https://www.googleapis.com/auth/youtube",
@@ -30,16 +26,6 @@ const expectedScopes = [
   "https://www.googleapis.com/auth/yt-analytics.readonly",
   "https://www.googleapis.com/auth/yt-analytics-monetary.readonly",
 ];
-
-function clientSecretsJson(): string {
-  return JSON.stringify({
-    installed: {
-      client_id: clientId,
-      client_secret: clientSecret,
-      redirect_uris: ["http://localhost"],
-    },
-  });
-}
 
 function storedToken(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -51,19 +37,25 @@ function storedToken(overrides: Record<string, unknown> = {}): Record<string, un
   };
 }
 
-function prepareCredentialDirectory(root: string): string {
-  const directory = join(root, channel);
-  mkdirSync(directory, { recursive: true });
-  writeFileSync(join(directory, "client_secrets.json"), clientSecretsJson(), { mode: 0o644 });
-  return directory;
+// トークンのファイルの中身（SNS をまたぐ封筒）。token が YouTube（Google）の credential。
+function envelope(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    accountId: "UC_A",
+    expiresAt: Date.parse("2030-06-01T00:00:00.000Z"),
+    token: storedToken(),
+    ...overrides,
+  };
 }
 
-function modeBits(path: string): number {
-  return statSync(path).mode & 0o777;
-}
+const credentialDirectory = (root: string) => join(root, channel);
+const credentialPath = (root: string) => join(credentialDirectory(root), "youtube.json");
+const modeBits = (path: string) => statSync(path).mode & 0o777;
+const readStored = (root: string) => JSON.parse(readFileSync(credentialPath(root), "utf8"));
 
-function temporaryTokenNames(directory: string): string[] {
-  return readdirSync(directory).filter((name) => name.startsWith(".token-"));
+function seedCredential(root: string, contents: Record<string, unknown>): string {
+  mkdirSync(credentialDirectory(root), { recursive: true });
+  writeFileSync(credentialPath(root), JSON.stringify(contents), { mode: 0o600 });
+  return credentialPath(root);
 }
 
 function createOAuthClientFake(options: {
@@ -75,7 +67,7 @@ function createOAuthClientFake(options: {
   refreshError?: Error;
 }) {
   let credentials: Credentials = {};
-  const client = {
+  return {
     get credentials(): Credentials {
       return credentials;
     },
@@ -104,571 +96,538 @@ function createOAuthClientFake(options: {
       credentials = value;
     }),
   };
-  return client;
 }
 
 type Authorize = Parameters<typeof YouTubeAuth.layer>[0]["authorize"];
 
-// authorize は Effect を返す口。OAuth クライアント（google-auth-library）の偽物は Promise のまま。
+// authorize（loopback の OAuth）は Effect を返す口。google-auth-library の偽物は Promise のまま。
 const succeedWith = (credentials: unknown) =>
   vi.fn((_options: unknown) => Effect.succeed({ credentials })) as unknown as Authorize &
     ReturnType<typeof vi.fn>;
 const neverCalled = () => vi.fn() as unknown as Authorize & ReturnType<typeof vi.fn>;
 
+// 静的なシークレットの解決は別の口（StaticSecrets）。ここでは解決済みの値を返す偽物。
+const resolvedSecrets = () => {
+  const resolve = vi.fn((name: string) =>
+    Effect.succeed(name === "NYAUCAST_YOUTUBE_CLIENT_ID" ? clientId : clientSecret),
+  );
+  return {
+    layer: Layer.succeed(StaticSecrets, StaticSecrets.of({ resolve: resolve as never })),
+    resolve,
+  };
+};
+
+type IdentityResponse = Response | HttpClientError.HttpClientError | undefined;
+
+// 偽の YouTube: authorize が自分の ID を問い合わせる 1 回の GET だけに答える。
+const identityHttp = (response: IdentityResponse) => {
+  const requests: Array<{ authorization: string | undefined; method: string; url: string }> = [];
+  const http = HttpClient.make((request, url) =>
+    Effect.gen(function* () {
+      requests.push({
+        authorization: request.headers["authorization"],
+        method: request.method,
+        url: url.toString(),
+      });
+      if (response === undefined) return yield* Effect.die("identity was not expected");
+      if (response instanceof Response) return HttpClientResponse.fromWeb(request, response);
+      return yield* Effect.fail(response);
+    }),
+  );
+  return { layer: Layer.succeed(HttpClient.HttpClient, http), requests };
+};
+
+const channelResponse = (id: string) => Response.json({ items: [{ id }] });
+
 type Dependencies = {
   authorize?: Authorize;
   createOAuthClient?: ReturnType<typeof vi.fn>;
   credentialRoot: string;
-  fileSystem?: Layer.Layer<FileSystem.FileSystem, never, FileSystem.FileSystem>;
+  http?: ReturnType<typeof identityHttp>;
+  secrets?: ReturnType<typeof resolvedSecrets>;
 };
 
-// FileSystem は本物（NodeServices）。失敗を注入したいテストだけ fileSystem で包んだ Layer を差す。
-const provideAuth = (dependencies: Dependencies) => {
-  const base = NodeServices.layer;
-  const fileSystem =
-    dependencies.fileSystem === undefined
-      ? base
-      : Layer.merge(base, dependencies.fileSystem.pipe(Layer.provide(base)));
-  const layer = YouTubeAuth.layer({
-    authorize: dependencies.authorize ?? neverCalled(),
-    createOAuthClient: (dependencies.createOAuthClient ?? vi.fn()) as never,
-    credentialRoot: dependencies.credentialRoot,
-  }).pipe(Layer.provide(fileSystem));
-  return Effect.provide(layer);
-};
+const provideAuth = (dependencies: Dependencies) =>
+  Effect.provide(
+    YouTubeAuth.layer({
+      authorize: dependencies.authorize ?? neverCalled(),
+      createOAuthClient: (dependencies.createOAuthClient ?? vi.fn()) as never,
+    }).pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          CredentialStore.layer({ credentialRoot: dependencies.credentialRoot }).pipe(
+            Layer.provide(NodeServices.layer),
+          ),
+          (dependencies.secrets ?? resolvedSecrets()).layer,
+          (dependencies.http ?? identityHttp(undefined)).layer,
+        ),
+      ),
+    ),
+  );
 
-const credentialFailure = (failure: { _tag: string }) => JSON.stringify(failure);
+const clientFor = (oauthClient: ReturnType<typeof createOAuthClientFake>) =>
+  vi.fn(() => oauthClient);
 
 describe("YouTube authentication", () => {
-  it.effect(
-    "authorizes with the fixed scopes and stores credentials with owner-only permissions",
-    () =>
+  describe("authorize", () => {
+    it.effect(
+      "runs the OAuth flow with the fixed scopes and the resolved client secrets, and does not save anything",
+      () =>
+        Effect.gen(function* () {
+          const root = yield* temporaryDirectory("nyaucast-youtube-authorize-");
+          const authorize = succeedWith(storedToken());
+          const secrets = resolvedSecrets();
+          const http = identityHttp(channelResponse("UC_A"));
+
+          const authorized = yield* Effect.gen(function* () {
+            return yield* (yield* YouTubeAuth).authorize(channel);
+          }).pipe(provideAuth({ authorize, credentialRoot: root, http, secrets }));
+
+          expect(authorize).toHaveBeenCalledWith({
+            clientId,
+            clientSecret,
+            scopes: expectedScopes,
+          });
+          assert.deepStrictEqual(secrets.resolve.mock.calls.map(([name]) => name).toSorted(), [
+            "NYAUCAST_YOUTUBE_CLIENT_ID",
+            "NYAUCAST_YOUTUBE_CLIENT_SECRET",
+          ]);
+          assert.deepStrictEqual(authorized, { accountId: "UC_A", token: storedToken() });
+          assert.deepStrictEqual(readdirSync(root), []);
+        }),
+    );
+
+    it.effect("asks YouTube which channel the new token belongs to, with that token", () =>
       Effect.gen(function* () {
-        const credentialRoot = yield* temporaryDirectory("nyaucast-auth-");
-        const credentialDirectory = prepareCredentialDirectory(credentialRoot);
-        const authorize = succeedWith(storedToken());
+        const root = yield* temporaryDirectory("nyaucast-youtube-identity-");
+        const http = identityHttp(channelResponse("UC_A"));
 
         yield* Effect.gen(function* () {
-          yield* (yield* YouTubeAuth).authenticate(channel);
-        }).pipe(provideAuth({ authorize, credentialRoot }));
+          yield* (yield* YouTubeAuth).authorize(channel);
+        }).pipe(provideAuth({ authorize: succeedWith(storedToken()), credentialRoot: root, http }));
 
-        expect(authorize).toHaveBeenCalledWith({ clientId, clientSecret, scopes: expectedScopes });
-        assert.deepStrictEqual(
-          JSON.parse(readFileSync(join(credentialDirectory, "token.json"), "utf8")),
-          storedToken(),
-        );
-        assert.strictEqual(modeBits(join(credentialDirectory, "client_secrets.json")), 0o600);
-        assert.strictEqual(modeBits(join(credentialDirectory, "token.json")), 0o600);
+        assert.deepStrictEqual(http.requests, [
+          { authorization: `Bearer ${accessToken}`, method: "GET", url: identityUrl },
+        ]);
       }),
-  );
+    );
 
-  it.effect("repairs the permissions of an existing token file", () =>
-    Effect.gen(function* () {
-      const credentialRoot = yield* temporaryDirectory("nyaucast-auth-existing-token-");
-      const credentialDirectory = prepareCredentialDirectory(credentialRoot);
-      const tokenPath = join(credentialDirectory, "token.json");
-      writeFileSync(tokenPath, JSON.stringify(storedToken()), { mode: 0o600 });
-      chmodSync(tokenPath, 0o644);
-
-      yield* Effect.gen(function* () {
-        yield* (yield* YouTubeAuth).authenticate(channel);
-      }).pipe(provideAuth({ authorize: succeedWith(storedToken()), credentialRoot }));
-
-      assert.strictEqual(modeBits(tokenPath), 0o600);
-    }),
-  );
-
-  it.effect(
-    "requires client secrets at the single credential location, and names only the display path",
-    () =>
+    it.effect("reports an expiry only when Google said when the refresh token expires", () =>
       Effect.gen(function* () {
-        const credentialRoot = yield* temporaryDirectory("nyaucast-auth-location-");
-        const repositoryAuth = join(credentialRoot, "channel-repository", "auth");
-        mkdirSync(repositoryAuth, { recursive: true });
-        writeFileSync(join(repositoryAuth, "client_secrets.json"), clientSecretsJson());
-        const authorize = neverCalled();
+        const root = yield* temporaryDirectory("nyaucast-youtube-expiry-");
+        yield* setClock("2029-06-01T00:00:00.000Z");
+        const authorizeWith = (credentials: Record<string, unknown>) =>
+          Effect.gen(function* () {
+            return yield* (yield* YouTubeAuth).authorize(channel);
+          }).pipe(
+            provideAuth({
+              authorize: succeedWith(credentials),
+              credentialRoot: root,
+              http: identityHttp(channelResponse("UC_A")),
+            }),
+          );
 
-        const failure = yield* Effect.gen(function* () {
-          return yield* Effect.flip((yield* YouTubeAuth).authenticate(channel));
-        }).pipe(provideAuth({ authorize, credentialRoot }));
+        const withExpiry = yield* authorizeWith(storedToken({ refresh_token_expires_in: 604_800 }));
+        const withoutExpiry = yield* authorizeWith(storedToken());
 
-        assert.strictEqual(failure._tag, "ClientSecretsUnavailable");
-        assert.strictEqual(
-          (failure as unknown as { location: string }).location,
-          `~/.config/nyaucast/${channel}/client_secrets.json`,
-        );
-        assert.isFalse(credentialFailure(failure).includes(credentialRoot));
-        expect(authorize).not.toHaveBeenCalled();
+        assert.strictEqual(withExpiry.expiresAt, Date.parse("2029-06-08T00:00:00.000Z"));
+        assert.isFalse("expiresAt" in withoutExpiry);
       }),
-  );
+    );
 
-  it.effect.each(["", ".", "..", "deepfocus/365", "deepfocus\\365"])(
-    "rejects invalid channel value %j before authorization",
-    (invalidChannel) =>
-      Effect.gen(function* () {
-        const credentialRoot = yield* temporaryDirectory("nyaucast-auth-channel-");
-        const authorize = neverCalled();
-
-        const failure = yield* Effect.gen(function* () {
-          return yield* Effect.flip((yield* YouTubeAuth).authenticate(invalidChannel));
-        }).pipe(provideAuth({ authorize, credentialRoot }));
-
-        assert.strictEqual(failure._tag, "InvalidChannel");
-        expect(authorize).not.toHaveBeenCalled();
-      }),
-  );
-
-  it.effect("uses a copied unexpired token without starting browser authorization", () =>
-    Effect.gen(function* () {
-      const credentialRoot = yield* temporaryDirectory("nyaucast-auth-copied-token-");
-      const credentialDirectory = prepareCredentialDirectory(credentialRoot);
-      writeFileSync(join(credentialDirectory, "token.json"), JSON.stringify(storedToken()), {
-        mode: 0o644,
-      });
-      const authorize = neverCalled();
-      const oauthClient = createOAuthClientFake({ credentialsAfterGet: storedToken() });
-      const createOAuthClient = vi.fn(() => oauthClient);
-
-      const token = yield* Effect.gen(function* () {
-        return yield* (yield* YouTubeAuth).getAccessToken(channel);
-      }).pipe(provideAuth({ authorize, createOAuthClient, credentialRoot }));
-
-      assert.strictEqual(token, accessToken);
-      expect(createOAuthClient).toHaveBeenCalledWith({
-        clientId,
-        clientSecret,
-        redirectUri: "http://localhost",
-      });
-      expect(oauthClient.setCredentials).toHaveBeenCalledWith(storedToken());
-      expect(oauthClient.getAccessToken).toHaveBeenCalledOnce();
-      expect(oauthClient.refreshAccessToken).not.toHaveBeenCalled();
-      expect(authorize).not.toHaveBeenCalled();
-      assert.strictEqual(modeBits(join(credentialDirectory, "token.json")), 0o600);
-    }),
-  );
-
-  const tokenStates = [
-    {
-      name: "without expiry_date",
-      sdkCredentials: JSON.parse(
-        JSON.stringify(storedToken({ expiry_date: undefined })),
-      ) as Credentials,
-      storedCredentials: storedToken({ expiry_date: undefined }),
-    },
-    {
-      name: "near expiry",
-      sdkCredentials: storedToken({
-        access_token: "REFRESHED_NEAR_EXPIRY_TOKEN",
-        expiry_date: Date.parse("2030-01-01T00:00:00.000Z"),
-      }),
-      storedCredentials: storedToken({
-        expiry_date: Date.parse("2029-01-01T00:04:00.000Z"),
-        legacy_field: "remove",
-      }),
-    },
-    {
-      name: "expired",
-      sdkCredentials: storedToken({
-        access_token: "REFRESHED_EXPIRED_TOKEN",
-        expiry_date: Date.parse("2030-01-01T00:00:00.000Z"),
-      }),
-      storedCredentials: storedToken({
-        expiry_date: Date.parse("2028-01-01T00:00:00.000Z"),
-        legacy_field: "remove",
-      }),
-    },
-  ];
-
-  it.effect.each(tokenStates)(
-    "delegates normal token retrieval to the SDK for a token $name",
-    (tokenState) =>
-      Effect.gen(function* () {
-        const credentialRoot = yield* temporaryDirectory("nyaucast-auth-sdk-token-");
-        const credentialDirectory = prepareCredentialDirectory(credentialRoot);
-        const tokenPath = join(credentialDirectory, "token.json");
-        writeFileSync(tokenPath, JSON.stringify(tokenState.storedCredentials), { mode: 0o600 });
-        const oauthClient = createOAuthClientFake({
-          credentialsAfterGet: tokenState.sdkCredentials,
-        });
-
-        const token = yield* Effect.gen(function* () {
-          return yield* (yield* YouTubeAuth).getAccessToken(channel);
-        }).pipe(provideAuth({ createOAuthClient: vi.fn(() => oauthClient), credentialRoot }));
-
-        assert.strictEqual(token, tokenState.sdkCredentials["access_token"]);
-        expect(oauthClient.getAccessToken).toHaveBeenCalledOnce();
-        assert.deepStrictEqual(
-          JSON.parse(readFileSync(tokenPath, "utf8")),
-          tokenState.sdkCredentials,
-        );
-        assert.strictEqual(modeBits(tokenPath), 0o600);
-      }),
-  );
-
-  it.effect("does not overwrite a newer token file when SDK credentials are unchanged", () =>
-    Effect.gen(function* () {
-      const credentialRoot = yield* temporaryDirectory("nyaucast-auth-unchanged-token-");
-      const credentialDirectory = prepareCredentialDirectory(credentialRoot);
-      const tokenPath = join(credentialDirectory, "token.json");
-      const existingCredentials = storedToken({ access_token: "EXISTING_ACCESS_TOKEN" });
-      const newerCredentials = storedToken({ access_token: "NEW_AUTH_ACCESS_TOKEN" });
-      writeFileSync(tokenPath, JSON.stringify(existingCredentials), { mode: 0o600 });
-      const oauthClient = createOAuthClientFake({
-        beforeGetAccessToken: async () => {
-          await writeFile(tokenPath, JSON.stringify(newerCredentials));
+    describe("when YouTube does not tell which channel the token belongs to", () => {
+      it.effect.each([
+        { name: "lists no channel", response: () => Response.json({ items: [] }) },
+        {
+          name: "answers with an error status",
+          response: () => Response.json({}, { status: 403 }),
         },
-      });
+        {
+          name: "answers with something that is not a channel list",
+          response: () => Response.json({ unexpected: true }),
+        },
+      ])("fails with AccountIdentityUnavailable when it $name", ({ response }) =>
+        Effect.gen(function* () {
+          const root = yield* temporaryDirectory("nyaucast-youtube-identity-unavailable-");
 
-      const token = yield* Effect.gen(function* () {
-        return yield* (yield* YouTubeAuth).getAccessToken(channel);
-      }).pipe(provideAuth({ createOAuthClient: vi.fn(() => oauthClient), credentialRoot }));
+          const failure = yield* Effect.gen(function* () {
+            return yield* Effect.flip((yield* YouTubeAuth).authorize(channel));
+          }).pipe(
+            provideAuth({
+              authorize: succeedWith(storedToken()),
+              credentialRoot: root,
+              http: identityHttp(response()),
+            }),
+          );
 
-      assert.strictEqual(token, "EXISTING_ACCESS_TOKEN");
-      assert.deepStrictEqual(JSON.parse(readFileSync(tokenPath, "utf8")), newerCredentials);
-    }),
-  );
-
-  it.effect(
-    "persists the SDK credentials returned by an explicit refresh without merging old fields",
-    () =>
-      Effect.gen(function* () {
-        const credentialRoot = yield* temporaryDirectory("nyaucast-auth-refresh-");
-        const credentialDirectory = prepareCredentialDirectory(credentialRoot);
-        const tokenPath = join(credentialDirectory, "token.json");
-        writeFileSync(tokenPath, JSON.stringify(storedToken({ legacy_field: "remove" })), {
-          mode: 0o600,
-        });
-        const refreshed = storedToken({ access_token: "REFRESHED_ACCESS_TOKEN" }) as Credentials;
-        const oauthClient = createOAuthClientFake({ refreshCredentials: refreshed });
-
-        const token = yield* Effect.gen(function* () {
-          return yield* (yield* YouTubeAuth).refreshAccessToken(channel);
-        }).pipe(provideAuth({ createOAuthClient: vi.fn(() => oauthClient), credentialRoot }));
-
-        assert.strictEqual(token, "REFRESHED_ACCESS_TOKEN");
-        expect(oauthClient.refreshAccessToken).toHaveBeenCalledOnce();
-        assert.deepStrictEqual(JSON.parse(readFileSync(tokenPath, "utf8")), refreshed);
-        assert.strictEqual(modeBits(tokenPath), 0o600);
-      }),
-  );
-
-  it.effect.each([
-    { field: "access_token", value: undefined },
-    { field: "access_token", value: "" },
-    { field: "refresh_token", value: undefined },
-    { field: "refresh_token", value: "" },
-  ])("does not overwrite credentials when a new $field is invalid", ({ field, value }) =>
-    Effect.gen(function* () {
-      const credentialRoot = yield* temporaryDirectory("nyaucast-auth-invalid-new-token-");
-      const credentialDirectory = prepareCredentialDirectory(credentialRoot);
-      const tokenPath = join(credentialDirectory, "token.json");
-      const original = `${JSON.stringify(storedToken(), undefined, 2)}\n`;
-      writeFileSync(tokenPath, original, { mode: 0o600 });
-
-      const failure = yield* Effect.gen(function* () {
-        return yield* Effect.flip((yield* YouTubeAuth).authenticate(channel));
-      }).pipe(
-        provideAuth({ authorize: succeedWith(storedToken({ [field]: value })), credentialRoot }),
+          assert.deepStrictEqual(failureFacts(failure), {
+            _tag: "AccountIdentityUnavailable",
+            channel,
+            platform: "youtube",
+          });
+        }),
       );
 
-      assert.strictEqual(failure._tag, "AuthorizationFailed");
-      assert.strictEqual(readFileSync(tokenPath, "utf8"), original);
-    }),
-  );
+      it.effect(
+        "fails with AccountIdentityUnavailable, without the access token, when the HTTP boundary fails",
+        () =>
+          Effect.gen(function* () {
+            const root = yield* temporaryDirectory("nyaucast-youtube-identity-transport-");
+            const http = identityHttp(
+              new HttpClientError.HttpClientError({
+                reason: new HttpClientError.TransportError({
+                  cause: new Error(`network error for Bearer ${accessToken}`),
+                  request: HttpClientRequest.get(identityUrl),
+                }),
+              }),
+            );
 
-  it.effect.each([
-    { name: "missing", sdkCredentials: { token_type: "Bearer" } },
-    { name: "empty", sdkCredentials: { access_token: "", token_type: "Bearer" } },
-  ])(
-    "does not save or return an old access token when SDK retrieval leaves it $name",
-    ({ sdkCredentials }) =>
-      Effect.gen(function* () {
-        const credentialRoot = yield* temporaryDirectory("nyaucast-auth-invalid-refresh-token-");
-        const credentialDirectory = prepareCredentialDirectory(credentialRoot);
-        const tokenPath = join(credentialDirectory, "token.json");
-        const original = JSON.stringify(
-          storedToken({ expiry_date: Date.parse("2028-01-01T00:00:00.000Z") }),
-        );
-        writeFileSync(tokenPath, original, { mode: 0o600 });
-        const authorize = neverCalled();
-        const oauthClient = createOAuthClientFake({ credentialsAfterGet: sdkCredentials });
+            const failure = yield* Effect.gen(function* () {
+              return yield* Effect.flip((yield* YouTubeAuth).authorize(channel));
+            }).pipe(
+              provideAuth({ authorize: succeedWith(storedToken()), credentialRoot: root, http }),
+            );
 
-        const failure = yield* Effect.gen(function* () {
-          return yield* Effect.flip((yield* YouTubeAuth).getAccessToken(channel));
-        }).pipe(
-          provideAuth({ authorize, createOAuthClient: vi.fn(() => oauthClient), credentialRoot }),
-        );
+            assert.deepStrictEqual(failureFacts(failure), {
+              _tag: "AccountIdentityUnavailable",
+              channel,
+              platform: "youtube",
+            });
+          }),
+      );
+    });
 
-        assert.strictEqual(failure._tag, "CredentialRefreshFailed");
-        assert.strictEqual((failure as unknown as { channel: string }).channel, channel);
-        assert.strictEqual(readFileSync(tokenPath, "utf8"), original);
-        expect(authorize).not.toHaveBeenCalled();
-      }),
-  );
-
-  it.effect("replaces an existing token inode only after writing the new owner-only file", () =>
-    Effect.gen(function* () {
-      const credentialRoot = yield* temporaryDirectory("nyaucast-auth-atomic-save-");
-      const credentialDirectory = prepareCredentialDirectory(credentialRoot);
-      const tokenPath = join(credentialDirectory, "token.json");
-      const oldContents = JSON.stringify(storedToken({ access_token: "OLD_ACCESS_TOKEN" }));
-      writeFileSync(tokenPath, oldContents, { mode: 0o644 });
-      const oldDescriptor = openSync(tokenPath, "r");
-      const newCredentials = storedToken({ access_token: "NEW_ACCESS_TOKEN" });
-
-      yield* Effect.gen(function* () {
-        yield* (yield* YouTubeAuth).authenticate(channel);
-      }).pipe(provideAuth({ authorize: succeedWith(newCredentials), credentialRoot }));
-
-      // 古い inode は書き換えられていない（rename で置き換わった）
-      assert.strictEqual(readFileSync(oldDescriptor, "utf8"), oldContents);
-      assert.deepStrictEqual(JSON.parse(readFileSync(tokenPath, "utf8")), newCredentials);
-      assert.strictEqual(modeBits(tokenPath), 0o600);
-    }),
-  );
-
-  describe("when credentials cannot be saved", () => {
-    const savedTokenIsDirectory = (tokenPath: string) => async () => {
-      await rm(tokenPath);
-      await mkdir(tokenPath);
-    };
-
-    it.effect(
-      "reports a storage failure when automatically refreshed credentials cannot be saved",
-      () =>
+    it.effect.each([
+      { field: "access_token", value: undefined },
+      { field: "access_token", value: "" },
+      { field: "refresh_token", value: undefined },
+      { field: "refresh_token", value: "" },
+    ])(
+      "fails with AuthorizationFailed, without asking YouTube anything, when the new $field is invalid",
+      ({ field, value }) =>
         Effect.gen(function* () {
-          const credentialRoot = yield* temporaryDirectory("nyaucast-auth-refresh-save-failure-");
-          const credentialDirectory = prepareCredentialDirectory(credentialRoot);
-          const tokenPath = join(credentialDirectory, "token.json");
-          writeFileSync(
-            tokenPath,
-            JSON.stringify(storedToken({ expiry_date: Date.parse("2028-01-01T00:00:00.000Z") })),
-            { mode: 0o600 },
-          );
-          const refreshedAccessToken = "REFRESHED_ACCESS_TOKEN_SENTINEL";
-          const oauthClient = createOAuthClientFake({
-            beforeGetAccessToken: savedTokenIsDirectory(tokenPath),
-            credentialsAfterGet: {
-              access_token: refreshedAccessToken,
-              refresh_token: refreshToken,
-            },
-          });
-          const authorize = neverCalled();
+          const root = yield* temporaryDirectory("nyaucast-youtube-invalid-new-token-");
+          const http = identityHttp(undefined);
 
           const failure = yield* Effect.gen(function* () {
-            return yield* Effect.flip((yield* YouTubeAuth).getAccessToken(channel));
+            return yield* Effect.flip((yield* YouTubeAuth).authorize(channel));
           }).pipe(
-            provideAuth({ authorize, createOAuthClient: vi.fn(() => oauthClient), credentialRoot }),
+            provideAuth({
+              authorize: succeedWith(storedToken({ [field]: value })),
+              credentialRoot: root,
+              http,
+            }),
           );
 
-          assert.strictEqual(failure._tag, "CredentialSaveFailed");
-          const rendered = credentialFailure(failure);
-          for (const secret of [refreshedAccessToken, refreshToken, credentialRoot]) {
-            assert.isFalse(rendered.includes(secret));
-          }
-          expect(authorize).not.toHaveBeenCalled();
-          assert.isTrue(statSync(tokenPath).isDirectory());
-          assert.deepStrictEqual(temporaryTokenNames(credentialDirectory), []);
+          assert.deepStrictEqual(failureFacts(failure), {
+            _tag: "AuthorizationFailed",
+            channel,
+            platform: "youtube",
+          });
+          assert.deepStrictEqual(http.requests, []);
         }),
     );
 
-    it.effect(
-      "reports a storage failure when explicitly refreshed credentials cannot be saved",
-      () =>
-        Effect.gen(function* () {
-          const credentialRoot = yield* temporaryDirectory("nyaucast-auth-explicit-refresh-save-");
-          const credentialDirectory = prepareCredentialDirectory(credentialRoot);
-          const tokenPath = join(credentialDirectory, "token.json");
-          writeFileSync(tokenPath, JSON.stringify(storedToken()), { mode: 0o600 });
-          const refreshedAccessToken = "EXPLICIT_REFRESHED_ACCESS_TOKEN_SENTINEL";
-          const oauthClient = createOAuthClientFake({
-            beforeRefresh: savedTokenIsDirectory(tokenPath),
-            refreshCredentials: { access_token: refreshedAccessToken, refresh_token: refreshToken },
-          });
-          const authorize = neverCalled();
-
-          const failure = yield* Effect.gen(function* () {
-            return yield* Effect.flip((yield* YouTubeAuth).refreshAccessToken(channel));
-          }).pipe(
-            provideAuth({ authorize, createOAuthClient: vi.fn(() => oauthClient), credentialRoot }),
-          );
-
-          assert.strictEqual(failure._tag, "CredentialSaveFailed");
-          const rendered = credentialFailure(failure);
-          for (const secret of [refreshedAccessToken, refreshToken, credentialRoot]) {
-            assert.isFalse(rendered.includes(secret));
-          }
-          expect(authorize).not.toHaveBeenCalled();
-          assert.isTrue(statSync(tokenPath).isDirectory());
-          assert.deepStrictEqual(temporaryTokenNames(credentialDirectory), []);
-        }),
-    );
-
-    it.effect("propagates a token persistence failure without exposing credentials", () =>
+    it.effect("does not expose client secrets from an authorization failure", () =>
       Effect.gen(function* () {
-        const credentialRoot = yield* temporaryDirectory("nyaucast-auth-save-failure-");
-        const credentialDirectory = prepareCredentialDirectory(credentialRoot);
-        mkdirSync(join(credentialDirectory, "token.json"));
+        const root = yield* temporaryDirectory("nyaucast-youtube-redaction-");
+        const authorize = vi.fn(() =>
+          Effect.fail(new Error(`OAuth rejected ${clientSecret}`)),
+        ) as unknown as Authorize;
 
         const failure = yield* Effect.gen(function* () {
-          return yield* Effect.flip((yield* YouTubeAuth).authenticate(channel));
-        }).pipe(provideAuth({ authorize: succeedWith(storedToken()), credentialRoot }));
+          return yield* Effect.flip((yield* YouTubeAuth).authorize(channel));
+        }).pipe(provideAuth({ authorize, credentialRoot: root }));
 
-        assert.strictEqual(failure._tag, "CredentialSaveFailed");
-        const rendered = credentialFailure(failure);
-        for (const secret of [accessToken, refreshToken, clientSecret, credentialRoot]) {
+        assert.deepStrictEqual(failureFacts(failure), {
+          _tag: "AuthorizationFailed",
+          channel,
+          platform: "youtube",
+        });
+        const rendered = JSON.stringify(failure);
+        for (const secret of [clientId, clientSecret, root]) {
           assert.isFalse(rendered.includes(secret));
         }
-        assert.deepStrictEqual(temporaryTokenNames(credentialDirectory), []);
-      }),
-    );
-
-    it.effect("preserves the storage failure when temporary-token cleanup also fails", () =>
-      Effect.gen(function* () {
-        const credentialRoot = yield* temporaryDirectory("nyaucast-auth-double-save-failure-");
-        const credentialDirectory = prepareCredentialDirectory(credentialRoot);
-        const tokenPath = join(credentialDirectory, "token.json");
-        mkdirSync(tokenPath);
-        const cleanupFailure = `CLEANUP_FAILURE_SENTINEL ${tokenPath} ${accessToken}`;
-        const removed: string[] = [];
-        // 後始末（remove）だけを失敗させる FileSystem。残りは本物。
-        const failingCleanup = Layer.effect(
-          FileSystem.FileSystem,
-          Effect.map(FileSystem.FileSystem, (real) => ({
-            ...real,
-            remove: (path: string) => {
-              removed.push(path);
-              // PlatformError の代わりに任意の失敗を注入する
-              return Effect.fail(new Error(cleanupFailure)) as never;
-            },
-          })),
-        );
-        const authorize = succeedWith(storedToken());
-
-        const failure = yield* Effect.gen(function* () {
-          return yield* Effect.flip((yield* YouTubeAuth).authenticate(channel));
-        }).pipe(provideAuth({ authorize, credentialRoot, fileSystem: failingCleanup }));
-
-        assert.strictEqual(failure._tag, "CredentialSaveFailed");
-        const rendered = credentialFailure(failure);
-        for (const leaked of [
-          "CLEANUP_FAILURE_SENTINEL",
-          accessToken,
-          refreshToken,
-          clientSecret,
-          credentialRoot,
-        ]) {
-          assert.isFalse(rendered.includes(leaked));
-        }
-        assert.isTrue(removed.some((path) => path.includes(".token-")));
-        expect(authorize).toHaveBeenCalledOnce();
       }),
     );
   });
 
-  it.effect("stops with a tagged failure when SDK token retrieval fails", () =>
-    Effect.gen(function* () {
-      const credentialRoot = yield* temporaryDirectory("nyaucast-auth-get-token-failure-");
-      const credentialDirectory = prepareCredentialDirectory(credentialRoot);
-      writeFileSync(join(credentialDirectory, "token.json"), JSON.stringify(storedToken()), {
-        mode: 0o600,
-      });
-      const authorize = neverCalled();
-      const oauthClient = createOAuthClientFake({
-        getAccessTokenError: new Error(`invalid_grant ${refreshToken}`),
-      });
+  describe("getAccessToken", () => {
+    it.effect(
+      "gives the stored access token, reading the client secrets through StaticSecrets",
+      () =>
+        Effect.gen(function* () {
+          const root = yield* temporaryDirectory("nyaucast-youtube-get-");
+          seedCredential(root, envelope());
+          const oauthClient = createOAuthClientFake({ credentialsAfterGet: storedToken() });
+          const createOAuthClient = clientFor(oauthClient);
+          const authorize = neverCalled();
 
-      const failure = yield* Effect.gen(function* () {
-        return yield* Effect.flip((yield* YouTubeAuth).getAccessToken(channel));
-      }).pipe(
-        provideAuth({ authorize, createOAuthClient: vi.fn(() => oauthClient), credentialRoot }),
+          const token = yield* Effect.gen(function* () {
+            return yield* (yield* YouTubeAuth).getAccessToken(channel);
+          }).pipe(provideAuth({ authorize, createOAuthClient, credentialRoot: root }));
+
+          assert.strictEqual(token, accessToken);
+          expect(createOAuthClient).toHaveBeenCalledWith(
+            expect.objectContaining({ clientId, clientSecret }),
+          );
+          expect(oauthClient.setCredentials).toHaveBeenCalledWith(storedToken());
+          expect(oauthClient.getAccessToken).toHaveBeenCalledOnce();
+          expect(oauthClient.refreshAccessToken).not.toHaveBeenCalled();
+          expect(authorize).not.toHaveBeenCalled();
+        }),
+    );
+
+    it.effect(
+      "does not overwrite a newer credential file when the SDK credentials are unchanged",
+      () =>
+        Effect.gen(function* () {
+          const root = yield* temporaryDirectory("nyaucast-youtube-unchanged-");
+          const path = seedCredential(
+            root,
+            envelope({ token: storedToken({ access_token: "EXISTING" }) }),
+          );
+          const newer = envelope({ token: storedToken({ access_token: "NEWER" }) });
+          const oauthClient = createOAuthClientFake({
+            beforeGetAccessToken: async () => {
+              await writeFile(path, JSON.stringify(newer));
+            },
+          });
+
+          const token = yield* Effect.gen(function* () {
+            return yield* (yield* YouTubeAuth).getAccessToken(channel);
+          }).pipe(provideAuth({ createOAuthClient: clientFor(oauthClient), credentialRoot: root }));
+
+          assert.strictEqual(token, "EXISTING");
+          assert.deepStrictEqual(readStored(root), newer);
+        }),
+    );
+
+    it.effect(
+      "saves the credentials the SDK refreshed, keeping the account and expiry of the envelope",
+      () =>
+        Effect.gen(function* () {
+          const root = yield* temporaryDirectory("nyaucast-youtube-sdk-refresh-");
+          seedCredential(
+            root,
+            envelope({
+              refreshFailedAt: Date.parse("2029-01-01T00:00:00.000Z"),
+              token: storedToken({
+                expiry_date: Date.parse("2028-01-01T00:00:00.000Z"),
+                legacy_field: "remove",
+              }),
+            }),
+          );
+          const refreshed = storedToken({ access_token: "REFRESHED_ACCESS_TOKEN" });
+          const oauthClient = createOAuthClientFake({ credentialsAfterGet: refreshed });
+
+          const token = yield* Effect.gen(function* () {
+            return yield* (yield* YouTubeAuth).getAccessToken(channel);
+          }).pipe(provideAuth({ createOAuthClient: clientFor(oauthClient), credentialRoot: root }));
+
+          assert.strictEqual(token, "REFRESHED_ACCESS_TOKEN");
+          assert.deepStrictEqual(readStored(root), envelope({ token: refreshed }));
+          assert.strictEqual(modeBits(credentialPath(root)), 0o600);
+        }),
+    );
+
+    describe("when the token cannot be renewed", () => {
+      it.effect.each([
+        {
+          name: "fails",
+          options: { getAccessTokenError: new Error(`invalid_grant ${refreshToken}`) },
+        },
+        {
+          name: "leaves the access token missing",
+          options: { credentialsAfterGet: { token_type: "Bearer" } },
+        },
+        {
+          name: "leaves the access token empty",
+          options: { credentialsAfterGet: { access_token: "", token_type: "Bearer" } },
+        },
+      ])(
+        "stops with ReauthenticationRequired and records the failure when the SDK $name",
+        ({ options }) =>
+          Effect.gen(function* () {
+            const root = yield* temporaryDirectory("nyaucast-youtube-renew-failure-");
+            yield* setClock("2029-06-01T00:00:00.000Z");
+            seedCredential(root, envelope());
+            const authorize = neverCalled();
+            const oauthClient = createOAuthClientFake(options);
+
+            const failure = yield* Effect.gen(function* () {
+              return yield* Effect.flip((yield* YouTubeAuth).getAccessToken(channel));
+            }).pipe(
+              provideAuth({
+                authorize,
+                createOAuthClient: clientFor(oauthClient),
+                credentialRoot: root,
+              }),
+            );
+
+            assert.deepStrictEqual(failureFacts(failure), {
+              _tag: "ReauthenticationRequired",
+              channel,
+              platform: "youtube",
+            });
+            assert.deepStrictEqual(
+              readStored(root),
+              envelope({ refreshFailedAt: Date.parse("2029-06-01T00:00:00.000Z") }),
+            );
+            const rendered = JSON.stringify(failure);
+            for (const leaked of [refreshToken, root]) assert.isFalse(rendered.includes(leaked));
+            expect(authorize).not.toHaveBeenCalled();
+          }),
       );
+    });
 
-      assert.strictEqual(failure._tag, "CredentialRefreshFailed");
-      assert.strictEqual((failure as unknown as { channel: string }).channel, channel);
-      const rendered = credentialFailure(failure);
-      assert.isFalse(rendered.includes(refreshToken));
-      assert.isFalse(rendered.includes(credentialRoot));
-      expect(authorize).not.toHaveBeenCalled();
-    }),
-  );
+    it.effect(
+      "fails with AuthRequired, carrying only facts, when there is no stored credential",
+      () =>
+        Effect.gen(function* () {
+          const root = yield* temporaryDirectory("nyaucast-youtube-auth-required-");
 
-  it.effect("stops with a tagged failure when explicit refresh fails without authorization", () =>
-    Effect.gen(function* () {
-      const credentialRoot = yield* temporaryDirectory("nyaucast-auth-refresh-failure-");
-      const credentialDirectory = prepareCredentialDirectory(credentialRoot);
-      writeFileSync(
-        join(credentialDirectory, "token.json"),
-        JSON.stringify(storedToken({ expiry_date: Date.parse("2028-01-01T00:00:00.000Z") })),
-        { mode: 0o600 },
-      );
-      const authorize = neverCalled();
-      const oauthClient = createOAuthClientFake({
-        refreshError: new Error(`invalid_grant ${refreshToken}`),
-      });
+          const failure = yield* Effect.gen(function* () {
+            return yield* Effect.flip((yield* YouTubeAuth).getAccessToken(channel));
+          }).pipe(provideAuth({ credentialRoot: root }));
 
-      const failure = yield* Effect.gen(function* () {
-        return yield* Effect.flip((yield* YouTubeAuth).refreshAccessToken(channel));
-      }).pipe(
-        provideAuth({ authorize, createOAuthClient: vi.fn(() => oauthClient), credentialRoot }),
-      );
+          assert.deepStrictEqual(failureFacts(failure), {
+            _tag: "AuthRequired",
+            channel,
+            platform: "youtube",
+          });
+        }),
+    );
 
-      assert.strictEqual(failure._tag, "CredentialRefreshFailed");
-      const rendered = credentialFailure(failure);
-      assert.isFalse(rendered.includes(refreshToken));
-      assert.isFalse(rendered.includes(credentialRoot));
-      expect(authorize).not.toHaveBeenCalled();
-    }),
-  );
-
-  it.effect(
-    "fails with AuthRequired, carrying only the channel, when there is no stored token",
-    () =>
+    it.effect("reports a storage failure when the refreshed credentials cannot be saved", () =>
       Effect.gen(function* () {
-        const credentialRoot = yield* temporaryDirectory("nyaucast-auth-required-");
-        prepareCredentialDirectory(credentialRoot);
+        const root = yield* temporaryDirectory("nyaucast-youtube-save-failure-");
+        const path = seedCredential(root, envelope());
+        const refreshedAccessToken = "REFRESHED_ACCESS_TOKEN_SENTINEL";
+        const oauthClient = createOAuthClientFake({
+          beforeGetAccessToken: async () => {
+            await rm(path);
+            await mkdir(path);
+          },
+          credentialsAfterGet: { access_token: refreshedAccessToken, refresh_token: refreshToken },
+        });
 
         const failure = yield* Effect.gen(function* () {
           return yield* Effect.flip((yield* YouTubeAuth).getAccessToken(channel));
-        }).pipe(provideAuth({ credentialRoot }));
+        }).pipe(provideAuth({ createOAuthClient: clientFor(oauthClient), credentialRoot: root }));
+
+        assert.deepStrictEqual(failureFacts(failure), {
+          _tag: "CredentialSaveFailed",
+          channel,
+          platform: "youtube",
+        });
+        const rendered = JSON.stringify(failure);
+        for (const leaked of [refreshedAccessToken, refreshToken, root]) {
+          assert.isFalse(rendered.includes(leaked));
+        }
+      }),
+    );
+  });
+
+  describe("refreshAccessToken", () => {
+    it.effect(
+      "saves the credentials the SDK returned without merging old fields, and clears a recorded failure",
+      () =>
+        Effect.gen(function* () {
+          const root = yield* temporaryDirectory("nyaucast-youtube-explicit-refresh-");
+          seedCredential(
+            root,
+            envelope({
+              refreshFailedAt: Date.parse("2029-01-01T00:00:00.000Z"),
+              token: storedToken({ legacy_field: "remove" }),
+            }),
+          );
+          const refreshed = storedToken({ access_token: "REFRESHED_ACCESS_TOKEN" }) as Credentials;
+          const oauthClient = createOAuthClientFake({ refreshCredentials: refreshed });
+
+          const token = yield* Effect.gen(function* () {
+            return yield* (yield* YouTubeAuth).refreshAccessToken(channel);
+          }).pipe(provideAuth({ createOAuthClient: clientFor(oauthClient), credentialRoot: root }));
+
+          assert.strictEqual(token, "REFRESHED_ACCESS_TOKEN");
+          expect(oauthClient.refreshAccessToken).toHaveBeenCalledOnce();
+          assert.deepStrictEqual(readStored(root), envelope({ token: refreshed }));
+          assert.strictEqual(modeBits(credentialPath(root)), 0o600);
+        }),
+    );
+
+    it.effect(
+      "stops with ReauthenticationRequired and records the failure when the refresh fails",
+      () =>
+        Effect.gen(function* () {
+          const root = yield* temporaryDirectory("nyaucast-youtube-explicit-refresh-failure-");
+          yield* setClock("2029-06-01T00:00:00.000Z");
+          seedCredential(root, envelope());
+          const authorize = neverCalled();
+          const oauthClient = createOAuthClientFake({
+            refreshError: new Error(`invalid_grant ${refreshToken}`),
+          });
+
+          const failure = yield* Effect.gen(function* () {
+            return yield* Effect.flip((yield* YouTubeAuth).refreshAccessToken(channel));
+          }).pipe(
+            provideAuth({
+              authorize,
+              createOAuthClient: clientFor(oauthClient),
+              credentialRoot: root,
+            }),
+          );
+
+          assert.deepStrictEqual(failureFacts(failure), {
+            _tag: "ReauthenticationRequired",
+            channel,
+            platform: "youtube",
+          });
+          assert.deepStrictEqual(
+            readStored(root),
+            envelope({ refreshFailedAt: Date.parse("2029-06-01T00:00:00.000Z") }),
+          );
+          assert.isFalse(JSON.stringify(failure).includes(refreshToken));
+          expect(authorize).not.toHaveBeenCalled();
+        }),
+    );
+
+    it.effect("reports a storage failure when the refreshed credentials cannot be saved", () =>
+      Effect.gen(function* () {
+        const root = yield* temporaryDirectory("nyaucast-youtube-explicit-save-failure-");
+        const path = seedCredential(root, envelope());
+        const refreshedAccessToken = "EXPLICIT_REFRESHED_ACCESS_TOKEN_SENTINEL";
+        const oauthClient = createOAuthClientFake({
+          beforeRefresh: async () => {
+            await rm(path);
+            await mkdir(path);
+          },
+          refreshCredentials: { access_token: refreshedAccessToken, refresh_token: refreshToken },
+        });
+
+        const failure = yield* Effect.gen(function* () {
+          return yield* Effect.flip((yield* YouTubeAuth).refreshAccessToken(channel));
+        }).pipe(provideAuth({ createOAuthClient: clientFor(oauthClient), credentialRoot: root }));
+
+        assert.deepStrictEqual(failureFacts(failure), {
+          _tag: "CredentialSaveFailed",
+          channel,
+          platform: "youtube",
+        });
+        assert.isFalse(JSON.stringify(failure).includes(refreshedAccessToken));
+      }),
+    );
+
+    it.effect("fails with AuthRequired when there is no stored credential to refresh", () =>
+      Effect.gen(function* () {
+        const root = yield* temporaryDirectory("nyaucast-youtube-refresh-auth-required-");
+
+        const failure = yield* Effect.gen(function* () {
+          return yield* Effect.flip((yield* YouTubeAuth).refreshAccessToken(channel));
+        }).pipe(provideAuth({ credentialRoot: root }));
 
         assert.strictEqual(failure._tag, "AuthRequired");
-        assert.strictEqual((failure as unknown as { channel: string }).channel, channel);
-        assert.isFalse(credentialFailure(failure).includes(credentialRoot));
       }),
-  );
-
-  it.effect("states facts only: a failure carries no instruction for the next action", () =>
-    Effect.gen(function* () {
-      const credentialRoot = yield* temporaryDirectory("nyaucast-auth-facts-only-");
-      prepareCredentialDirectory(credentialRoot);
-
-      const failure = yield* Effect.gen(function* () {
-        return yield* Effect.flip((yield* YouTubeAuth).getAccessToken(channel));
-      }).pipe(provideAuth({ credentialRoot }));
-
-      assert.isFalse(failure.message.includes("実行してください"));
-      assert.isFalse(failure.message.includes("nyaucast auth"));
-    }),
-  );
-
-  it.effect("does not expose client secrets from an authorization failure", () =>
-    Effect.gen(function* () {
-      const credentialRoot = yield* temporaryDirectory("nyaucast-auth-redaction-");
-      prepareCredentialDirectory(credentialRoot);
-      const authorize = vi.fn(() =>
-        Effect.fail(new Error(`OAuth rejected ${clientSecret}`)),
-      ) as unknown as Authorize;
-
-      const failure = yield* Effect.gen(function* () {
-        return yield* Effect.flip((yield* YouTubeAuth).authenticate(channel));
-      }).pipe(provideAuth({ authorize, credentialRoot }));
-
-      assert.strictEqual(failure._tag, "AuthorizationFailed");
-      const rendered = credentialFailure(failure);
-      for (const secret of [clientId, clientSecret, credentialRoot]) {
-        assert.isFalse(rendered.includes(secret));
-      }
-    }),
-  );
+    );
+  });
 });

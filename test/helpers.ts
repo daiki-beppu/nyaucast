@@ -1,11 +1,12 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
 
 import { NodeServices } from "@effect/platform-node";
-import { Effect, Layer, Result, Schema } from "effect";
+import { ConfigProvider, Effect, Layer, Result, Schema, Sink, Stream } from "effect";
+import { ChildProcessSpawner } from "effect/process";
 import { SqlClient } from "effect/sql";
 import { TestClock } from "effect/testing";
 
@@ -138,4 +139,46 @@ export function publishedAdditionalProperties(tool: { parametersSchema: Decoder 
   return Schema.toJsonSchemaDocument(tool.parametersSchema, {
     onExcessProperty: "error",
   }).schema["additionalProperties"];
+}
+
+/** 環境変数（Config の既定の読み取り元）を、テストが決めた値だけに差し替える。ホストの環境変数は見えない。 */
+export const environment = (env: Record<string, string>) =>
+  ConfigProvider.layer(ConfigProvider.fromEnv({ env }));
+
+/** 外部コマンド（`op` など）の偽物。呼ばれたコマンドを記録し、決めた終了コードと標準出力で終わる。 */
+export function fakeSpawner(outcome: { exitCode: number; stdout: string }) {
+  const calls: Array<{ args: ReadonlyArray<string>; command: string }> = [];
+  const stdout = Stream.make(new TextEncoder().encode(outcome.stdout));
+  const spawner = ChildProcessSpawner.make((command) =>
+    Effect.sync(() => {
+      if (command._tag === "StandardCommand") {
+        calls.push({ args: command.args, command: command.command });
+      }
+      return ChildProcessSpawner.makeHandle({
+        all: stdout,
+        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(outcome.exitCode)),
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+        isRunning: Effect.succeed(false),
+        kill: () => Effect.void,
+        pid: ChildProcessSpawner.ProcessId(1),
+        stderr: Stream.empty,
+        stdin: Sink.drain,
+        stdout,
+        unref: Effect.succeed(Effect.void),
+      });
+    }),
+  );
+  return { calls, layer: Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner) };
+}
+
+/** 親ディレクトリごと JSON ファイルを書く（テストの前提データ用）。 */
+export function writeJsonFile(path: string, value: unknown): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(value));
+}
+
+/** 失敗が持つ値（タグと事実の field）。CLI が stderr に出す内容と同じ観測単位で、field の並びには依存しない。 */
+export function failureFacts(failure: unknown): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(failure as object));
 }
