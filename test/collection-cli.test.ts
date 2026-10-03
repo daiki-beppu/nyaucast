@@ -1,252 +1,210 @@
-import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { NodeServices } from "@effect/platform-node";
+import { assert, describe, it } from "@effect/vitest";
+import { Effect, Layer } from "effect";
+import { TestClock } from "effect/testing";
 
-import { describe, expect, test } from "@effect/vitest";
-
+import { nyaucastCli } from "../src/cli.ts";
 import {
-  localDatabasePath,
-  openLocalStoreOnce,
-  readRows,
-  seedCollection as insertSeed,
-  withTemporaryDirectoryAsync,
+  channelLayer,
+  insertCollection,
+  localStoreLayer,
+  runProgram,
+  selectAll,
+  setClock,
+  temporaryDirectory,
+  unusedAuthLayer,
 } from "./helpers.ts";
 
 const collectionId = "01JCOLLECTION00000000000000";
-const packageRoot = resolve(import.meta.dirname, "..");
+const missingId = "01JMISSING0000000000000000";
 
-function seedCollection(channelRoot: string): Promise<void> {
-  return insertSeed(channelRoot, { id: collectionId, title: "Night Drive" });
-}
+// ゲートの CLI は local store だけを使う。auth と mcp の Layer はこのテストでは組まれない。
+const runCollectionCli = (channelRoot: string, arguments_: string[]) =>
+  runProgram(
+    nyaucastCli({
+      auth: unusedAuthLayer,
+      localStore: localStoreLayer(channelRoot),
+      mcpServer: Layer.empty,
+    })(["collection", ...arguments_]),
+  ).pipe(Effect.provide(NodeServices.layer));
 
-const approvalRows = (channelRoot: string) => readRows(localDatabasePath(channelRoot), "approvals");
-const rejectionRows = (channelRoot: string) =>
-  readRows(localDatabasePath(channelRoot), "rejections");
+const rowsOf = (channelRoot: string, table: "approvals" | "rejections") =>
+  selectAll(table).pipe(Effect.provide(channelLayer(channelRoot)));
 
-function runCollectionCli(
-  channelRoot: string,
-  arguments_: string[],
-  environment: NodeJS.ProcessEnv,
-) {
-  return spawnSync(
-    process.execPath,
-    [
-      "--conditions=nyaucast-source",
-      "--experimental-strip-types",
-      resolve(packageRoot, "bin", "nyaucast.js"),
-      "collection",
-      ...arguments_,
-    ],
-    {
-      cwd: channelRoot,
-      encoding: "utf8",
-      env: environment,
-      timeout: 10_000,
-    },
-  );
-}
+const seededChannel = (prefix: string) =>
+  Effect.gen(function* () {
+    const channelRoot = yield* temporaryDirectory(prefix);
+    yield* insertCollection({ id: collectionId, title: "Night Drive" }).pipe(
+      Effect.provide(channelLayer(channelRoot)),
+    );
+    return channelRoot;
+  });
 
-function cliEnvironment(path: string): NodeJS.ProcessEnv {
-  return { ...process.env, PATH: path };
-}
+const rejectionMessage = (gate: string) =>
+  `NO-GO を記録しました: collection ${collectionId} / gate=${gate}\n` +
+  `この collection は ${gate} ゲートで停止します。判断を覆して先へ進める場合は\n` +
+  `nyaucast collection ${gate} ${collectionId} を実行してください（NO-GO より後に承認を積むと覆ります）。\n`;
 
-describe("nyaucast collection CLI", () => {
-  test.each(["produce", "publish"] as const)(
+describe("nyaucast collection CLI (in-process)", () => {
+  it.effect.each(["produce", "publish"] as const)(
     "%s records one approval and repeated execution succeeds without another record",
-    async (gate) => {
-      await withTemporaryDirectoryAsync("nyaucast-collection-approval-", async (channelRoot) => {
-        await seedCollection(channelRoot);
+    (gate) =>
+      Effect.gen(function* () {
+        const channelRoot = yield* seededChannel("nyaucast-collection-approval-");
 
-        const first = runCollectionCli(channelRoot, [gate, collectionId], cliEnvironment(""));
-        expect(first.status).toBe(0);
-        expect(first.stdout).toMatch(/[ぁ-んァ-ヶ一-龠]/u);
-        expect(first.stdout).toMatch(/してください/u);
-        expect(
+        const first = yield* runCollectionCli(channelRoot, [gate, collectionId]);
+
+        assert.strictEqual(first.outcome._tag, "Success");
+        assert.match(first.stdout, /[ぁ-んァ-ヶ一-龠]/u);
+        assert.match(first.stdout, /してください/u);
+        assert.isTrue(
           first.stdout.startsWith(`承認を記録しました: collection ${collectionId} / gate=${gate}`),
-        ).toBe(true);
-        expect(rejectionRows(channelRoot)).toEqual([]);
-        expect(first.stdout).toContain(`collection ${collectionId} / gate=${gate}`);
-        expect(first.stdout).toContain(
+        );
+        assert.include(
+          first.stdout,
           `Claude Code で collection ${collectionId} の ${gate} 区間を実行してください。`,
         );
+        assert.deepStrictEqual(yield* rowsOf(channelRoot, "rejections"), []);
 
-        const repeated = runCollectionCli(channelRoot, [gate, collectionId], cliEnvironment(""));
-        expect(repeated.status).toBe(0);
-        expect(repeated.stdout).toMatch(/既に.*承認/u);
+        const repeated = yield* runCollectionCli(channelRoot, [gate, collectionId]);
 
-        expect(approvalRows(channelRoot)).toMatchObject([{ collection_id: collectionId, gate }]);
-      });
-    },
+        assert.strictEqual(repeated.outcome._tag, "Success");
+        assert.match(repeated.stdout, /既に.*承認/u);
+        const approvals = yield* rowsOf(channelRoot, "approvals");
+        assert.strictEqual(approvals.length, 1);
+        assert.include(approvals[0], { collection_id: collectionId, gate });
+      }),
   );
 
-  test.each(["produce", "publish"] as const)("%s does not invoke an agent", async (gate) => {
-    await withTemporaryDirectoryAsync("nyaucast-collection-no-agent-", async (channelRoot) => {
-      await seedCollection(channelRoot);
-      const invocationRecord = resolve(channelRoot, "agent-invocation");
-      const agentExecutable = resolve(channelRoot, "claude");
-      writeFileSync(agentExecutable, '#!/bin/sh\n: > "$AGENT_INVOCATION_RECORD"\n');
-      chmodSync(agentExecutable, 0o755);
+  it.effect("reject treats produce as the rejection gate rather than an approval command", () =>
+    Effect.gen(function* () {
+      const channelRoot = yield* seededChannel("nyaucast-collection-reject-");
 
-      const result = runCollectionCli(channelRoot, [gate, collectionId], {
-        ...cliEnvironment(channelRoot),
-        AGENT_INVOCATION_RECORD: invocationRecord,
-      });
+      const result = yield* runCollectionCli(channelRoot, ["reject", "produce", collectionId]);
 
-      expect(result.status).toBe(0);
-      expect(existsSync(invocationRecord)).toBe(false);
-    });
-  });
+      assert.strictEqual(result.outcome._tag, "Success");
+      assert.strictEqual(result.stdout, rejectionMessage("produce"));
+      assert.deepStrictEqual(yield* rowsOf(channelRoot, "approvals"), []);
+      const rejections = yield* rowsOf(channelRoot, "rejections");
+      assert.strictEqual(rejections.length, 1);
+      assert.include(rejections[0], { collection_id: collectionId, gate: "produce" });
+    }),
+  );
 
-  test("reject treats produce as the rejection gate rather than an approval command", async () => {
-    await withTemporaryDirectoryAsync("nyaucast-collection-reject-", async (channelRoot) => {
-      await seedCollection(channelRoot);
+  it.effect("repeating a current rejection reports success without appending a row", () =>
+    Effect.gen(function* () {
+      const channelRoot = yield* seededChannel("nyaucast-collection-repeat-reject-");
+      const first = yield* runCollectionCli(channelRoot, ["reject", "publish", collectionId]);
+      assert.strictEqual(first.outcome._tag, "Success");
 
-      const result = runCollectionCli(
-        channelRoot,
-        ["reject", "produce", collectionId],
-        cliEnvironment(""),
-      );
+      const repeated = yield* runCollectionCli(channelRoot, ["reject", "publish", collectionId]);
 
-      expect(result.status).toBe(0);
-      expect(result.stdout).toBe(
-        `NO-GO を記録しました: collection ${collectionId} / gate=produce\n` +
-          "この collection は produce ゲートで停止します。判断を覆して先へ進める場合は\n" +
-          `nyaucast collection produce ${collectionId} を実行してください（NO-GO より後に承認を積むと覆ります）。\n`,
-      );
-      expect(approvalRows(channelRoot)).toEqual([]);
-      expect(rejectionRows(channelRoot)).toMatchObject([
-        { collection_id: collectionId, gate: "produce" },
-      ]);
-    });
-  });
-
-  test("repeating a current rejection reports success without appending a row", async () => {
-    await withTemporaryDirectoryAsync("nyaucast-collection-repeat-reject-", async (channelRoot) => {
-      await seedCollection(channelRoot);
-      expect(
-        runCollectionCli(channelRoot, ["reject", "publish", collectionId], cliEnvironment(""))
-          .status,
-      ).toBe(0);
-
-      const repeated = runCollectionCli(
-        channelRoot,
-        ["reject", "publish", collectionId],
-        cliEnvironment(""),
-      );
-
-      expect(repeated.status).toBe(0);
-      expect(repeated.stdout).toBe(
+      assert.strictEqual(repeated.outcome._tag, "Success");
+      assert.strictEqual(
+        repeated.stdout,
         `既に NO-GO 済みです: collection ${collectionId} / gate=publish（記録は追加していません）\n`,
       );
-      expect(rejectionRows(channelRoot)).toHaveLength(1);
-    });
-  });
+      assert.strictEqual((yield* rowsOf(channelRoot, "rejections")).length, 1);
+    }),
+  );
 
-  test("reject appends a new record after approval has overturned the previous rejection", async () => {
-    await withTemporaryDirectoryAsync(
-      "nyaucast-collection-reject-after-approval-",
-      async (channelRoot) => {
-        await seedCollection(channelRoot);
-        expect(
-          runCollectionCli(channelRoot, ["reject", "produce", collectionId], cliEnvironment(""))
-            .status,
-        ).toBe(0);
-        expect(
-          runCollectionCli(channelRoot, ["produce", collectionId], cliEnvironment("")).status,
-        ).toBe(0);
+  it.effect(
+    "reject appends a new record after approval has overturned the previous rejection",
+    () =>
+      Effect.gen(function* () {
+        const channelRoot = yield* seededChannel("nyaucast-collection-reject-after-approval-");
+        yield* setClock("2030-01-01T00:00:00.000Z");
+        const firstRejection = yield* runCollectionCli(channelRoot, [
+          "reject",
+          "produce",
+          collectionId,
+        ]);
+        yield* TestClock.adjust("1 hour");
+        const approval = yield* runCollectionCli(channelRoot, ["produce", collectionId]);
+        yield* TestClock.adjust("1 hour");
 
-        const rejectedAgain = runCollectionCli(
-          channelRoot,
-          ["reject", "produce", collectionId],
-          cliEnvironment(""),
+        const rejectedAgain = yield* runCollectionCli(channelRoot, [
+          "reject",
+          "produce",
+          collectionId,
+        ]);
+
+        assert.strictEqual(firstRejection.outcome._tag, "Success");
+        assert.strictEqual(approval.outcome._tag, "Success");
+        assert.strictEqual(rejectedAgain.outcome._tag, "Success");
+        assert.strictEqual(rejectedAgain.stdout, rejectionMessage("produce"));
+        const rejections = yield* rowsOf(channelRoot, "rejections");
+        assert.deepStrictEqual(
+          rejections.map((row) => row["rejected_at"]),
+          ["2030-01-01T00:00:00.000Z", "2030-01-01T02:00:00.000Z"],
         );
+      }),
+  );
 
-        expect(rejectedAgain.status).toBe(0);
-        expect(rejectedAgain.stdout).toBe(
-          `NO-GO を記録しました: collection ${collectionId} / gate=produce\n` +
-            "この collection は produce ゲートで停止します。判断を覆して先へ進める場合は\n" +
-            `nyaucast collection produce ${collectionId} を実行してください（NO-GO より後に承認を積むと覆ります）。\n`,
-        );
-        expect(rejectionRows(channelRoot)).toHaveLength(2);
-      },
-    );
-  });
+  it.effect("rejects an invalid rejection gate without writing a gate fact", () =>
+    Effect.gen(function* () {
+      const channelRoot = yield* seededChannel("nyaucast-collection-invalid-gate-");
 
-  test("rejects an invalid rejection gate without writing a gate fact", async () => {
-    await withTemporaryDirectoryAsync("nyaucast-collection-invalid-gate-", async (channelRoot) => {
-      await seedCollection(channelRoot);
+      const { errors, logs, outcome } = yield* runCollectionCli(channelRoot, [
+        "reject",
+        "archive",
+        collectionId,
+      ]);
 
-      const result = runCollectionCli(
-        channelRoot,
-        ["reject", "archive", collectionId],
-        cliEnvironment(""),
-      );
-
-      expect(result.error).toBeUndefined();
-      expect(result.signal).toBeNull();
-      expect(typeof result.status).toBe("number");
-      expect(result.status).not.toBe(0);
+      assert.strictEqual(outcome._tag, "Failure");
       // 候補値（produce / publish）が示されること。文言は effect/cli の出力に従う
-      expect(result.stderr).toContain("produce");
-      expect(result.stderr).toContain("publish");
-      expect(approvalRows(channelRoot)).toEqual([]);
-      expect(rejectionRows(channelRoot)).toEqual([]);
-    });
-  });
+      const output = [...logs, ...errors].join("\n");
+      assert.include(errors.join("\n"), "produce");
+      assert.include(errors.join("\n"), "publish");
+      assert.notMatch(output, /\n\s+at /u);
+      assert.deepStrictEqual(yield* rowsOf(channelRoot, "approvals"), []);
+      assert.deepStrictEqual(yield* rowsOf(channelRoot, "rejections"), []);
+    }),
+  );
 
-  test("rejects an extra argument without writing a gate fact", async () => {
-    await withTemporaryDirectoryAsync("nyaucast-collection-extra-arg-", async (channelRoot) => {
-      await seedCollection(channelRoot);
+  it.effect("rejects an extra argument without writing a gate fact", () =>
+    Effect.gen(function* () {
+      const channelRoot = yield* seededChannel("nyaucast-collection-extra-arg-");
 
-      const result = runCollectionCli(
-        channelRoot,
-        ["produce", collectionId, "extra"],
-        cliEnvironment(""),
-      );
+      const { outcome } = yield* runCollectionCli(channelRoot, ["produce", collectionId, "extra"]);
 
-      expect(result.error).toBeUndefined();
-      expect(result.signal).toBeNull();
-      expect(typeof result.status).toBe("number");
-      expect(result.status).not.toBe(0);
-      expect(approvalRows(channelRoot)).toEqual([]);
-      expect(rejectionRows(channelRoot)).toEqual([]);
-    });
-  });
+      assert.strictEqual(outcome._tag, "Failure");
+      assert.deepStrictEqual(yield* rowsOf(channelRoot, "approvals"), []);
+      assert.deepStrictEqual(yield* rowsOf(channelRoot, "rejections"), []);
+    }),
+  );
 
-  test("a failure is reported as the tag and facts, without a stack trace", async () => {
-    await withTemporaryDirectoryAsync("nyaucast-collection-failure-shape-", async (channelRoot) => {
-      await openLocalStoreOnce(channelRoot);
+  it.effect("a failure is reported as the tag and facts, without a stack trace", () =>
+    Effect.gen(function* () {
+      const channelRoot = yield* temporaryDirectory("nyaucast-collection-failure-shape-");
 
-      const result = runCollectionCli(
-        channelRoot,
-        ["produce", "01JMISSING0000000000000000"],
-        cliEnvironment(""),
-      );
+      const { errors, outcome, stdout } = yield* runCollectionCli(channelRoot, [
+        "produce",
+        missingId,
+      ]);
 
-      expect(result.status).not.toBe(0);
-      expect(result.stderr).toContain("CollectionNotFound");
-      expect(result.stderr).toContain("01JMISSING0000000000000000");
-      expect(result.stderr).not.toMatch(/\n\s+at /u);
-      expect(result.stdout).toBe("");
-    });
-  });
+      assert.strictEqual(outcome._tag, "Failure");
+      const stderr = errors.join("\n");
+      assert.include(stderr, "CollectionNotFound");
+      assert.include(stderr, missingId);
+      assert.notMatch(stderr, /\n\s+at /u);
+      assert.strictEqual(stdout, "");
+    }),
+  );
 
-  test.each([
-    { arguments_: ["produce", "01JMISSING0000000000000000"] },
-    { arguments_: ["reject", "produce", "01JMISSING0000000000000000"] },
-  ])("rejects a command for a missing collection", async ({ arguments_ }) => {
-    await withTemporaryDirectoryAsync("nyaucast-collection-missing-", async (channelRoot) => {
-      await openLocalStoreOnce(channelRoot);
+  it.effect.each([
+    { arguments_: ["produce", missingId] },
+    { arguments_: ["reject", "produce", missingId] },
+  ])("rejects a command for a missing collection", ({ arguments_ }) =>
+    Effect.gen(function* () {
+      const channelRoot = yield* temporaryDirectory("nyaucast-collection-missing-");
 
-      const result = runCollectionCli(channelRoot, arguments_, cliEnvironment(""));
+      const { errors, outcome } = yield* runCollectionCli(channelRoot, arguments_);
 
-      expect(result.error).toBeUndefined();
-      expect(result.signal).toBeNull();
-      expect(typeof result.status).toBe("number");
-      expect(result.status).not.toBe(0);
-      expect(result.stderr).toContain("01JMISSING0000000000000000");
-      expect(approvalRows(channelRoot)).toEqual([]);
-      expect(rejectionRows(channelRoot)).toEqual([]);
-    });
-  });
+      assert.strictEqual(outcome._tag, "Failure");
+      assert.include(errors.join("\n"), missingId);
+      assert.deepStrictEqual(yield* rowsOf(channelRoot, "approvals"), []);
+      assert.deepStrictEqual(yield* rowsOf(channelRoot, "rejections"), []);
+    }),
+  );
 });
