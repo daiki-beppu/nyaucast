@@ -12,11 +12,13 @@ import { VideoStatus, deriveVideoStatus } from "../db/video-read-model.ts";
 
 export const VideoStatusTool = Tool.make("video_status", {
   description:
-    "Read an explainer video's recorded plan, its thumbnail candidates, exclusions and last selection, and whether the video was abandoned. Read-only; works only in a channel whose video kind is explainer. " +
+    "Read an explainer video's recorded plan, its thumbnail candidates, exclusions and last selection, whether the video was abandoned, its gate records and the gate awaiting approval. Read-only; works only in a channel whose video kind is explainer. " +
     "Fails with VideoNotFound when the video does not exist. " +
     "plan is the latest version of the plan with the time it was recorded as updatedAt. " +
     "thumbnails holds every candidate (round, number, key, smallKey, origin, createdAt), every exclusion with its reason, and the last selection when there is one. " +
-    "abandoned is true while the produce or publish gate has a NO-GO that no later approval overrides.",
+    "abandoned is true while the produce or publish gate has a NO-GO that no later approval overrides. " +
+    "gateRecords lists every approval and NO-GO recorded for the video (gate, kind, recordedAt), oldest first. " +
+    'awaitingApproval is "produce" when the video is not abandoned, the produce gate is not approved and the last thumbnail selection is newer than the last plan update; it is absent otherwise.',
   failure: Schema.Union([
     ChannelConfigNotFound,
     InvalidChannelConfig,

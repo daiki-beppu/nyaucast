@@ -1,5 +1,4 @@
 import { Clock, Effect, FileSystem, Option, Schema } from "effect";
-import { SqlClient } from "effect/sql";
 
 import { ChannelSettings } from "../channel/channel-settings.ts";
 import { afterLatestFact } from "../db/fact-time.ts";
@@ -12,6 +11,7 @@ import {
   thumbnailKey,
 } from "../db/explainer-thumbnails.ts";
 import { requireLatestPlan } from "../db/explainer-videos.ts";
+import { inTransaction } from "../db/transaction.ts";
 import { ThumbnailFiles } from "../thumbnails/thumbnail-files.ts";
 import { processThumbnail } from "../thumbnails/thumbnail-image.ts";
 
@@ -61,12 +61,6 @@ const selectionTime = (videoId: string) =>
     });
     return new Date(afterLatestFact(yield* Clock.currentTimeMillis, latest)).toISOString();
   });
-
-const inTransaction = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    return yield* sql.withTransaction(effect);
-  }).pipe(Effect.catchTag("SqlError", Effect.die));
 
 const selectExisting = (videoId: string, candidate: string) =>
   Effect.gen(function* () {

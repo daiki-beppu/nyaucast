@@ -21,7 +21,7 @@ import {
   requireLatestPlan,
   type PlanContent,
 } from "../db/explainer-videos.ts";
-import { hasExplainerPlanApproval } from "../db/gates.ts";
+import { hasExplainerApproval } from "../db/gates.ts";
 import { isVideoAbandoned } from "../db/video-read-model.ts";
 import { VideoIds } from "../videos/video-ids.ts";
 
@@ -112,7 +112,7 @@ const isoAt = (milliseconds: number) => new Date(milliseconds).toISOString();
 const overwriteInTransaction = (videoId: string, content: PlanContent) =>
   Effect.gen(function* () {
     const latest = yield* requireLatestPlan(videoId);
-    if (yield* hasExplainerPlanApproval(videoId)) {
+    if (yield* hasExplainerApproval(videoId, "produce")) {
       return yield* new PlanAlreadyApproved({ videoId });
     }
     if (yield* isVideoAbandoned(videoId)) {
