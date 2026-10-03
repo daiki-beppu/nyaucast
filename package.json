@@ -31,6 +31,7 @@
     "fallow": "fallow --no-cache --fail-on-issues",
     "mutation": "pnpm exec stryker run",
     "prepack": "tsc --project tsconfig.build.json",
+    "prepare": "vp hooks enable",
     "effect:check": "effect-tsgo diagnostics --project tsconfig.json"
   },
   "dependencies": {
