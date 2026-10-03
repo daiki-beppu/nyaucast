@@ -32,6 +32,7 @@ const tables = [
   "explainer_rejections",
   "explainer_thumbnail_candidates",
   "explainer_thumbnail_exclusions",
+  "explainer_thumbnail_rejections",
   "explainer_thumbnail_selections",
   "explainer_videos",
   "rejections",

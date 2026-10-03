@@ -12,7 +12,8 @@ import {
 import {
   ThumbnailCandidate,
   appendCandidate,
-  generatedCandidateCount,
+  appendRejection,
+  generationCount,
   latestGeneratedRound,
   maxRound,
   numbersInRound,
@@ -60,12 +61,13 @@ export const VideoGenerateThumbnailsTool = Tool.make("video_generate_thumbnails"
     "Generate thumbnail candidates for an explainer video from the thumbnail text and a description of the background, " +
     "following the channel's declared thumbnail type (style, reference images, banned words, text instructions, provider, number of candidates). " +
     "Each candidate is checked (16:9 within 0.06, at least 1280x720, at most 2 MB after being written as a 1920x1080 JPG) and written with a 320x180 small version and a row. " +
-    "Without force, only the candidates missing from the latest generated round are made, with the text and background given in this call; a complete round makes no provider call. " +
+    "Without force, only the numbers missing from the latest generated round are made, with the text and background given in this call; " +
+    "a number whose generated image failed the check counts as made and is not generated again, and a round with every number made makes no provider call. " +
     "With force, a new round of all candidates is made. " +
     "Fails with ThumbnailTypeNotDeclared when the channel declares no thumbnail type, with VideoNotFound for an unknown video, " +
     "with BannedThumbnailWords before any provider call when the text or the background contains a banned word, " +
     "with ReferenceImageNotFound or ReferenceImageUnsupported for a declared reference image, and with ThumbnailImageRejected " +
-    "(reason unreadable, too_small, not_16_9 or too_large) for a generated image that cannot become a candidate; candidates written before the failure are kept. " +
+    "(reason unreadable, too_small, not_16_9 or too_large) for a generated image that cannot become a candidate, after recording the failed number; candidates written before the failure are kept. " +
     "When the provider is codex, the candidates are made one at a time with the codex CLI after checking that codex is logged in: " +
     "fails with CodexNotLoggedIn (no image is generated), CodexUnavailable, CodexExecFailed (with the exit code) or CodexImageMissing. " +
     "Returns the round, how many candidates this call made, and every candidate of the round.",
@@ -132,7 +134,7 @@ const generationLock = Semaphore.makeUnsafe(1);
 
 const numbersUpTo = (count: number) => Array.from({ length: count }, (_, index) => index + 1);
 
-// force が無ければ、出所が生成の最後の回の足りない番号。回が無ければ（force なら常に）新しい回の全番号。
+// force が無ければ、出所が生成の最後の回の足りない番号（候補も検査に落ちた記録も無い番号）。回が無ければ（force なら常に）新しい回の全番号。
 const planRound = (videoId: string, candidates: number, force: boolean) =>
   Effect.gen(function* () {
     const latest = force ? Option.none<number>() : yield* latestGeneratedRound(videoId);
@@ -146,10 +148,16 @@ const planRound = (videoId: string, candidates: number, force: boolean) =>
     };
   });
 
-// チャンネル全体の生成の候補の行数で回すので、直近に使った参照画像の次を使い、事実から決まる。
-const pickReference = (references: readonly ReferenceImage[]) =>
+// 参照画像は、宣言のパスと読み込んだ画像の組。
+interface DeclaredReference {
+  readonly image: ReferenceImage;
+  readonly path: string;
+}
+
+// チャンネル全体の生成の回数（検査に落ちた回を含む）で回すので、直近に使った参照画像の次を使い、事実から決まる。
+const pickReference = (references: readonly DeclaredReference[]) =>
   Effect.gen(function* () {
-    const count = yield* generatedCandidateCount;
+    const count = yield* generationCount;
     return references.length === 0 ? undefined : references[count % references.length];
   });
 
@@ -175,16 +183,29 @@ type Generate<E, R> = (
 const makeCandidate = <E, R>(
   slot: { number: number; round: number; videoId: string },
   prompt: string,
-  references: readonly ReferenceImage[],
+  references: readonly DeclaredReference[],
   generate: Generate<E, R>,
 ) =>
   Effect.gen(function* () {
-    const referenceImage = yield* pickReference(references);
+    const reference = yield* pickReference(references);
     const generated = yield* generate({
       prompt,
-      ...(referenceImage === undefined ? {} : { referenceImage }),
+      ...(reference === undefined ? {} : { referenceImage: reference.image }),
     });
-    const processed = yield* processThumbnail(generated.bytes);
+    // 検査に落ちても 1 回の課金なので、事実を積んでから失敗する。再実行はこの番号を作り直さない。
+    const processed = yield* processThumbnail(generated.bytes).pipe(
+      Effect.tapError((rejected) =>
+        Effect.gen(function* () {
+          const rejectedAt = new Date(yield* Clock.currentTimeMillis).toISOString();
+          yield* appendRejection({
+            ...slot,
+            reason: rejected.reason,
+            ...(reference === undefined ? {} : { referenceImage: reference.path }),
+            rejectedAt,
+          });
+        }),
+      ),
+    );
     const key = thumbnailKey(slot.videoId, slot.round, slot.number);
     yield* (yield* ThumbnailFiles).write(key, processed);
     const createdAt = new Date(yield* Clock.currentTimeMillis).toISOString();
@@ -226,7 +247,9 @@ const generateThumbnails = Effect.fn("video.generateThumbnails")(function* ({
     return yield* new BannedThumbnailWords({ words });
   }
   const files = yield* ThumbnailFiles;
-  const references = yield* Effect.forEach(thumbnail.referenceImages, files.readReference);
+  const references = yield* Effect.forEach(thumbnail.referenceImages, (path) =>
+    files.readReference(path).pipe(Effect.map((image) => ({ image, path }))),
+  );
   const { missing, round } = yield* planRound(videoId, thumbnail.candidates, force === true);
   const prompt = buildPrompt(thumbnail, input);
   if (missing.length > 0) {

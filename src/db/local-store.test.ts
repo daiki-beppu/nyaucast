@@ -101,7 +101,7 @@ describe("local store", () => {
     }),
   );
 
-  it.effect("records the hand-written 0001, 0002 and 0003 migrations in the migrator's table", () =>
+  it.effect("records the hand-written 0001 to 0004 migrations in the migrator's table", () =>
     Effect.gen(function* () {
       const channelRoot = yield* temporaryDirectory("nyaucast-local-store-migrator-");
       yield* openAndClose(channelRoot);
@@ -109,7 +109,7 @@ describe("local store", () => {
       const rows = migrationRows(localDatabasePath(channelRoot));
       assert.deepStrictEqual(
         rows.map((row) => row["migration_id"]),
-        [1, 2, 3],
+        [1, 2, 3, 4],
       );
       for (const row of rows) {
         expect(String(row["name"])).toMatch(/\S/u);
@@ -205,8 +205,8 @@ describe("local store", () => {
 
           yield* openAndClose(channelRoot);
 
-          assert.deepStrictEqual(backupNames(channelRoot), ["local.db.bak-3"]);
-          const backupPath = join(dataDirectory, "local.db.bak-3");
+          assert.deepStrictEqual(backupNames(channelRoot), ["local.db.bak-4"]);
+          const backupPath = join(dataDirectory, "local.db.bak-4");
           assert.deepStrictEqual(query(backupPath, "SELECT value FROM sentinel"), [
             { value: "before migration" },
           ]);
@@ -236,7 +236,7 @@ describe("local store", () => {
         yield* openAndClose(channelRoot);
 
         assert.deepStrictEqual(backupNames(channelRoot), []);
-        assert.strictEqual(migrationRows(localDatabasePath(channelRoot)).length, 3);
+        assert.strictEqual(migrationRows(localDatabasePath(channelRoot)).length, 4);
       }),
     );
   });
@@ -254,12 +254,12 @@ describe("local store", () => {
 
         // 0001 の DDL を再実行して "table already exists" で落ちない
         assert.isTrue(Exit.isSuccess(exit));
-        assert.deepStrictEqual(backupNames(channelRoot), ["local.db.bak-3"]);
-        assert.isTrue(readFileSync(join(channelRoot, "data", "local.db.bak-3")).equals(original));
+        assert.deepStrictEqual(backupNames(channelRoot), ["local.db.bak-4"]);
+        assert.isTrue(readFileSync(join(channelRoot, "data", "local.db.bak-4")).equals(original));
         const rows = migrationRows(databasePath);
         assert.deepStrictEqual(
           rows.map((row) => row["migration_id"]),
-          [1, 2, 3],
+          [1, 2, 3, 4],
         );
         assert.deepStrictEqual(query(databasePath, "SELECT id, title FROM collections"), [
           drizzleCollection,
@@ -306,9 +306,9 @@ describe("local store", () => {
         assert.isTrue(Exit.isSuccess(exit));
         assert.deepStrictEqual(
           migrationRows(databasePath).map((row) => row["migration_id"]),
-          [1, 2, 3],
+          [1, 2, 3, 4],
         );
-        assert.deepStrictEqual(backupNames(channelRoot), ["local.db.bak-3"]);
+        assert.deepStrictEqual(backupNames(channelRoot), ["local.db.bak-4"]);
       }),
     );
 
@@ -330,7 +330,7 @@ describe("local store", () => {
         );
         assert.deepStrictEqual(backupNames(channelRoot), [
           "local.db.bak-1787771653213",
-          "local.db.bak-3",
+          "local.db.bak-4",
         ]);
       }),
     );
@@ -388,7 +388,7 @@ describe("local store", () => {
   );
 
   describe("0002 on a database that only has 0001", () => {
-    it.effect("backs it up as local.db.bak-3, keeps its rows, and adds the explainer tables", () =>
+    it.effect("backs it up as local.db.bak-4, keeps its rows, and adds the explainer tables", () =>
       Effect.gen(function* () {
         const channelRoot = yield* temporaryDirectory("nyaucast-local-store-0002-");
         const databasePath = localDatabasePath(channelRoot);
@@ -397,6 +397,7 @@ describe("local store", () => {
         const database = new DatabaseSync(databasePath);
         try {
           for (const table of [
+            "explainer_thumbnail_rejections",
             "explainer_thumbnail_selections",
             "explainer_thumbnail_exclusions",
             "explainer_thumbnail_candidates",
@@ -416,9 +417,9 @@ describe("local store", () => {
 
         yield* openAndClose(channelRoot);
 
-        assert.deepStrictEqual(backupNames(channelRoot), ["local.db.bak-3"]);
+        assert.deepStrictEqual(backupNames(channelRoot), ["local.db.bak-4"]);
         assert.deepStrictEqual(
-          tableColumns(join(channelRoot, "data", "local.db.bak-3"), "explainer_videos"),
+          tableColumns(join(channelRoot, "data", "local.db.bak-4"), "explainer_videos"),
           [],
         );
         assert.deepStrictEqual(query(databasePath, "SELECT id, title FROM collections"), [
@@ -430,7 +431,7 @@ describe("local store", () => {
         ]);
         assert.deepStrictEqual(
           migrationRows(databasePath).map((row) => row["migration_id"]),
-          [1, 2, 3],
+          [1, 2, 3, 4],
         );
       }),
     );
