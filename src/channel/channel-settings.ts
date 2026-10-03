@@ -1,5 +1,7 @@
 import { Context, Effect, FileSystem, Layer, Path, Schema } from "effect";
 
+import { HttpUrl } from "../db/explainer-videos.ts";
+
 export class ChannelConfigNotFound extends Schema.TaggedError<ChannelConfigNotFound>()(
   "ChannelConfigNotFound",
   { path: Schema.String },
@@ -28,7 +30,11 @@ const ThumbnailType = Schema.Struct({
 });
 export type ThumbnailType = typeof ThumbnailType.Type;
 
+// 題材を取るフィード（RSS / Atom）。省略した設定は、フィードを登録していないものとして扱う。
+const Feed = Schema.Struct({ name: Schema.String, url: HttpUrl });
+
 const ExplainerSettings = Schema.Struct({
+  feeds: Schema.Array(Feed).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
   genre: Schema.String,
   hitPatterns: Schema.Record(Schema.String, Schema.Struct({ description: Schema.String })),
   kind: Schema.Literal("explainer"),

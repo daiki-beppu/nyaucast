@@ -12,6 +12,7 @@ const packageRoot = resolve(import.meta.dirname, "..");
 
 const toolNames = [
   "collection_status",
+  "explainer_fetch_topic_candidates",
   "explainer_write_plan",
   "plan_check_title",
   "plan_init",

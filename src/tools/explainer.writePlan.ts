@@ -23,6 +23,7 @@ import {
 } from "../db/explainer-videos.ts";
 import { hasExplainerApproval } from "../db/gates.ts";
 import { isVideoAbandoned } from "../db/video-read-model.ts";
+import { planKeyOf } from "../videos/plan-key.ts";
 import { VideoIds } from "../videos/video-ids.ts";
 
 class UndeclaredHitPattern extends Schema.TaggedError<UndeclaredHitPattern>()(
@@ -79,22 +80,6 @@ export const ExplainerWritePlanTool = Tool.make("explainer_write_plan", {
     videoId: Schema.String,
   }),
 }).annotate(Tool.Strict, true);
-
-const isUtmArgument = (name: string) => name.startsWith("utm_");
-
-// utm_* の引数・fragment・パス末尾の / を落とす。パスや引数の値の中の utm_ や / は落とさない。
-const normalizeUrl = (raw: string): string => {
-  const url = new URL(raw);
-  const kept = new URLSearchParams([...url.searchParams].filter(([name]) => !isUtmArgument(name)));
-  url.search = kept.toString();
-  return `${url.origin}${url.pathname.replace(/\/+$/u, "")}${url.search}`;
-};
-
-// 種類の前置詞で、タイトル案のキーと URL のキーが同じ名前空間で衝突しないようにする。
-const planKeyOf = (content: PlanContent): string => {
-  const primary = content.sources[0];
-  return primary === undefined ? `title:${content.title}` : `source:${normalizeUrl(primary.url)}`;
-};
 
 const sameContent = (latest: PlanContent, next: PlanContent) =>
   isDeepStrictEqual(
