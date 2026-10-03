@@ -1,6 +1,7 @@
-import { describe, expect, test, vi } from "vite-plus/test";
+import { assert, describe, expect, it, vi } from "@effect/vitest";
+import { Effect } from "effect";
 
-import { createLoopbackAuthorizer } from "./oauth-loopback";
+import { createLoopbackAuthorizer } from "./oauth-loopback.ts";
 
 const clientId = "CLIENT_ID_SENTINEL";
 const clientSecret = "CLIENT_SECRET_SENTINEL";
@@ -47,70 +48,93 @@ function createFixture(callback: { code?: string; state?: string }) {
 }
 
 describe("Google OAuth loopback authorization", () => {
-  test("exchanges a callback with the matching state and original PKCE verifier", async () => {
-    const fixture = createFixture({ code: "accepted-code", state });
+  it.effect("exchanges a callback with the matching state and original PKCE verifier", () =>
+    Effect.gen(function* () {
+      const fixture = createFixture({ code: "accepted-code", state });
 
-    await expect(fixture.authorize({ clientId, clientSecret, scopes })).resolves.toEqual({
-      credentials: fixture.credentials,
-    });
+      const result = yield* fixture.authorize({ clientId, clientSecret, scopes });
 
-    expect(fixture.createOAuthClient).toHaveBeenCalledWith({
-      clientId,
-      clientSecret,
-      redirectUri: "http://127.0.0.1:53682/oauth2callback",
-    });
-    expect(fixture.generateAuthUrl).toHaveBeenCalledWith({
-      access_type: "offline",
-      code_challenge: codeChallenge,
-      code_challenge_method: "S256",
-      prompt: "consent",
-      redirect_uri: "http://127.0.0.1:53682/oauth2callback",
-      scope: scopes,
-      state,
-    });
-    const [callbackOptions] = fixture.getAuthCode.mock.calls[0] as unknown as [
-      {
-        authorizationUrl: string;
-        callbackPath: string;
-        hostname: string;
-        launch: (url: string) => unknown;
-        port: number;
-      },
-    ];
-    expect(callbackOptions).toMatchObject({
-      callbackPath: "/oauth2callback",
-      hostname: "127.0.0.1",
-      port: 53_682,
-    });
-    callbackOptions.launch("https://accounts.google.com/");
-    expect(fixture.launch).toHaveBeenCalledWith("https://accounts.google.com/");
-    const authorizationUrl = new URL(callbackOptions.authorizationUrl);
-    expect(authorizationUrl.searchParams.get("state")).toBe(state);
-    expect(authorizationUrl.searchParams.get("code_challenge")).toBe(codeChallenge);
-    expect(authorizationUrl.searchParams.get("code_challenge_method")).toBe("S256");
-    expect(authorizationUrl.searchParams.get("redirect_uri")).toBe(
-      "http://127.0.0.1:53682/oauth2callback",
-    );
-    expect(fixture.getToken).toHaveBeenCalledWith({
-      code: "accepted-code",
-      codeVerifier,
-      redirect_uri: "http://127.0.0.1:53682/oauth2callback",
-    });
-  });
+      assert.deepStrictEqual(result, { credentials: fixture.credentials });
+      expect(fixture.createOAuthClient).toHaveBeenCalledWith({
+        clientId,
+        clientSecret,
+        redirectUri: "http://127.0.0.1:53682/oauth2callback",
+      });
+      expect(fixture.generateAuthUrl).toHaveBeenCalledWith({
+        access_type: "offline",
+        code_challenge: codeChallenge,
+        code_challenge_method: "S256",
+        prompt: "consent",
+        redirect_uri: "http://127.0.0.1:53682/oauth2callback",
+        scope: scopes,
+        state,
+      });
+      const [callbackOptions] = fixture.getAuthCode.mock.calls[0] as unknown as [
+        {
+          authorizationUrl: string;
+          callbackPath: string;
+          hostname: string;
+          launch: (url: string) => unknown;
+          port: number;
+        },
+      ];
+      expect(callbackOptions).toMatchObject({
+        callbackPath: "/oauth2callback",
+        hostname: "127.0.0.1",
+        port: 53_682,
+      });
+      callbackOptions.launch("https://accounts.google.com/");
+      expect(fixture.launch).toHaveBeenCalledWith("https://accounts.google.com/");
+      const authorizationUrl = new URL(callbackOptions.authorizationUrl);
+      assert.strictEqual(authorizationUrl.searchParams.get("state"), state);
+      assert.strictEqual(authorizationUrl.searchParams.get("code_challenge"), codeChallenge);
+      assert.strictEqual(authorizationUrl.searchParams.get("code_challenge_method"), "S256");
+      assert.strictEqual(
+        authorizationUrl.searchParams.get("redirect_uri"),
+        "http://127.0.0.1:53682/oauth2callback",
+      );
+      expect(fixture.getToken).toHaveBeenCalledWith({
+        code: "accepted-code",
+        codeVerifier,
+        redirect_uri: "http://127.0.0.1:53682/oauth2callback",
+      });
+    }),
+  );
 
-  test("rejects a callback with a different state before code exchange", async () => {
-    const fixture = createFixture({ code: "unrelated-code", state: "OTHER_STATE_SENTINEL" });
+  it.effect(
+    "fails with a tagged failure for a callback with a different state, before code exchange",
+    () =>
+      Effect.gen(function* () {
+        const fixture = createFixture({ code: "unrelated-code", state: "OTHER_STATE_SENTINEL" });
 
-    await expect(fixture.authorize({ clientId, clientSecret, scopes })).rejects.toThrow();
+        const failure = yield* Effect.flip(fixture.authorize({ clientId, clientSecret, scopes }));
 
-    expect(fixture.getToken).not.toHaveBeenCalled();
-  });
+        assert.strictEqual(failure._tag, "OAuthCallbackValidationFailed");
+        expect(fixture.getToken).not.toHaveBeenCalled();
+      }),
+  );
 
-  test("rejects a callback without a code before code exchange", async () => {
-    const fixture = createFixture({ state });
+  it.effect("fails with a tagged failure for a callback without a code, before code exchange", () =>
+    Effect.gen(function* () {
+      const fixture = createFixture({ state });
 
-    await expect(fixture.authorize({ clientId, clientSecret, scopes })).rejects.toThrow();
+      const failure = yield* Effect.flip(fixture.authorize({ clientId, clientSecret, scopes }));
 
-    expect(fixture.getToken).not.toHaveBeenCalled();
-  });
+      assert.strictEqual(failure._tag, "OAuthCallbackValidationFailed");
+      expect(fixture.getToken).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("does not put the state, the code, or a secret in the failure's facts", () =>
+    Effect.gen(function* () {
+      const fixture = createFixture({ code: "unrelated-code", state: "OTHER_STATE_SENTINEL" });
+
+      const failure = yield* Effect.flip(fixture.authorize({ clientId, clientSecret, scopes }));
+
+      const rendered = JSON.stringify(failure);
+      for (const secret of [clientSecret, "unrelated-code", "OTHER_STATE_SENTINEL", state]) {
+        assert.isFalse(rendered.includes(secret));
+      }
+    }),
+  );
 });

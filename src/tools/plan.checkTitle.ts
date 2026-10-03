@@ -1,37 +1,47 @@
-import { z } from "zod";
+import { Effect, Schema } from "effect";
+import { Tool } from "effect/ai";
 
-export interface CollectionTitleLookup {
-  findCollectionByTitle(title: string): Promise<{ id: string; title: string } | undefined>;
-}
+import { findCollectionByTitle } from "../db/collections.ts";
 
-export const titleSchema = z
-  .string()
-  .max(100)
-  .describe("Collection title, at most 100 characters.");
+const maximumTitleLength = 100;
 
-async function assertTitleAvailable(title: string, lookup: CollectionTitleLookup): Promise<void> {
-  titleSchema.parse(title);
-  if ((await lookup.findCollectionByTitle(title)) !== undefined) {
-    throw new Error("collection title is already in use");
+// UTF-16 の長さで 100 字まで。plan.init の入力 schema と共有する。
+const titleDescription = `Collection title, at most ${maximumTitleLength} characters.`;
+export const Title = Schema.String.check(Schema.isMaxLength(maximumTitleLength)).annotate({
+  description: titleDescription,
+});
+
+class TitleTooLong extends Schema.TaggedError<TitleTooLong>()("TitleTooLong", {
+  maximumLength: Schema.Finite,
+}) {}
+
+class TitleAlreadyInUse extends Schema.TaggedError<TitleAlreadyInUse>()("TitleAlreadyInUse", {
+  title: Schema.String,
+}) {}
+
+// 文字数の超過はこの tool の業務そのものなので、パラメータ不正（-32602）ではなく宣言した失敗にする。
+export const PlanCheckTitleTool = Tool.make("plan_check_title", {
+  description:
+    "Check that a collection title is at most 100 characters and not already used by another collection. " +
+    "Returns { ok: true } when the title is available; fails with TitleTooLong or TitleAlreadyInUse otherwise. " +
+    "Read-only: it does not reserve the title. Call plan_init to create the collection.",
+  failure: Schema.Union([TitleTooLong, TitleAlreadyInUse]),
+  parameters: Schema.Struct({
+    title: Schema.String.annotate({ description: titleDescription }),
+  }),
+  success: Schema.Struct({ ok: Schema.Literal(true) }),
+}).annotate(Tool.Strict, true);
+
+export const planCheckTitle = Effect.fn("plan.checkTitle")(function* ({
+  title,
+}: {
+  readonly title: string;
+}) {
+  if (!Schema.is(Title)(title)) {
+    return yield* new TitleTooLong({ maximumLength: maximumTitleLength });
   }
-}
-
-const inputSchema = z.object({ title: titleSchema }).strict();
-const outputSchema = z.object({ ok: z.literal(true) }).strict();
-
-export function createPlanCheckTitleTool(lookup: CollectionTitleLookup) {
-  return {
-    description:
-      "Check that a collection title is at most 100 characters and not already used by another collection. " +
-      "Returns { ok: true } when the title is available; throws an error when it is too long or already in use. " +
-      "Read-only: it does not reserve the title. Call plan.init to create the collection.",
-    handler: async (input: unknown) => {
-      const parsed = inputSchema.parse(input);
-      await assertTitleAvailable(parsed.title, lookup);
-      return { ok: true as const };
-    },
-    inputSchema,
-    name: "plan.checkTitle",
-    outputSchema,
-  };
-}
+  if ((yield* findCollectionByTitle(title)) !== undefined) {
+    return yield* new TitleAlreadyInUse({ title });
+  }
+  return { ok: true as const };
+});

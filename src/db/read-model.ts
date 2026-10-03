@@ -1,55 +1,60 @@
-import { createCollectionStore, hasThumbnail } from "./collections.ts";
-import { getGateDecision, type GateDecision } from "./gates.ts";
-import type { LocalStore } from "./local-store.ts";
+import { Effect, Schema } from "effect";
 
-export type CollectionStatus = {
-  collectionId: string;
-  gates: {
-    produce: GateDecision;
-    publish: GateDecision;
-  };
-  progress: {
-    awaitingApproval?: "produce" | "publish";
-    terminated: boolean;
-  };
+import { hasThumbnail, requireCollection } from "./collections.ts";
+import { Gate, GateDecision, getGateDecision } from "./gates.ts";
+
+export const CollectionStatus = Schema.Struct({
+  collectionId: Schema.String,
+  gates: Schema.Struct({ produce: GateDecision, publish: GateDecision }),
+  progress: Schema.Struct({
+    awaitingApproval: Schema.optionalKey(Gate),
+    terminated: Schema.Boolean,
+  }),
+});
+type CollectionStatus = typeof CollectionStatus.Type;
+
+const awaitingApproval = (
+  produce: GateDecision,
+  publish: GateDecision,
+  thumbnailExists: boolean,
+): Gate | undefined => {
+  if (produce === "pending") {
+    return "produce";
+  }
+  return thumbnailExists && publish === "pending" ? "publish" : undefined;
 };
 
-function progressFromFacts(produce: GateDecision, publish: GateDecision, hasThumbnail: boolean) {
+function progressFromFacts(
+  produce: GateDecision,
+  publish: GateDecision,
+  thumbnailExists: boolean,
+): CollectionStatus["progress"] {
   if ([produce, publish].includes("rejected")) {
     return { terminated: true };
   }
-  if (produce === "pending") {
-    return { awaitingApproval: "produce" as const, terminated: false };
-  }
-  if (!hasThumbnail) {
-    return { terminated: false };
-  }
-  if (publish === "pending") {
-    return { awaitingApproval: "publish" as const, terminated: false };
-  }
-  return { terminated: false };
+  const awaiting = awaitingApproval(produce, publish, thumbnailExists);
+  return awaiting === undefined
+    ? { terminated: false }
+    : { awaitingApproval: awaiting, terminated: false };
 }
 
-export async function deriveCollectionStatus(
-  store: LocalStore,
-  collectionId: string,
-): Promise<CollectionStatus> {
-  const collection = await createCollectionStore(store).findById(collectionId);
-  if (collection === undefined) {
-    throw new Error("collection does not exist");
-  }
-  const [produce, publish, thumbnailExists] = await Promise.all([
-    getGateDecision(store, collectionId, "produce"),
-    getGateDecision(store, collectionId, "publish"),
-    hasThumbnail(store, collectionId),
-  ]);
-  return {
-    collectionId,
-    gates: { produce, publish },
-    progress: progressFromFacts(produce, publish, thumbnailExists),
-  };
-}
+export const deriveCollectionStatus = (collectionId: string) =>
+  Effect.gen(function* () {
+    yield* requireCollection(collectionId);
+    const [produce, publish, thumbnailExists] = yield* Effect.all(
+      [
+        getGateDecision(collectionId, "produce"),
+        getGateDecision(collectionId, "publish"),
+        hasThumbnail(collectionId),
+      ],
+      { concurrency: "unbounded" },
+    );
+    return {
+      collectionId,
+      gates: { produce, publish },
+      progress: progressFromFacts(produce, publish, thumbnailExists),
+    } satisfies CollectionStatus;
+  });
 
-export async function deriveCollectionProgress(store: LocalStore, collectionId: string) {
-  return (await deriveCollectionStatus(store, collectionId)).progress;
-}
+export const deriveCollectionProgress = (collectionId: string) =>
+  deriveCollectionStatus(collectionId).pipe(Effect.map((status) => status.progress));

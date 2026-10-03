@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 
+import { Effect, Schema } from "effect";
 import {
   CodeChallengeMethod,
   type Credentials,
@@ -15,7 +16,6 @@ const callbackPath = "/oauth2callback";
 const callbackPort = 53_682;
 const redirectUri = `http://${callbackHostname}:${callbackPort}${callbackPath}`;
 
-// fallow-ignore-next-line code-duplication -- The adapter owns its input shape without importing the orchestration module.
 type YouTubeAuthorizationOptions = {
   clientId: string;
   clientSecret: string;
@@ -23,7 +23,6 @@ type YouTubeAuthorizationOptions = {
 };
 
 interface LoopbackOAuthClient {
-  // fallow-ignore-next-line code-duplication -- The injected OAuth client and title lookup only share interface syntax.
   generateAuthUrl(options: GenerateAuthUrlOpts): string;
   generateCodeVerifierAsync(): Promise<{ codeChallenge?: string; codeVerifier: string }>;
   getToken(options: {
@@ -40,36 +39,40 @@ interface LoopbackAuthorizerDependencies {
   randomState(): string;
 }
 
-const requireNonEmpty = (value: string | undefined, failure: string): string => {
-  // fallow-ignore-next-line code-duplication -- OAuth value validation is unrelated to collection existence validation.
-  if (value === undefined || value.length === 0) throw new Error(failure);
-  return value;
-};
+/** state の不一致・code の欠落。値（state・code）は事実に含めない。 */
+class OAuthCallbackValidationFailed extends Schema.TaggedError<OAuthCallbackValidationFailed>()(
+  "OAuthCallbackValidationFailed",
+  {},
+) {}
 
-const requireCallbackCode = (
-  callback: { code?: string; state?: string },
-  expectedState: string,
-): string => {
-  // fallow-ignore-next-line code-duplication -- OAuth state correlation is unrelated to CLI argument-count validation.
-  if (callback.state !== expectedState) throw new Error("OAuth callback validation failed");
-  return requireNonEmpty(callback.code, "OAuth callback validation failed");
-};
+/** PKCE の challenge を作れなかった、または OAuth の外部呼び出しが失敗した。 */
+class OAuthExchangeFailed extends Schema.TaggedError<OAuthExchangeFailed>()(
+  "OAuthExchangeFailed",
+  {},
+) {}
 
-export const createLoopbackAuthorizer = (dependencies: LoopbackAuthorizerDependencies) => {
-  return async function authorize(options: YouTubeAuthorizationOptions) {
-    // fallow-ignore-next-line code-duplication -- Loopback OAuth construction is unrelated to stored-token restoration.
+const requireCallbackCode = (callback: { code?: string; state?: string }, expectedState: string) =>
+  callback.state === expectedState && callback.code !== undefined && callback.code.length > 0
+    ? Effect.succeed(callback.code)
+    : Effect.fail(new OAuthCallbackValidationFailed());
+
+// 第三者ライブラリの Promise を、失敗の事実だけを持つ OAuthExchangeFailed へ変換する。
+const attempt = <Value>(operation: () => Promise<Value>) =>
+  Effect.tryPromise({ catch: () => new OAuthExchangeFailed(), try: operation });
+
+export const createLoopbackAuthorizer = (dependencies: LoopbackAuthorizerDependencies) =>
+  Effect.fn("oauthLoopback.authorize")(function* (options: YouTubeAuthorizationOptions) {
     const client = dependencies.createOAuthClient({
       clientId: options.clientId,
       clientSecret: options.clientSecret,
       redirectUri,
     });
-    const generatedPkce = await client.generateCodeVerifierAsync();
-    const codeChallenge = requireNonEmpty(
-      generatedPkce.codeChallenge,
-      "OAuth PKCE challenge generation failed",
-    );
+    const generatedPkce = yield* attempt(() => client.generateCodeVerifierAsync());
+    const codeChallenge = generatedPkce.codeChallenge;
+    if (codeChallenge === undefined || codeChallenge.length === 0) {
+      return yield* new OAuthExchangeFailed();
+    }
     const state = dependencies.randomState();
-    // fallow-ignore-next-line code-duplication -- OAuth authorization parameters are unrelated to MCP tool wiring.
     const authorizationUrl = client.generateAuthUrl({
       access_type: "offline",
       code_challenge: codeChallenge,
@@ -79,23 +82,25 @@ export const createLoopbackAuthorizer = (dependencies: LoopbackAuthorizerDepende
       scope: options.scopes,
       state,
     });
-    // fallow-ignore-next-line code-duplication -- Browser callback acquisition and OAuth code exchange use different protocols.
-    const callback = await dependencies.getAuthCode({
-      authorizationUrl,
-      callbackPath,
-      hostname: callbackHostname,
-      launch: (url) => dependencies.launch(url),
-      port: callbackPort,
-    });
-    const code = requireCallbackCode(callback, state);
-    const response = await client.getToken({
-      code,
-      codeVerifier: generatedPkce.codeVerifier,
-      redirect_uri: redirectUri,
-    });
+    const callback = yield* attempt(() =>
+      dependencies.getAuthCode({
+        authorizationUrl,
+        callbackPath,
+        hostname: callbackHostname,
+        launch: (url) => dependencies.launch(url),
+        port: callbackPort,
+      }),
+    );
+    const code = yield* requireCallbackCode(callback, state);
+    const response = yield* attempt(() =>
+      client.getToken({
+        code,
+        codeVerifier: generatedPkce.codeVerifier,
+        redirect_uri: redirectUri,
+      }),
+    );
     return { credentials: response.tokens };
-  };
-};
+  });
 
 export const authorizeWithLoopback = createLoopbackAuthorizer({
   createOAuthClient: (options) => new OAuth2Client(options),

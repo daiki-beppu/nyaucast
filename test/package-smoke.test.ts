@@ -1,6 +1,6 @@
-import { describe, expect, test } from "vite-plus/test";
+import { describe, expect, test } from "@effect/vitest";
 
-import { inspectInstalledPackage } from "./package-smoke-support";
+import { inspectInstalledPackage } from "./package-smoke-support.ts";
 
 describe("K3 package smoke", () => {
   test("a published tarball serves MCP tools and migrates its local store", async () => {
@@ -14,7 +14,11 @@ describe("K3 package smoke", () => {
     expect(packedPaths).toEqual(
       expect.arrayContaining(["package.json", "bin/nyaucast.js", "dist/index.js"]),
     );
-    expect(packedPaths).toContainEqual(expect.stringMatching(/^drizzle\/.*\.sql$/));
+    // マイグレーションは手書きの TypeScript モジュールとして dist に入る。drizzle/*.sql は同梱しない
+    expect(packedPaths).toContainEqual(
+      expect.stringMatching(/^dist\/db\/migrations\/\d{4}_.+\.js$/),
+    );
+    expect(packedPaths).not.toContainEqual(expect.stringMatching(/^drizzle\//));
     const npmMetadata = new Set(["package.json", "README.md", "LICENSE"]);
     for (const path of packedPaths.filter((path) => !npmMetadata.has(path))) {
       expect(allowedRoots.some((root) => path === root || path.startsWith(`${root}/`))).toBe(true);

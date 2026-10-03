@@ -1,220 +1,183 @@
-import { describe, expect, test } from "vite-plus/test";
+import { assert, describe, it } from "@effect/vitest";
+import { Effect } from "effect";
+import { TestClock } from "effect/testing";
 
-import { withTemporaryDirectoryAsync } from "../../test/helpers";
-import { createCollectionStore } from "../db/collections";
-import { openLocalStore } from "../db/local-store";
-import { deriveCollectionStatus } from "../db/read-model";
-import { approvals, rejections } from "../db/schema";
-import { approveCollectionGate, rejectCollectionGate } from "./gate-operations";
+import { insertCollection, selectAll, setClock, withChannel } from "../../test/helpers.ts";
+import { deriveCollectionStatus } from "../db/read-model.ts";
+import { approveCollectionGate, rejectCollectionGate } from "./gate-operations.ts";
 
 const collectionId = "01JCOLLECTION00000000000000";
-
-async function withCollection(
-  prefix: string,
-  execute: (context: {
-    clock: { now(): Date };
-    store: Awaited<ReturnType<typeof openLocalStore>>;
-  }) => Promise<void>,
-): Promise<void> {
-  await withTemporaryDirectoryAsync(prefix, async (channelRoot) => {
-    const store = await openLocalStore(channelRoot);
-    try {
-      await createCollectionStore(store).create({ id: collectionId, title: "Night Drive" });
-      await execute({
-        clock: { now: () => new Date("2026-09-02T00:00:00.000Z") },
-        store,
-      });
-    } finally {
-      await store.close();
-    }
-  });
-}
+const seeded = <A, E, R>(prefix: string, use: Effect.Effect<A, E, R>) =>
+  withChannel(prefix, () =>
+    Effect.gen(function* () {
+      yield* insertCollection({ id: collectionId, title: "Night Drive" });
+      yield* setClock("2026-09-02T00:00:00.000Z");
+      return yield* use;
+    }),
+  );
 
 describe("collection gate operations", () => {
-  test.each(["produce", "publish"] as const)(
+  it.effect.each(["produce", "publish"] as const)(
     "records one %s approval and treats a repeated approval as success",
-    async (gate) => {
-      await withCollection("nyaucast-approve-gate-", async ({ clock, store }) => {
-        await expect(approveCollectionGate(store, { collectionId, gate }, clock)).resolves.toEqual({
+    (gate) =>
+      seeded(
+        "nyaucast-approve-gate-",
+        Effect.gen(function* () {
+          assert.deepStrictEqual(yield* approveCollectionGate({ collectionId, gate }), {
+            collectionId,
+            gate,
+            recorded: true,
+          });
+          assert.deepStrictEqual(yield* approveCollectionGate({ collectionId, gate }), {
+            collectionId,
+            gate,
+            recorded: false,
+          });
+
+          assert.strictEqual((yield* selectAll("approvals")).length, 1);
+        }),
+      ),
+  );
+
+  it.effect("fails with a tagged CollectionNotFound before recording an approval", () =>
+    withChannel("nyaucast-missing-collection-", () =>
+      Effect.gen(function* () {
+        const failure = yield* Effect.flip(
+          approveCollectionGate({ collectionId: "01JMISSING0000000000000000", gate: "produce" }),
+        );
+
+        assert.strictEqual(failure._tag, "CollectionNotFound");
+        assert.strictEqual(failure.collectionId, "01JMISSING0000000000000000");
+        assert.deepStrictEqual(yield* selectAll("approvals"), []);
+      }),
+    ),
+  );
+
+  it.effect("fails with a tagged CollectionNotFound before recording a rejection", () =>
+    withChannel("nyaucast-missing-rejection-", () =>
+      Effect.gen(function* () {
+        const failure = yield* Effect.flip(
+          rejectCollectionGate({ collectionId: "01JMISSING0000000000000000", gate: "publish" }),
+        );
+
+        assert.strictEqual(failure._tag, "CollectionNotFound");
+        assert.deepStrictEqual(yield* selectAll("rejections"), []);
+      }),
+    ),
+  );
+
+  it.effect("does not append a second rejection while the existing rejection is current", () =>
+    seeded(
+      "nyaucast-current-rejection-",
+      Effect.gen(function* () {
+        assert.deepStrictEqual(yield* rejectCollectionGate({ collectionId, gate: "produce" }), {
           collectionId,
-          gate,
+          gate: "produce",
           recorded: true,
         });
-        await expect(approveCollectionGate(store, { collectionId, gate }, clock)).resolves.toEqual({
+        assert.deepStrictEqual(yield* rejectCollectionGate({ collectionId, gate: "produce" }), {
           collectionId,
-          gate,
+          gate: "produce",
           recorded: false,
         });
 
-        await expect(store.db.select().from(approvals)).resolves.toHaveLength(1);
-      });
-    },
+        assert.strictEqual((yield* selectAll("rejections")).length, 1);
+      }),
+    ),
   );
 
-  test("rejects a missing collection before recording an approval", async () => {
-    await withTemporaryDirectoryAsync("nyaucast-missing-collection-", async (channelRoot) => {
-      const store = await openLocalStore(channelRoot);
-      try {
-        await expect(
-          approveCollectionGate(
-            store,
-            { collectionId: "01JMISSING0000000000000000", gate: "produce" },
-            { now: () => new Date("2026-09-02T00:00:00.000Z") },
-          ),
-        ).rejects.toThrow();
-        await expect(store.db.select().from(approvals)).resolves.toEqual([]);
-      } finally {
-        await store.close();
-      }
-    });
-  });
+  it.effect("appends a new rejection after a later approval without deleting history", () =>
+    seeded(
+      "nyaucast-reject-after-approval-",
+      Effect.gen(function* () {
+        yield* rejectCollectionGate({ collectionId, gate: "produce" });
+        yield* TestClock.adjust("1 hour");
+        yield* approveCollectionGate({ collectionId, gate: "produce" });
+        yield* TestClock.adjust("1 hour");
 
-  test("does not append a second rejection while the existing rejection is current", async () => {
-    await withCollection("nyaucast-current-rejection-", async ({ clock, store }) => {
-      await expect(
-        rejectCollectionGate(store, { collectionId, gate: "produce" }, clock),
-      ).resolves.toEqual({ collectionId, gate: "produce", recorded: true });
-      await expect(
-        rejectCollectionGate(store, { collectionId, gate: "produce" }, clock),
-      ).resolves.toEqual({ collectionId, gate: "produce", recorded: false });
+        assert.deepStrictEqual(yield* rejectCollectionGate({ collectionId, gate: "produce" }), {
+          collectionId,
+          gate: "produce",
+          recorded: true,
+        });
 
-      await expect(store.db.select().from(rejections)).resolves.toHaveLength(1);
-    });
-  });
+        assert.strictEqual((yield* selectAll("approvals")).length, 1);
+        assert.strictEqual((yield* selectAll("rejections")).length, 2);
+      }),
+    ),
+  );
 
-  test("appends a new rejection after a later approval without deleting history", async () => {
-    await withCollection("nyaucast-reject-after-approval-", async ({ store }) => {
-      await rejectCollectionGate(
-        store,
-        { collectionId, gate: "produce" },
-        {
-          now: () => new Date("2026-09-02T00:00:00.000Z"),
-        },
-      );
-      await approveCollectionGate(
-        store,
-        { collectionId, gate: "produce" },
-        {
-          now: () => new Date("2026-09-02T01:00:00.000Z"),
-        },
-      );
-      await expect(
-        rejectCollectionGate(
-          store,
-          { collectionId, gate: "produce" },
-          {
-            now: () => new Date("2026-09-02T02:00:00.000Z"),
-          },
-        ),
-      ).resolves.toEqual({ collectionId, gate: "produce", recorded: true });
+  it.effect("stamps a fact with the Clock when it is later than the previous fact", () =>
+    seeded(
+      "nyaucast-clock-stamp-",
+      Effect.gen(function* () {
+        yield* rejectCollectionGate({ collectionId, gate: "produce" });
+        yield* TestClock.adjust("2 hours");
+        yield* approveCollectionGate({ collectionId, gate: "produce" });
 
-      await expect(store.db.select().from(approvals)).resolves.toHaveLength(1);
-      await expect(store.db.select().from(rejections)).resolves.toHaveLength(2);
-    });
-  });
+        assert.deepStrictEqual(
+          (yield* selectAll("approvals")).map((row) => row["approved_at"]),
+          ["2026-09-02T02:00:00.000Z"],
+        );
+      }),
+    ),
+  );
 
-  test.each([
+  // 同時刻・時計が戻ったときも、新しい事実は直前の事実より必ず後（+1ms）になり、判断が覆る。
+  const clockSequences = [
     {
-      clockTimes: [
-        "2026-09-02T03:00:00.000Z",
-        "2026-09-02T03:00:00.000Z",
-        "2026-09-02T03:00:00.000Z",
-      ],
       clockType: "fixed",
-      gate: "produce" as const,
+      times: ["2026-09-02T03:00:00.000Z", "2026-09-02T03:00:00.000Z", "2026-09-02T03:00:00.000Z"],
     },
     {
-      clockTimes: [
-        "2026-09-02T03:00:00.000Z",
-        "2026-09-02T02:00:00.000Z",
-        "2026-09-02T01:00:00.000Z",
-      ],
       clockType: "retreating",
-      gate: "produce" as const,
+      times: ["2026-09-02T03:00:00.000Z", "2026-09-02T02:00:00.000Z", "2026-09-02T01:00:00.000Z"],
     },
-    {
-      clockTimes: [
-        "2026-09-02T03:00:00.000Z",
-        "2026-09-02T03:00:00.000Z",
-        "2026-09-02T03:00:00.000Z",
-      ],
-      clockType: "fixed",
-      gate: "publish" as const,
-    },
-    {
-      clockTimes: [
-        "2026-09-02T03:00:00.000Z",
-        "2026-09-02T02:00:00.000Z",
-        "2026-09-02T01:00:00.000Z",
-      ],
-      clockType: "retreating",
-      gate: "publish" as const,
-    },
-  ])(
+  ] as const;
+  const orderedCases = (["produce", "publish"] as const).flatMap((gate) =>
+    clockSequences.map((sequence) => ({ gate, ...sequence })),
+  );
+
+  it.effect.each(orderedCases)(
     "$gate operations preserve fact order with a $clockType clock",
-    async ({ clockTimes, gate }) => {
-      await withCollection("nyaucast-ordered-gate-facts-", async ({ store }) => {
-        let clockCall = 0;
-        const clock = {
-          now: () => {
-            const timestamp = clockTimes[clockCall];
-            if (timestamp === undefined) {
-              throw new Error("unexpected clock call");
-            }
-            clockCall += 1;
-            return new Date(timestamp);
-          },
-        };
+    ({ gate, times }) =>
+      seeded(
+        "nyaucast-ordered-gate-facts-",
+        Effect.gen(function* () {
+          yield* setClock(times[0]);
+          assert.deepStrictEqual(yield* rejectCollectionGate({ collectionId, gate }), {
+            collectionId,
+            gate,
+            recorded: true,
+          });
+          yield* setClock(times[1]);
+          assert.deepStrictEqual(yield* approveCollectionGate({ collectionId, gate }), {
+            collectionId,
+            gate,
+            recorded: true,
+          });
+          const afterApproval = yield* deriveCollectionStatus(collectionId);
+          assert.strictEqual(afterApproval.gates[gate], "approved");
+          assert.isFalse(afterApproval.progress.terminated);
 
-        await expect(rejectCollectionGate(store, { collectionId, gate }, clock)).resolves.toEqual({
-          collectionId,
-          gate,
-          recorded: true,
-        });
-        await expect(approveCollectionGate(store, { collectionId, gate }, clock)).resolves.toEqual({
-          collectionId,
-          gate,
-          recorded: true,
-        });
-        await expect(deriveCollectionStatus(store, collectionId)).resolves.toMatchObject({
-          gates: { [gate]: "approved" },
-          progress: { terminated: false },
-        });
-        await expect(approveCollectionGate(store, { collectionId, gate }, clock)).resolves.toEqual({
-          collectionId,
-          gate,
-          recorded: false,
-        });
-        await expect(store.db.select().from(approvals)).resolves.toHaveLength(1);
-        await expect(rejectCollectionGate(store, { collectionId, gate }, clock)).resolves.toEqual({
-          collectionId,
-          gate,
-          recorded: true,
-        });
-        await expect(store.db.select().from(rejections)).resolves.toHaveLength(2);
-        await expect(deriveCollectionStatus(store, collectionId)).resolves.toMatchObject({
-          gates: { [gate]: "rejected" },
-          progress: { terminated: true },
-        });
-      });
-    },
+          assert.deepStrictEqual(yield* approveCollectionGate({ collectionId, gate }), {
+            collectionId,
+            gate,
+            recorded: false,
+          });
+          assert.strictEqual((yield* selectAll("approvals")).length, 1);
+
+          yield* setClock(times[2]);
+          assert.deepStrictEqual(yield* rejectCollectionGate({ collectionId, gate }), {
+            collectionId,
+            gate,
+            recorded: true,
+          });
+          assert.strictEqual((yield* selectAll("rejections")).length, 2);
+          const afterRejection = yield* deriveCollectionStatus(collectionId);
+          assert.strictEqual(afterRejection.gates[gate], "rejected");
+          assert.isTrue(afterRejection.progress.terminated);
+        }),
+      ),
   );
-
-  test("rejects a missing collection before recording a rejection", async () => {
-    await withTemporaryDirectoryAsync("nyaucast-missing-rejection-", async (channelRoot) => {
-      const store = await openLocalStore(channelRoot);
-      try {
-        await expect(
-          rejectCollectionGate(
-            store,
-            { collectionId: "01JMISSING0000000000000000", gate: "publish" },
-            { now: () => new Date("2026-09-02T00:00:00.000Z") },
-          ),
-        ).rejects.toThrow();
-        await expect(store.db.select().from(rejections)).resolves.toEqual([]);
-      } finally {
-        await store.close();
-      }
-    });
-  });
 });

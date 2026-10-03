@@ -1,105 +1,88 @@
-import { z } from "zod";
+import { Effect, Schema } from "effect";
+import { Tool } from "effect/ai";
 
-import { titleSchema } from "./plan.checkTitle.ts";
+import { CollectionIds } from "../collections/collection-ids.ts";
+import { CollectionDirectories } from "../collections/directories.ts";
+import {
+  createCollection,
+  findCollectionById,
+  findCollectionByTitle,
+  hasDownstreamRecords,
+  recreateCollection,
+  type CollectionRecord,
+} from "../db/collections.ts";
+import { Title } from "./plan.checkTitle.ts";
 
-interface Collection {
-  id: string;
-  title: string;
-}
+class CollectionHasDownstreamRecords extends Schema.TaggedError<CollectionHasDownstreamRecords>()(
+  "CollectionHasDownstreamRecords",
+  { collectionId: Schema.String },
+) {}
 
-interface CollectionStore {
-  create(collection: Collection): Promise<void>;
-  findById(id: string): Promise<Collection | undefined>;
-  findByTitle(title: string): Promise<Collection | undefined>;
-  hasDownstreamRecords(id: string): Promise<boolean>;
-  recreate(collection: Collection): Promise<void>;
-}
+class CollectionIdCollision extends Schema.TaggedError<CollectionIdCollision>()(
+  "CollectionIdCollision",
+  { collectionId: Schema.String },
+) {}
 
-export interface CollectionDirectories {
-  create(id: string): Promise<string>;
-  exists(id: string): Promise<boolean>;
-  recreate(id: string): Promise<string>;
-}
-
-interface PlanInitDependencies {
-  collectionDirectories: CollectionDirectories;
-  collectionStore: CollectionStore;
-  generateCollectionId(): string;
-}
-
-const inputSchema = z
-  .object({
-    force: z
-      .boolean()
-      .optional()
-      .default(false)
-      .describe(
+export const PlanInitTool = Tool.make("plan_init", {
+  description:
+    "Create a collection: a flat directory under collections/<id> plus its local-store record. " +
+    "If a collection with the same title exists, returns it unchanged with created: false, unless force is true. " +
+    "With force, the existing directory and record are recreated; this fails when the collection already has downstream records. " +
+    "Returns the collection ID, whether anything was created, and the directory path.",
+  failure: Schema.Union([CollectionHasDownstreamRecords, CollectionIdCollision]),
+  parameters: Schema.Struct({
+    force: Schema.optionalKey(Schema.Boolean).annotate({
+      description:
         "Recreate an existing collection with the same title. Fails if it already has downstream records.",
-      ),
-    title: titleSchema,
-  })
-  .strict();
-const outputSchema = z
-  .object({
-    collectionId: z.string(),
-    created: z.boolean(),
-    dir: z.string(),
-  })
-  .strict();
+    }),
+    title: Title,
+  }),
+  success: Schema.Struct({
+    collectionId: Schema.String,
+    created: Schema.Boolean,
+    dir: Schema.String,
+  }),
+}).annotate(Tool.Strict, true);
 
-function collectionDirectory(id: string): string {
-  return `collections/${id}`;
-}
+const collectionDirectory = (id: string) => `collections/${id}`;
 
-async function initializeExistingCollection(
-  existing: Collection,
-  force: boolean,
-  dependencies: PlanInitDependencies,
-) {
-  if (!force) {
-    return {
-      collectionId: existing.id,
-      created: false,
-      dir: collectionDirectory(existing.id),
-    };
+const recreateExisting = (existing: CollectionRecord) =>
+  Effect.gen(function* () {
+    if (yield* hasDownstreamRecords(existing.id)) {
+      return yield* new CollectionHasDownstreamRecords({ collectionId: existing.id });
+    }
+    const directories = yield* CollectionDirectories;
+    const dir = yield* directories.recreate(existing.id);
+    yield* recreateCollection(existing);
+    return { collectionId: existing.id, created: true, dir };
+  });
+
+const createNew = (title: string) =>
+  Effect.gen(function* () {
+    const directories = yield* CollectionDirectories;
+    const collectionId = yield* (yield* CollectionIds).next;
+    const recordExists = (yield* findCollectionById(collectionId)) !== undefined;
+    if (recordExists || (yield* directories.exists(collectionId))) {
+      return yield* new CollectionIdCollision({ collectionId });
+    }
+    yield* createCollection({ id: collectionId, title });
+    const dir = yield* directories.create(collectionId);
+    return { collectionId, created: true, dir };
+  });
+
+export const planInit = Effect.fn("plan.init")(function* ({
+  force = false,
+  title,
+}: {
+  readonly force?: boolean;
+  readonly title: string;
+}) {
+  const existing = yield* findCollectionByTitle(title);
+  if (existing === undefined) {
+    return yield* createNew(title);
   }
-  if (await dependencies.collectionStore.hasDownstreamRecords(existing.id)) {
-    throw new Error("collection with downstream records cannot be recreated");
+  if (force) {
+    return yield* recreateExisting(existing);
   }
-  const dir = await dependencies.collectionDirectories.recreate(existing.id);
-  await dependencies.collectionStore.recreate(existing);
-  return { collectionId: existing.id, created: true, dir };
-}
-
-async function initializeNewCollection(title: string, dependencies: PlanInitDependencies) {
-  const collectionId = dependencies.generateCollectionId();
-  const recordExists = (await dependencies.collectionStore.findById(collectionId)) !== undefined;
-  const directoryExists = await dependencies.collectionDirectories.exists(collectionId);
-  if (recordExists || directoryExists) {
-    throw new Error("generated collection ID already exists");
-  }
-  await dependencies.collectionStore.create({ id: collectionId, title });
-  const dir = await dependencies.collectionDirectories.create(collectionId);
-  return { collectionId, created: true, dir };
-}
-
-export function createPlanInitTool(dependencies: PlanInitDependencies) {
-  return {
-    description:
-      "Create a collection: a flat directory under collections/<id> plus its local-store record. " +
-      "If a collection with the same title exists, returns it unchanged with created: false, unless force is true. " +
-      "With force, the existing directory and record are recreated; this fails when the collection already has downstream records. " +
-      "Returns the collection ID, whether anything was created, and the directory path.",
-    handler: async (input: unknown) => {
-      const parsed = inputSchema.parse(input);
-      const existing = await dependencies.collectionStore.findByTitle(parsed.title);
-      if (existing !== undefined) {
-        return initializeExistingCollection(existing, parsed.force, dependencies);
-      }
-      return initializeNewCollection(parsed.title, dependencies);
-    },
-    inputSchema,
-    name: "plan.init",
-    outputSchema,
-  };
-}
+  return { collectionId: existing.id, created: false, dir: collectionDirectory(existing.id) };
+});

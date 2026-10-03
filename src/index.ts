@@ -1,24 +1,22 @@
-import { randomUUID } from "node:crypto";
+import { pathToFileURL } from "node:url";
 
-import { createCollectionDirectories } from "./collections/directories.ts";
+import { NodeRuntime, NodeServices, NodeStdio } from "@effect/platform-node";
+import { Cause, Console, Effect, Layer, Logger, Result } from "effect";
+import { McpProtocol, McpServer } from "effect/ai";
+import { Argument, CliError, Command } from "effect/cli";
+
+import { CollectionIds } from "./collections/collection-ids.ts";
+import { CollectionDirectories } from "./collections/directories.ts";
 import { approveCollectionGate, rejectCollectionGate } from "./collections/gate-operations.ts";
-import { createCollectionStore } from "./db/collections.ts";
-import { parseGate, type Gate } from "./db/gates.ts";
-import { openLocalStore } from "./db/local-store.ts";
-import { deriveCollectionStatus } from "./db/read-model.ts";
-import { serveMcp } from "./mcp.ts";
-import { createCollectionStatusTool } from "./tools/collection.status.ts";
-import { createPlanCheckTitleTool } from "./tools/plan.checkTitle.ts";
-import { createPlanInitTool } from "./tools/plan.init.ts";
-import { createProductionYouTubeAuth } from "./youtube/auth.ts";
+import type { Gate } from "./db/gates.ts";
+import { LocalStore } from "./db/local-store.ts";
+import { NyaucastToolHandlers, NyaucastToolkit } from "./mcp.ts";
+import { describeFailure } from "./failure-report.ts";
+import { YouTubeAuth } from "./youtube/auth.ts";
 
-const systemClock = { now: () => new Date() };
-
-function requireArguments(arguments_: string[], expected: number, usage: string): void {
-  if (arguments_.length !== expected) {
-    throw new Error(`usage: ${usage}`);
-  }
-}
+const version = "0.0.2";
+const channelRoot = process.cwd();
+const localStore = LocalStore.layer(pathToFileURL(`${channelRoot}/data/local.db`).href);
 
 function gateOperationMessage(
   collectionId: string,
@@ -28,99 +26,87 @@ function gateOperationMessage(
 ): string {
   if (!recorded) {
     return decision === "approval"
-      ? `既に承認済みです: collection ${collectionId} / gate=${gate}（記録は追加していません）\n`
-      : `既に NO-GO 済みです: collection ${collectionId} / gate=${gate}（記録は追加していません）\n`;
+      ? `既に承認済みです: collection ${collectionId} / gate=${gate}（記録は追加していません）`
+      : `既に NO-GO 済みです: collection ${collectionId} / gate=${gate}（記録は追加していません）`;
   }
   if (decision === "approval") {
-    return (
-      `承認を記録しました: collection ${collectionId} / gate=${gate}\n` +
-      `Claude Code で collection ${collectionId} の ${gate} 区間を実行してください。\n`
-    );
+    return [
+      `承認を記録しました: collection ${collectionId} / gate=${gate}`,
+      `Claude Code で collection ${collectionId} の ${gate} 区間を実行してください。`,
+    ].join("\n");
   }
-  return (
-    `NO-GO を記録しました: collection ${collectionId} / gate=${gate}\n` +
-    `この collection は ${gate} ゲートで停止します。判断を覆して先へ進める場合は\n` +
-    `nyaucast collection ${gate} ${collectionId} を実行してください（NO-GO より後に承認を積むと覆ります）。\n`
-  );
+  return [
+    `NO-GO を記録しました: collection ${collectionId} / gate=${gate}`,
+    `この collection は ${gate} ゲートで停止します。判断を覆して先へ進める場合は`,
+    `nyaucast collection ${gate} ${collectionId} を実行してください（NO-GO より後に承認を積むと覆ります）。`,
+  ].join("\n");
 }
 
-async function runGateOperation(
-  channelRoot: string,
-  gate: Gate,
-  collectionId: string,
-  decision: "approval" | "rejection",
-): Promise<void> {
-  const store = await openLocalStore(channelRoot);
-  try {
+const runGateOperation = (gate: Gate, collectionId: string, decision: "approval" | "rejection") =>
+  Effect.gen(function* () {
     const operation = decision === "approval" ? approveCollectionGate : rejectCollectionGate;
-    const result = await operation(store, { collectionId, gate }, systemClock);
-    process.stdout.write(gateOperationMessage(collectionId, gate, result.recorded, decision));
-  } finally {
-    await store.close();
-  }
-}
+    const result = yield* operation({ collectionId, gate });
+    yield* Console.log(gateOperationMessage(collectionId, gate, result.recorded, decision));
+  }).pipe(Effect.provide(localStore));
 
-async function runCollection(arguments_: string[]): Promise<void> {
-  const subcommand = arguments_[0];
-  if (subcommand === "produce" || subcommand === "publish") {
-    requireArguments(arguments_, 2, `nyaucast collection ${subcommand} <id>`);
-    await runGateOperation(process.cwd(), subcommand, arguments_[1] as string, "approval");
-    return;
-  }
-  if (subcommand === "reject") {
-    requireArguments(arguments_, 3, "nyaucast collection reject <gate> <id>");
-    await runGateOperation(
-      process.cwd(),
-      parseGate(arguments_[1]),
-      arguments_[2] as string,
-      "rejection",
-    );
-    return;
-  }
-  throw new Error(`unknown collection command: ${String(subcommand)}`);
-}
+const collectionId = Argument.String("id");
 
-async function runMcp(): Promise<void> {
-  const channelRoot = process.cwd();
-  const store = await openLocalStore(channelRoot);
-  const collectionStore = createCollectionStore(store);
-  const tools = [
-    createPlanInitTool({
-      collectionDirectories: createCollectionDirectories(channelRoot),
-      collectionStore,
-      generateCollectionId: randomUUID,
-    }),
-    createPlanCheckTitleTool({ findCollectionByTitle: collectionStore.findByTitle }),
-    createCollectionStatusTool({
-      getCollectionStatus: (collectionId) => deriveCollectionStatus(store, collectionId),
-    }),
-  ];
-  process.once("exit", () => store.client.close());
-  await serveMcp(tools);
-}
+const approve = (gate: Gate) =>
+  Command.make(gate, { id: collectionId }, ({ id }) => runGateOperation(gate, id, "approval"));
 
-async function runAuth(command: string, arguments_: string[]): Promise<void> {
-  // fallow-ignore-next-line code-duplication -- Top-level auth dispatch and collection existence checks have different effects.
-  if (command !== "auth") throw new Error(`unknown command: ${command}`);
-  requireArguments(arguments_, 1, "nyaucast auth <channel>");
-  await createProductionYouTubeAuth().authenticate(arguments_[0] as string);
-}
+const reject = Command.make(
+  "reject",
+  { gate: Argument.Literals("gate", ["produce", "publish"]), id: collectionId },
+  ({ gate, id }) => runGateOperation(gate, id, "rejection"),
+);
 
-async function main(): Promise<void> {
-  const [command, ...arguments_] = process.argv.slice(2);
-  if (command === undefined) {
-    return;
-  }
-  if (command === "mcp") {
-    requireArguments(arguments_, 0, "nyaucast mcp");
-    await runMcp();
-    return;
-  }
-  if (command === "collection") {
-    await runCollection(arguments_);
-    return;
-  }
-  await runAuth(command, arguments_);
-}
+const collection = Command.make("collection").pipe(
+  Command.withSubcommands([approve("produce"), approve("publish"), reject]),
+);
 
-await main();
+// MCP は stdout が JSON-RPC 専用。tool の handler と DB が整ってから stdio の server を起動する
+// （起動後すぐの tools/list が空にならないよう、tool の登録は server が読み始める前に終える）。
+const mcpHandlers = NyaucastToolHandlers.pipe(
+  Layer.provide(CollectionDirectories.layer(channelRoot)),
+  Layer.provide(CollectionIds.layer),
+  Layer.provide(localStore),
+);
+
+const mcpServer = McpServer.toolkit(NyaucastToolkit).pipe(
+  Layer.provide(
+    McpServer.layerStdio({
+      name: "nyaucast",
+      protocols: [McpProtocol.v2025_06_18],
+      version,
+    }).pipe(Layer.provideMerge(mcpHandlers)),
+  ),
+  Layer.provide(NodeStdio.layer),
+);
+
+const mcp = Command.make("mcp", {}, () => Layer.launch(mcpServer));
+
+const auth = Command.make("auth", { channel: Argument.String("channel") }, ({ channel }) =>
+  YouTubeAuth.use((youtubeAuth) => youtubeAuth.authenticate(channel)).pipe(
+    Effect.provide(YouTubeAuth.layerProduction),
+  ),
+);
+
+// effect/cli の引数の誤りは、cli 自身が使い方とエラーを出力済み。二重に出さない。
+const reportFailure = (cause: Cause.Cause<unknown>) => {
+  const failure = Cause.findFail(cause);
+  if (Result.isSuccess(failure) && CliError.isCliError(failure.success.error)) {
+    return Effect.void;
+  }
+  return Console.error(
+    Result.isSuccess(failure) ? describeFailure(failure.success.error) : "UnexpectedFailure",
+  );
+};
+
+Command.make("nyaucast").pipe(
+  Command.withSubcommands([collection, mcp, auth]),
+  Command.run({ version }),
+  Effect.tapCause(reportFailure),
+  Effect.provide(NodeServices.layer),
+  Effect.provideService(Logger.LogToStderr, true),
+  NodeRuntime.runMain({ disableErrorReporting: true }),
+);

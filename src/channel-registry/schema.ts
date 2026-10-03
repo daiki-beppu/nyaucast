@@ -1,7 +1,9 @@
 import { isAbsolute } from "node:path";
 
-import { z } from "zod";
+import { Schema } from "effect";
 
-export const channelRegistrySchema = z.array(
-  z.string().refine((path) => isAbsolute(path), "channel paths must be absolute"),
+const AbsolutePath = Schema.String.check(
+  Schema.makeFilter((path) => isAbsolute(path) || "channel paths must be absolute"),
 );
+
+export const channelRegistrySchema = Schema.Array(AbsolutePath);

@@ -1,11 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
+import { Context, Effect, FileSystem, Layer, Path, Schema } from "effect";
 import { type Credentials, OAuth2Client, type OAuth2ClientOptions } from "google-auth-library";
-import { z } from "zod";
 
 import { authorizeWithLoopback } from "./oauth-loopback.ts";
 
@@ -15,37 +13,79 @@ const youtubeScopes = [
   "https://www.googleapis.com/auth/yt-analytics.readonly",
   "https://www.googleapis.com/auth/yt-analytics-monetary.readonly",
 ];
-const requiredString = z.string().min(1);
-const optionalCredentialToken = z.string().nullable().optional();
 
-const clientSecretsSchema = z.strictObject({
-  installed: z.strictObject({
-    // fallow-ignore-next-line code-duplication -- Client-secret validation and MCP input schemas validate different boundaries.
-    client_id: requiredString,
-    client_secret: requiredString,
-    redirect_uris: z.array(requiredString).min(1),
+// 失敗は、タグと事実（channel・表示用の場所）だけを持つ。秘密の値・絶対パス・次の行動の文章は持たない。
+class InvalidChannel extends Schema.TaggedError<InvalidChannel>()("InvalidChannel", {
+  channel: Schema.String,
+}) {}
+class ClientSecretsUnavailable extends Schema.TaggedError<ClientSecretsUnavailable>()(
+  "ClientSecretsUnavailable",
+  { channel: Schema.String, location: Schema.String },
+) {}
+class AuthRequired extends Schema.TaggedError<AuthRequired>()("AuthRequired", {
+  channel: Schema.String,
+}) {}
+class AuthorizationFailed extends Schema.TaggedError<AuthorizationFailed>()("AuthorizationFailed", {
+  channel: Schema.String,
+}) {}
+class CredentialRefreshFailed extends Schema.TaggedError<CredentialRefreshFailed>()(
+  "CredentialRefreshFailed",
+  { channel: Schema.String },
+) {}
+class CredentialSaveFailed extends Schema.TaggedError<CredentialSaveFailed>()(
+  "CredentialSaveFailed",
+  { channel: Schema.String },
+) {}
+
+export type YouTubeAuthFailure =
+  | AuthorizationFailed
+  | AuthRequired
+  | ClientSecretsUnavailable
+  | CredentialRefreshFailed
+  | CredentialSaveFailed
+  | InvalidChannel;
+
+const RequiredString = Schema.String.check(Schema.isMinLength(1));
+const OptionalToken = Schema.optional(Schema.NullOr(Schema.String));
+const OtherFields = [Schema.Record(Schema.String, Schema.Unknown)] as const;
+
+const ClientSecrets = Schema.Struct({
+  installed: Schema.Struct({
+    client_id: RequiredString,
+    client_secret: RequiredString,
+    redirect_uris: Schema.Array(RequiredString).check(Schema.isMinLength(1)),
   }),
 });
 
-const storedCredentialsSchema = z.looseObject({
-  access_token: optionalCredentialToken,
-  expiry_date: z.number().nullable().optional(),
-  refresh_token: optionalCredentialToken,
-});
-const newCredentialsSchema = storedCredentialsSchema.extend({
-  access_token: requiredString,
-  refresh_token: requiredString,
-});
-const refreshedCredentialsSchema = storedCredentialsSchema.extend({
-  access_token: requiredString,
-});
-const channelSchema = z
-  .string()
-  .min(1)
-  .refine((channel) => channel !== "." && channel !== ".." && !/[/\\]/u.test(channel));
+// 保存済みの credential は、知らないフィールド（token_type など）も落とさずに保つ。
+const credentialFields = {
+  access_token: OptionalToken,
+  expiry_date: Schema.optional(Schema.NullOr(Schema.Finite)),
+  refresh_token: OptionalToken,
+};
+const StoredCredentials = Schema.StructWithRest(Schema.Struct(credentialFields), OtherFields);
+const NewCredentials = Schema.StructWithRest(
+  Schema.Struct({
+    ...credentialFields,
+    access_token: RequiredString,
+    refresh_token: RequiredString,
+  }),
+  OtherFields,
+);
+const RefreshedCredentials = Schema.StructWithRest(
+  Schema.Struct({ ...credentialFields, access_token: RequiredString }),
+  OtherFields,
+);
+
+const Channel = Schema.String.check(
+  Schema.makeFilter(
+    (channel) =>
+      (channel.length > 0 && channel !== "." && channel !== ".." && !/[/\\]/u.test(channel)) ||
+      "invalid channel",
+  ),
+);
 
 type CredentialPaths = {
-  // fallow-ignore-next-line code-duplication -- Credential paths and OAuth methods only share short object-type syntax.
   clientSecrets: string;
   directory: string;
   token: string;
@@ -56,7 +96,6 @@ type OAuthClient = {
   refreshAccessToken: () => Promise<{ credentials: Credentials }>;
   setCredentials: (credentials: Credentials) => void;
 };
-
 type YouTubeAuthorizationOptions = {
   clientId: string;
   clientSecret: string;
@@ -64,175 +103,162 @@ type YouTubeAuthorizationOptions = {
 };
 
 type YouTubeAuthDependencies = {
-  authorize: (options: YouTubeAuthorizationOptions) => Promise<{ credentials: unknown }>;
+  authorize: (
+    options: YouTubeAuthorizationOptions,
+  ) => Effect.Effect<{ credentials: unknown }, unknown>;
   createOAuthClient: (options: OAuth2ClientOptions) => OAuthClient;
   credentialRoot: string;
 };
 
-export type YouTubeAuth = {
-  authenticate: (channel: string) => Promise<void>;
-  getAccessToken: (channel: string) => Promise<string>;
-  refreshAccessToken: (channel: string) => Promise<string>;
-};
+const clientSecretsLocation = (channel: string) =>
+  `~/.config/nyaucast/${channel}/client_secrets.json`;
 
-const credentialPaths = (root: string, channel: string) => {
-  const slug = channelSchema.parse(channel);
-  const directory = join(root, slug);
-  return {
-    clientSecrets: join(directory, "client_secrets.json"),
-    directory,
-    token: join(directory, "token.json"),
-  };
-};
-
-class AuthRequiredError extends Error {
-  constructor(channel: string) {
-    super(`YouTube 認証が必要です。nyaucast auth ${channel} を実行してください`);
+export class YouTubeAuth extends Context.Service<
+  YouTubeAuth,
+  {
+    authenticate(channel: string): Effect.Effect<void, YouTubeAuthFailure>;
+    getAccessToken(channel: string): Effect.Effect<string, YouTubeAuthFailure>;
+    refreshAccessToken(channel: string): Effect.Effect<string, YouTubeAuthFailure>;
   }
+>()("nyaucast/YouTubeAuth") {
+  static layer(dependencies: YouTubeAuthDependencies) {
+    return Layer.effect(YouTubeAuth, makeYouTubeAuth(dependencies));
+  }
+
+  static readonly layerProduction = YouTubeAuth.layer({
+    authorize: authorizeWithLoopback,
+    createOAuthClient: (options) => new OAuth2Client(options),
+    credentialRoot: `${homedir()}/.config/nyaucast`,
+  });
 }
 
-const redactFailure = async <Value>(failure: Error, operation: () => Promise<Value>) => {
-  try {
-    return await operation();
-  } catch {
-    throw failure;
-  }
-};
+function makeYouTubeAuth(dependencies: YouTubeAuthDependencies) {
+  return Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
 
-const readCredential = async <Value>(path: string, schema: z.ZodType<Value>, failure: Error) => {
-  return redactFailure(failure, async () => {
-    const contents = await readFile(path, "utf8");
-    await chmod(path, 0o600);
-    return schema.parse(JSON.parse(contents));
-  });
-};
+    const credentialPaths = (channel: string) =>
+      Schema.decodeUnknownEffect(Channel)(channel).pipe(
+        Effect.mapError(() => new InvalidChannel({ channel })),
+        Effect.map((slug): CredentialPaths => {
+          const directory = path.join(dependencies.credentialRoot, slug);
+          return {
+            clientSecrets: path.join(directory, "client_secrets.json"),
+            directory,
+            token: path.join(directory, "token.json"),
+          };
+        }),
+      );
 
-const saveToken = async (paths: CredentialPaths, credentials: Credentials) => {
-  const temporaryToken = join(paths.directory, `.token-${randomUUID()}.tmp`);
-  try {
-    // fallow-ignore-next-line code-duplication -- Atomic credential publication is not an OAuth request block.
-    await redactFailure(new Error("YouTube credential の保存に失敗しました"), async () => {
-      await mkdir(paths.directory, { mode: 0o700, recursive: true });
-      await writeFile(temporaryToken, `${JSON.stringify(credentials, undefined, 2)}\n`, {
-        flag: "wx",
-        mode: 0o600,
-      });
-      await rename(temporaryToken, paths.token);
-    });
-  } catch (error) {
-    await Promise.allSettled([rm(temporaryToken, { force: true })]);
-    throw error;
-  }
-};
+    // 読み、権限を 0600 に直し、schema で検証する。失敗の詳細（fs のエラー）は捨て、渡された失敗に置き換える。
+    const readCredential = <Value, Failure>(
+      file: string,
+      schema: Schema.Decoder<Value>,
+      failure: Failure,
+      options?: { onExcessProperty: "error" },
+    ) =>
+      Effect.gen(function* () {
+        const contents = yield* fileSystem.readFileString(file);
+        yield* fileSystem.chmod(file, 0o600);
+        return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(schema))(contents, options);
+      }).pipe(Effect.mapError(() => failure));
 
-class YouTubeAuthService implements YouTubeAuth {
-  readonly #dependencies: YouTubeAuthDependencies;
+    const loadClientSecrets = (paths: CredentialPaths, channel: string) =>
+      readCredential(
+        paths.clientSecrets,
+        ClientSecrets,
+        new ClientSecretsUnavailable({ channel, location: clientSecretsLocation(channel) }),
+        { onExcessProperty: "error" },
+      );
 
-  constructor(dependencies: YouTubeAuthDependencies) {
-    this.#dependencies = dependencies;
-  }
+    // 一時ファイルへ 0600 で書いてから rename で置き換える。失敗したら一時ファイルを消し、元の失敗を返す。
+    const saveToken = (paths: CredentialPaths, channel: string, credentials: unknown) => {
+      const temporaryToken = path.join(paths.directory, `.token-${randomUUID()}.tmp`);
+      return Effect.gen(function* () {
+        yield* fileSystem.makeDirectory(paths.directory, { mode: 0o700, recursive: true });
+        yield* fileSystem.writeFileString(
+          temporaryToken,
+          `${JSON.stringify(credentials, undefined, 2)}\n`,
+          { flag: "wx", mode: 0o600 },
+        );
+        yield* fileSystem.rename(temporaryToken, paths.token);
+      }).pipe(
+        Effect.mapError(() => new CredentialSaveFailed({ channel })),
+        Effect.tapError(() =>
+          fileSystem.remove(temporaryToken, { force: true }).pipe(Effect.ignore),
+        ),
+      );
+    };
 
-  async authenticate(channel: string): Promise<void> {
-    const paths = credentialPaths(this.#dependencies.credentialRoot, channel);
-    const clientSecrets = await this.#loadClientSecrets(paths, channel);
-    // fallow-ignore-next-line code-duplication -- Interactive authorization and token refresh have different failure contracts.
-    const credentials = await redactFailure(
-      new Error("YouTube 認証に失敗しました。client_secrets.json を確認してください"),
-      async () => {
+    const loadOAuthClient = (channel: string) =>
+      Effect.gen(function* () {
+        const paths = yield* credentialPaths(channel);
+        const [clientSecrets, credentials] = yield* Effect.all(
+          [
+            loadClientSecrets(paths, channel),
+            readCredential(paths.token, StoredCredentials, new AuthRequired({ channel })),
+          ],
+          { concurrency: "unbounded" },
+        );
         const installed = clientSecrets.installed;
-        const authorized = await this.#dependencies.authorize({
+        const client = dependencies.createOAuthClient({
+          clientId: installed.client_id,
+          clientSecret: installed.client_secret,
+          redirectUri: installed.redirect_uris[0] as string,
+        });
+        client.setCredentials(credentials as Credentials);
+        return { channel, client, paths };
+      });
+
+    const validatedUpdatedCredentials = (channel: string, update: () => Promise<Credentials>) =>
+      Effect.tryPromise(update).pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(RefreshedCredentials)),
+        Effect.mapError(() => new CredentialRefreshFailed({ channel })),
+      );
+
+    const authenticate = Effect.fn("YouTubeAuth.authenticate")(function* (channel: string) {
+      const paths = yield* credentialPaths(channel);
+      const installed = (yield* loadClientSecrets(paths, channel)).installed;
+      const credentials = yield* dependencies
+        .authorize({
           clientId: installed.client_id,
           clientSecret: installed.client_secret,
           scopes: [...youtubeScopes],
-        });
-        return newCredentialsSchema.parse(authorized.credentials) as Credentials;
-      },
-    );
-    await saveToken(paths, credentials);
-  }
-
-  async getAccessToken(channel: string): Promise<string> {
-    const loaded = await this.#loadOAuthClient(channel);
-    const credentialsBeforeUpdate = { ...loaded.client.credentials };
-    const credentials = await this.#validatedUpdatedCredentials(channel, async () => {
-      await loaded.client.getAccessToken();
-      return loaded.client.credentials;
+        })
+        .pipe(
+          Effect.flatMap((authorized) =>
+            Schema.decodeUnknownEffect(NewCredentials)(authorized.credentials),
+          ),
+          Effect.mapError(() => new AuthorizationFailed({ channel })),
+        );
+      yield* saveToken(paths, channel, credentials);
     });
-    if (!isDeepStrictEqual(credentialsBeforeUpdate, loaded.client.credentials)) {
-      await saveToken(loaded.paths, credentials as Credentials);
-    }
-    return credentials.access_token;
-  }
 
-  async refreshAccessToken(channel: string): Promise<string> {
-    return this.#refreshLoaded(channel, await this.#loadOAuthClient(channel));
-  }
-
-  async #loadClientSecrets(paths: CredentialPaths, channel: string) {
-    return readCredential(
-      paths.clientSecrets,
-      clientSecretsSchema,
-      new Error(
-        `client_secrets.json を ~/.config/nyaucast/${channel}/client_secrets.json に配置してください`,
-      ),
-    );
-  }
-
-  async #loadOAuthClient(channel: string) {
-    const paths = credentialPaths(this.#dependencies.credentialRoot, channel);
-    const [clientSecrets, credentials] = await Promise.all([
-      this.#loadClientSecrets(paths, channel),
-      readCredential(paths.token, storedCredentialsSchema, new AuthRequiredError(channel)),
-    ]);
-    const installed = clientSecrets.installed;
-    const client = this.#dependencies.createOAuthClient({
-      clientId: installed.client_id,
-      clientSecret: installed.client_secret,
-      redirectUri: installed.redirect_uris[0] as string,
+    const getAccessToken = Effect.fn("YouTubeAuth.getAccessToken")(function* (channel: string) {
+      const { client, paths } = yield* loadOAuthClient(channel);
+      const credentialsBeforeUpdate = { ...client.credentials };
+      const credentials = yield* validatedUpdatedCredentials(channel, async () => {
+        await client.getAccessToken();
+        return client.credentials;
+      });
+      if (!isDeepStrictEqual(credentialsBeforeUpdate, client.credentials)) {
+        yield* saveToken(paths, channel, credentials);
+      }
+      return credentials.access_token;
     });
-    const storedCredentials = credentials as Credentials;
-    client.setCredentials(storedCredentials);
-    return { client, paths };
-  }
 
-  async #refreshLoaded(
-    channel: string,
-    loaded: {
-      client: OAuthClient;
-      paths: CredentialPaths;
-    },
-  ): Promise<string> {
-    const credentials = await this.#validatedUpdatedCredentials(channel, async () => {
-      const response = await loaded.client.refreshAccessToken();
-      return response.credentials;
+    const refreshAccessToken = Effect.fn("YouTubeAuth.refreshAccessToken")(function* (
+      channel: string,
+    ) {
+      const { client, paths } = yield* loadOAuthClient(channel);
+      const credentials = yield* validatedUpdatedCredentials(channel, async () => {
+        const response = await client.refreshAccessToken();
+        return response.credentials;
+      });
+      yield* saveToken(paths, channel, credentials);
+      return credentials.access_token;
     });
-    await saveToken(loaded.paths, credentials as Credentials);
-    return credentials.access_token;
-  }
 
-  async #validatedUpdatedCredentials(
-    channel: string,
-    update: () => Promise<Credentials>,
-  ): Promise<z.infer<typeof refreshedCredentialsSchema>> {
-    let refreshed: z.infer<typeof refreshedCredentialsSchema>;
-    try {
-      refreshed = refreshedCredentialsSchema.parse(await update());
-    } catch {
-      throw new Error(
-        `YouTube credential を更新できません。nyaucast auth ${channel} を実行してください`,
-      );
-    }
-    return refreshed;
-  }
-}
-
-export const createYouTubeAuth = (dependencies: YouTubeAuthDependencies): YouTubeAuth =>
-  new YouTubeAuthService(dependencies);
-
-export function createProductionYouTubeAuth(): YouTubeAuth {
-  return createYouTubeAuth({
-    authorize: authorizeWithLoopback,
-    createOAuthClient: (options) => new OAuth2Client(options),
-    credentialRoot: join(homedir(), ".config", "nyaucast"),
+    return YouTubeAuth.of({ authenticate, getAccessToken, refreshAccessToken });
   });
 }

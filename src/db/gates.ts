@@ -1,59 +1,48 @@
-import { z } from "zod";
+import { Clock, Effect, Schema } from "effect";
+import { SqlClient } from "effect/sql";
 
-import type { LocalStore } from "./local-store.ts";
-import { approvals, rejections } from "./schema.ts";
-
-const gateSchema = z.enum(["produce", "publish"]);
-export type Gate = z.infer<typeof gateSchema>;
-export type GateDecision = "approved" | "pending" | "rejected";
-
-interface GateState {
-  decision: GateDecision;
-  latestTimestamp: string | undefined;
-}
+export const Gate = Schema.Literals(["produce", "publish"]);
+export type Gate = typeof Gate.Type;
+export const GateDecision = Schema.Literals(["approved", "pending", "rejected"]);
+export type GateDecision = typeof GateDecision.Type;
 
 interface GateFact {
   collectionId: string;
   gate: Gate;
 }
 
-interface Clock {
-  now(): Date;
+interface GateState {
+  decision: GateDecision;
+  latestTimestamp: string | undefined;
 }
 
-export function parseGate(value: unknown): Gate {
-  return gateSchema.parse(value);
-}
+const decodeGate = Schema.decodeUnknownEffect(Gate);
 
-async function latestTimestamp(
-  store: LocalStore,
-  collectionId: string,
-  gate: Gate,
-  decision: "approval" | "rejection",
-): Promise<string | undefined> {
-  const query =
-    decision === "approval"
-      ? "SELECT approved_at AS timestamp FROM approvals WHERE collection_id = ? AND gate = ? ORDER BY approved_at DESC LIMIT 1"
-      : "SELECT rejected_at AS timestamp FROM rejections WHERE collection_id = ? AND gate = ? ORDER BY rejected_at DESC LIMIT 1";
-  const result = await store.client.execute({ args: [collectionId, gate], sql: query });
-  const timestamp = result.rows[0]?.["timestamp"];
-  return typeof timestamp === "string" ? timestamp : undefined;
-}
+const latestTimestamp = (collectionId: string, gate: Gate, decision: "approval" | "rejection") =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const rows =
+      decision === "approval"
+        ? yield* sql`SELECT approved_at AS timestamp FROM approvals WHERE collection_id = ${collectionId} AND gate = ${gate} ORDER BY approved_at DESC LIMIT 1`
+        : yield* sql`SELECT rejected_at AS timestamp FROM rejections WHERE collection_id = ${collectionId} AND gate = ${gate} ORDER BY rejected_at DESC LIMIT 1`;
+    const timestamp = rows[0]?.["timestamp"];
+    return typeof timestamp === "string" ? timestamp : undefined;
+  });
 
-function decideGate(
+const decideGate = (
   latestApproval: string | undefined,
   latestRejection: string | undefined,
-): GateDecision {
+): GateDecision => {
   if (latestRejection === undefined) {
     return latestApproval === undefined ? "pending" : "approved";
   }
   return latestApproval !== undefined && latestApproval > latestRejection ? "approved" : "rejected";
-}
+};
 
-function latestGateTimestamp(
+const latestGateTimestamp = (
   latestApproval: string | undefined,
   latestRejection: string | undefined,
-): string | undefined {
+): string | undefined => {
   if (latestApproval === undefined) {
     return latestRejection;
   }
@@ -61,66 +50,42 @@ function latestGateTimestamp(
     return latestApproval;
   }
   return latestRejection;
-}
+};
 
-export async function getGateState(
-  store: LocalStore,
+export const getGateState = (
   collectionId: string,
   gate: Gate,
-): Promise<GateState> {
-  const [latestApproval, latestRejection] = await Promise.all([
-    latestTimestamp(store, collectionId, gate, "approval"),
-    latestTimestamp(store, collectionId, gate, "rejection"),
-  ]);
-  return {
-    decision: decideGate(latestApproval, latestRejection),
-    latestTimestamp: latestGateTimestamp(latestApproval, latestRejection),
-  };
-}
+): Effect.Effect<GateState, never, SqlClient.SqlClient> =>
+  Effect.gen(function* () {
+    const [latestApproval, latestRejection] = yield* Effect.all(
+      [
+        latestTimestamp(collectionId, gate, "approval"),
+        latestTimestamp(collectionId, gate, "rejection"),
+      ],
+      { concurrency: "unbounded" },
+    );
+    return {
+      decision: decideGate(latestApproval, latestRejection),
+      latestTimestamp: latestGateTimestamp(latestApproval, latestRejection),
+    };
+  }).pipe(Effect.orDie);
 
-export async function getGateDecision(
-  store: LocalStore,
-  collectionId: string,
-  gate: Gate,
-): Promise<GateDecision> {
-  return (await getGateState(store, collectionId, gate)).decision;
-}
+export const getGateDecision = (collectionId: string, gate: Gate) =>
+  getGateState(collectionId, gate).pipe(Effect.map((state) => state.decision));
 
-async function recordGateFact(
-  store: LocalStore,
-  fact: GateFact,
-  clock: Clock,
-  decision: "approval" | "rejection",
-): Promise<void> {
-  const gate = parseGate(fact.gate);
-  const timestamp = clock.now().toISOString();
-  if (decision === "approval") {
-    await store.db.insert(approvals).values({
-      approvedAt: timestamp,
-      collectionId: fact.collectionId,
-      gate,
-    });
-    return;
-  }
-  await store.db.insert(rejections).values({
-    collectionId: fact.collectionId,
-    gate,
-    rejectedAt: timestamp,
-  });
-}
+// 時刻は既定で Clock から取る。直前の事実より後に積むための時刻だけ、呼び出し側が渡せる。
+const recordGateFact =
+  (decision: "approval" | "rejection") => (fact: GateFact, atMilliseconds?: number) =>
+    Effect.gen(function* () {
+      const gate = yield* decodeGate(fact.gate);
+      const sql = yield* SqlClient.SqlClient;
+      const timestamp = new Date(atMilliseconds ?? (yield* Clock.currentTimeMillis)).toISOString();
+      if (decision === "approval") {
+        yield* sql`INSERT INTO approvals (collection_id, gate, approved_at) VALUES (${fact.collectionId}, ${gate}, ${timestamp})`;
+        return;
+      }
+      yield* sql`INSERT INTO rejections (collection_id, gate, rejected_at) VALUES (${fact.collectionId}, ${gate}, ${timestamp})`;
+    }).pipe(Effect.orDie);
 
-export async function recordApproval(
-  store: LocalStore,
-  fact: GateFact,
-  clock: Clock,
-): Promise<void> {
-  await recordGateFact(store, fact, clock, "approval");
-}
-
-export async function recordRejection(
-  store: LocalStore,
-  fact: GateFact,
-  clock: Clock,
-): Promise<void> {
-  await recordGateFact(store, fact, clock, "rejection");
-}
+export const recordApproval = recordGateFact("approval");
+export const recordRejection = recordGateFact("rejection");

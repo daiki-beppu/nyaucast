@@ -1,12 +1,9 @@
 import { spawn } from "node:child_process";
 import { join, resolve } from "node:path";
 
-import { describe, expect, test } from "vite-plus/test";
+import { describe, expect, test } from "@effect/vitest";
 
-import { createCollectionStore } from "../src/db/collections";
-import { recordRejection } from "../src/db/gates";
-import { openLocalStore } from "../src/db/local-store";
-import { withTemporaryDirectoryAsync } from "./helpers";
+import { seedCollection, seedRejection, withTemporaryDirectoryAsync } from "./helpers.ts";
 import { createJsonRpcClient, requireRecord, stopChildProcess } from "./mcp-stdio-helpers";
 
 const collectionId = "01JCOLLECTION00000000000000";
@@ -25,17 +22,12 @@ function objectKeysDeep(value: unknown): string[] {
 describe("collection status MCP tool", () => {
   test("lists and calls the read tool without exposing a gate write tool", async () => {
     await withTemporaryDirectoryAsync("nyaucast-collection-status-", async (channelRoot) => {
-      const store = await openLocalStore(channelRoot);
-      try {
-        await createCollectionStore(store).create({ id: collectionId, title: "Night Drive" });
-        await recordRejection(
-          store,
-          { collectionId, gate: "produce" },
-          { now: () => new Date("2026-09-02T00:00:00.000Z") },
-        );
-      } finally {
-        await store.close();
-      }
+      await seedCollection(channelRoot, { id: collectionId, title: "Night Drive" });
+      await seedRejection(channelRoot, {
+        collectionId,
+        gate: "produce",
+        rejectedAt: "2026-09-02T00:00:00.000Z",
+      });
 
       const server = spawn(
         process.execPath,

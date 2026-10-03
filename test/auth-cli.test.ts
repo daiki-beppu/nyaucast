@@ -2,9 +2,9 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-import { describe, expect, test } from "vite-plus/test";
+import { describe, expect, test } from "@effect/vitest";
 
-import { withTemporaryDirectory } from "./helpers";
+import { withTemporaryDirectory } from "./helpers.ts";
 
 const packageRoot = resolve(import.meta.dirname, "..");
 const channel = "deepfocus365";
@@ -42,7 +42,10 @@ describe("nyaucast auth CLI", () => {
         const result = runAuthCli(directory, directory, arguments_);
 
         expect(result.status).not.toBe(0);
-        expect(result.stderr).toContain("usage: nyaucast auth <channel>");
+        // 期待する引数（<channel>）を示すこと。使い方は effect/cli が stdout に、エラーは stderr に出す
+        expect(`${result.stdout}${result.stderr}`).toContain("<channel>");
+        expect(result.stderr).toMatch(/\S/u);
+        expect(result.stderr).not.toMatch(/\n\s+at /u);
       });
     },
   );

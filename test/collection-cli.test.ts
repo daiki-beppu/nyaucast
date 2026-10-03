@@ -2,24 +2,26 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { describe, expect, test } from "vite-plus/test";
+import { describe, expect, test } from "@effect/vitest";
 
-import { createCollectionStore } from "../src/db/collections";
-import { openLocalStore } from "../src/db/local-store";
-import { approvals, rejections } from "../src/db/schema";
-import { withTemporaryDirectoryAsync } from "./helpers";
+import {
+  localDatabasePath,
+  openLocalStoreOnce,
+  readRows,
+  seedCollection as insertSeed,
+  withTemporaryDirectoryAsync,
+} from "./helpers.ts";
 
 const collectionId = "01JCOLLECTION00000000000000";
 const packageRoot = resolve(import.meta.dirname, "..");
 
-async function seedCollection(channelRoot: string): Promise<void> {
-  const store = await openLocalStore(channelRoot);
-  try {
-    await createCollectionStore(store).create({ id: collectionId, title: "Night Drive" });
-  } finally {
-    await store.close();
-  }
+function seedCollection(channelRoot: string): Promise<void> {
+  return insertSeed(channelRoot, { id: collectionId, title: "Night Drive" });
 }
+
+const approvalRows = (channelRoot: string) => readRows(localDatabasePath(channelRoot), "approvals");
+const rejectionRows = (channelRoot: string) =>
+  readRows(localDatabasePath(channelRoot), "rejections");
 
 function runCollectionCli(
   channelRoot: string,
@@ -59,6 +61,10 @@ describe("nyaucast collection CLI", () => {
         expect(first.status).toBe(0);
         expect(first.stdout).toMatch(/[ぁ-んァ-ヶ一-龠]/u);
         expect(first.stdout).toMatch(/してください/u);
+        expect(
+          first.stdout.startsWith(`承認を記録しました: collection ${collectionId} / gate=${gate}`),
+        ).toBe(true);
+        expect(rejectionRows(channelRoot)).toEqual([]);
         expect(first.stdout).toContain(`collection ${collectionId} / gate=${gate}`);
         expect(first.stdout).toContain(
           `Claude Code で collection ${collectionId} の ${gate} 区間を実行してください。`,
@@ -68,14 +74,7 @@ describe("nyaucast collection CLI", () => {
         expect(repeated.status).toBe(0);
         expect(repeated.stdout).toMatch(/既に.*承認/u);
 
-        const store = await openLocalStore(channelRoot);
-        try {
-          await expect(store.db.select().from(approvals)).resolves.toMatchObject([
-            { collectionId, gate },
-          ]);
-        } finally {
-          await store.close();
-        }
+        expect(approvalRows(channelRoot)).toMatchObject([{ collection_id: collectionId, gate }]);
       });
     },
   );
@@ -114,15 +113,10 @@ describe("nyaucast collection CLI", () => {
           "この collection は produce ゲートで停止します。判断を覆して先へ進める場合は\n" +
           `nyaucast collection produce ${collectionId} を実行してください（NO-GO より後に承認を積むと覆ります）。\n`,
       );
-      const store = await openLocalStore(channelRoot);
-      try {
-        await expect(store.db.select().from(approvals)).resolves.toEqual([]);
-        await expect(store.db.select().from(rejections)).resolves.toMatchObject([
-          { collectionId, gate: "produce" },
-        ]);
-      } finally {
-        await store.close();
-      }
+      expect(approvalRows(channelRoot)).toEqual([]);
+      expect(rejectionRows(channelRoot)).toMatchObject([
+        { collection_id: collectionId, gate: "produce" },
+      ]);
     });
   });
 
@@ -144,12 +138,7 @@ describe("nyaucast collection CLI", () => {
       expect(repeated.stdout).toBe(
         `既に NO-GO 済みです: collection ${collectionId} / gate=publish（記録は追加していません）\n`,
       );
-      const store = await openLocalStore(channelRoot);
-      try {
-        await expect(store.db.select().from(rejections)).resolves.toHaveLength(1);
-      } finally {
-        await store.close();
-      }
+      expect(rejectionRows(channelRoot)).toHaveLength(1);
     });
   });
 
@@ -178,12 +167,7 @@ describe("nyaucast collection CLI", () => {
             "この collection は produce ゲートで停止します。判断を覆して先へ進める場合は\n" +
             `nyaucast collection produce ${collectionId} を実行してください（NO-GO より後に承認を積むと覆ります）。\n`,
         );
-        const store = await openLocalStore(channelRoot);
-        try {
-          await expect(store.db.select().from(rejections)).resolves.toHaveLength(2);
-        } finally {
-          await store.close();
-        }
+        expect(rejectionRows(channelRoot)).toHaveLength(2);
       },
     );
   });
@@ -202,16 +186,48 @@ describe("nyaucast collection CLI", () => {
       expect(result.signal).toBeNull();
       expect(typeof result.status).toBe("number");
       expect(result.status).not.toBe(0);
-      expect(result.stderr).toContain("Invalid option");
+      // 候補値（produce / publish）が示されること。文言は effect/cli の出力に従う
       expect(result.stderr).toContain("produce");
       expect(result.stderr).toContain("publish");
-      const store = await openLocalStore(channelRoot);
-      try {
-        await expect(store.db.select().from(approvals)).resolves.toEqual([]);
-        await expect(store.db.select().from(rejections)).resolves.toEqual([]);
-      } finally {
-        await store.close();
-      }
+      expect(approvalRows(channelRoot)).toEqual([]);
+      expect(rejectionRows(channelRoot)).toEqual([]);
+    });
+  });
+
+  test("rejects an extra argument without writing a gate fact", async () => {
+    await withTemporaryDirectoryAsync("nyaucast-collection-extra-arg-", async (channelRoot) => {
+      await seedCollection(channelRoot);
+
+      const result = runCollectionCli(
+        channelRoot,
+        ["produce", collectionId, "extra"],
+        cliEnvironment(""),
+      );
+
+      expect(result.error).toBeUndefined();
+      expect(result.signal).toBeNull();
+      expect(typeof result.status).toBe("number");
+      expect(result.status).not.toBe(0);
+      expect(approvalRows(channelRoot)).toEqual([]);
+      expect(rejectionRows(channelRoot)).toEqual([]);
+    });
+  });
+
+  test("a failure is reported as the tag and facts, without a stack trace", async () => {
+    await withTemporaryDirectoryAsync("nyaucast-collection-failure-shape-", async (channelRoot) => {
+      await openLocalStoreOnce(channelRoot);
+
+      const result = runCollectionCli(
+        channelRoot,
+        ["produce", "01JMISSING0000000000000000"],
+        cliEnvironment(""),
+      );
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("CollectionNotFound");
+      expect(result.stderr).toContain("01JMISSING0000000000000000");
+      expect(result.stderr).not.toMatch(/\n\s+at /u);
+      expect(result.stdout).toBe("");
     });
   });
 
@@ -220,8 +236,7 @@ describe("nyaucast collection CLI", () => {
     { arguments_: ["reject", "produce", "01JMISSING0000000000000000"] },
   ])("rejects a command for a missing collection", async ({ arguments_ }) => {
     await withTemporaryDirectoryAsync("nyaucast-collection-missing-", async (channelRoot) => {
-      const store = await openLocalStore(channelRoot);
-      await store.close();
+      await openLocalStoreOnce(channelRoot);
 
       const result = runCollectionCli(channelRoot, arguments_, cliEnvironment(""));
 
@@ -230,13 +245,8 @@ describe("nyaucast collection CLI", () => {
       expect(typeof result.status).toBe("number");
       expect(result.status).not.toBe(0);
       expect(result.stderr).toContain("01JMISSING0000000000000000");
-      const reopened = await openLocalStore(channelRoot);
-      try {
-        await expect(reopened.db.select().from(approvals)).resolves.toEqual([]);
-        await expect(reopened.db.select().from(rejections)).resolves.toEqual([]);
-      } finally {
-        await reopened.close();
-      }
+      expect(approvalRows(channelRoot)).toEqual([]);
+      expect(rejectionRows(channelRoot)).toEqual([]);
     });
   });
 });

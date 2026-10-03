@@ -17,7 +17,16 @@
     "allowJs": true,
     "allowImportingTsExtensions": true,
     "checkJs": true,
-    "types": ["node"]
+    "types": ["node"],
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        "diagnosticSeverity": {
+          "outdatedApi": "error",
+          "unstableApiUsage": "off"
+        }
+      }
+    ]
   },
   "include": [
     "*.config.ts",

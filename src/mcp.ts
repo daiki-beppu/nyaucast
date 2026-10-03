@@ -1,40 +1,26 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import type { z } from "zod";
+import { Effect } from "effect";
+import { Toolkit } from "effect/ai";
+import type { SqlClient } from "effect/sql";
 
-interface ToolDefinition {
-  description: string;
-  handler(input: unknown): Promise<Record<string, unknown>>;
-  inputSchema: z.ZodObject;
-  name: string;
-  outputSchema: z.ZodObject;
-}
+import type { CollectionIds } from "./collections/collection-ids.ts";
+import type { CollectionDirectories } from "./collections/directories.ts";
+import { CollectionStatusTool, collectionStatus } from "./tools/collection.status.ts";
+import { PlanCheckTitleTool, planCheckTitle } from "./tools/plan.checkTitle.ts";
+import { PlanInitTool, planInit } from "./tools/plan.init.ts";
 
-function wireName(name: string): string {
-  return name
-    .replaceAll(/([a-z0-9])([A-Z])/g, "$1_$2")
-    .replaceAll(".", "_")
-    .toLowerCase();
-}
+// registry は置かない。tool 一覧は、ここで import した tool を並べるだけ。
+export const NyaucastToolkit = Toolkit.make(PlanInitTool, PlanCheckTitleTool, CollectionStatusTool);
 
-export async function serveMcp(tools: ToolDefinition[]): Promise<void> {
-  const server = new McpServer({ name: "nyaucast", version: "0.0.2" });
-  for (const tool of tools) {
-    server.registerTool(
-      wireName(tool.name),
-      {
-        description: tool.description,
-        inputSchema: tool.inputSchema,
-        outputSchema: tool.outputSchema,
-      },
-      async (input) => {
-        const result = await tool.handler(input);
-        return {
-          content: [{ text: JSON.stringify(result), type: "text" }],
-          structuredContent: result,
-        };
-      },
-    );
-  }
-  await server.connect(new StdioServerTransport());
-}
+// handler の Layer。service の Layer は組み立てず、必要な service を要求するだけにする（合成は entry point）。
+export const NyaucastToolHandlers = NyaucastToolkit.toLayer(
+  Effect.gen(function* () {
+    const context = yield* Effect.context<
+      CollectionDirectories | CollectionIds | SqlClient.SqlClient
+    >();
+    return NyaucastToolkit.of({
+      collection_status: (input) => collectionStatus(input).pipe(Effect.provideContext(context)),
+      plan_check_title: (input) => planCheckTitle(input).pipe(Effect.provideContext(context)),
+      plan_init: (input) => planInit(input).pipe(Effect.provideContext(context)),
+    });
+  }),
+);

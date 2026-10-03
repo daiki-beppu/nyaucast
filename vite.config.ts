@@ -50,6 +50,8 @@ export default defineConfig({
         test: {
           name: "contract",
           include: ["test/**/*.test.ts"],
+          // プロセスを起動する契約テストは、effect の読み込みを含めて 1 回に数秒かかる
+          testTimeout: 30_000,
         },
       },
     ],
