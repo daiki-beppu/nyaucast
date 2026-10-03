@@ -146,27 +146,6 @@ export function writeVideoConfig(channelRoot: string, content: string): void {
   writeFileSync(join(channelRoot, "config", "channel", "video.json"), content);
 }
 
-export function seedCollection(
-  channelRoot: string,
-  collection: { id: string; title: string },
-): Promise<void> {
-  return Effect.runPromise(
-    insertCollection(collection).pipe(Effect.provide(channelLayer(channelRoot))),
-  );
-}
-
-export function seedRejection(
-  channelRoot: string,
-  fact: { collectionId: string; gate: "produce" | "publish"; rejectedAt: string },
-): Promise<void> {
-  return Effect.runPromise(
-    Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      yield* sql`INSERT INTO rejections (collection_id, gate, rejected_at) VALUES (${fact.collectionId}, ${fact.gate}, ${fact.rejectedAt})`;
-    }).pipe(Effect.provide(channelLayer(channelRoot))),
-  );
-}
-
 type Decoder = Parameters<typeof Schema.decodeUnknownResult>[0];
 
 /**

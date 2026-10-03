@@ -11,30 +11,17 @@ import {
   insertCollection,
   selectAll,
   setClock,
-  withChannel,
 } from "../../test/helpers.ts";
+import { callTool, rejectionReason, withToolChannel } from "../../test/tool-helpers.ts";
 import { CollectionIds } from "../collections/collection-ids.ts";
-import { CollectionDirectories } from "../collections/directories.ts";
 import { recordApproval, recordRejection } from "../db/gates.ts";
-import { PlanInitTool, planInit } from "./plan.init.ts";
+import { PlanInitTool } from "./plan.init.ts";
 
 const existingId = "01JEXISTING00000000000000";
 const newId = "01JNEWCOLLECTION000000000000";
 
-// チャンネルルート配下の実ファイルで動かす。ID だけテストが決める。
-const planInitIn = <A, E, R>(
-  channelRoot: string,
-  generatedId: string,
-  use: Effect.Effect<A, E, R>,
-) =>
-  use.pipe(
-    Effect.provide(
-      Layer.mergeAll(
-        CollectionDirectories.layer(channelRoot),
-        Layer.succeed(CollectionIds, CollectionIds.of({ next: Effect.succeed(generatedId) })),
-      ),
-    ),
-  );
+const fixedCollectionId = (id: string) =>
+  Layer.succeed(CollectionIds, CollectionIds.of({ next: Effect.succeed(id) }));
 
 const collectionRows = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -84,12 +71,12 @@ describe("plan.init", () => {
   });
 
   it.effect("creates a record and flat directory with its generated collection ID", () =>
-    withChannel("nyaucast-plan-init-new-", (channelRoot) =>
-      planInitIn(
-        channelRoot,
-        newId,
+    withToolChannel(
+      "nyaucast-plan-init-new-",
+      { collectionIds: fixedCollectionId(newId) },
+      (channelRoot) =>
         Effect.gen(function* () {
-          const result = yield* planInit({ title: "Morning Focus" });
+          const result = yield* callTool("plan_init", { title: "Morning Focus" });
 
           assert.deepStrictEqual(result, {
             collectionId: newId,
@@ -99,20 +86,19 @@ describe("plan.init", () => {
           assert.deepStrictEqual(yield* collectionRows, [{ id: newId, title: "Morning Focus" }]);
           assert.isTrue(existsSync(join(channelRoot, "collections", newId)));
         }),
-      ),
     ),
   );
 
   it.effect("returns the existing collection when the title is repeated without force", () =>
-    withChannel("nyaucast-plan-init-repeat-", (channelRoot) =>
-      planInitIn(
-        channelRoot,
-        newId,
+    withToolChannel(
+      "nyaucast-plan-init-repeat-",
+      { collectionIds: fixedCollectionId(newId) },
+      (channelRoot) =>
         Effect.gen(function* () {
           yield* insertCollection({ id: existingId, title: "Night Drive" });
           withExisting(channelRoot, ["notes.json"]);
 
-          assert.deepStrictEqual(yield* planInit({ title: "Night Drive" }), {
+          assert.deepStrictEqual(yield* callTool("plan_init", { title: "Night Drive" }), {
             collectionId: existingId,
             created: false,
             dir: `collections/${existingId}`,
@@ -122,38 +108,39 @@ describe("plan.init", () => {
           ]);
           assert.deepStrictEqual(yield* collectionRows, [{ id: existingId, title: "Night Drive" }]);
         }),
-      ),
     ),
   );
 
   it.effect("force recreates an empty collection while preserving its ID", () =>
-    withChannel("nyaucast-plan-init-force-", (channelRoot) =>
-      planInitIn(
-        channelRoot,
-        newId,
+    withToolChannel(
+      "nyaucast-plan-init-force-",
+      { collectionIds: fixedCollectionId(newId) },
+      (channelRoot) =>
         Effect.gen(function* () {
           yield* insertCollection({ id: existingId, title: "Night Drive" });
           withExisting(channelRoot, ["stale.json"]);
 
-          assert.deepStrictEqual(yield* planInit({ force: true, title: "Night Drive" }), {
-            collectionId: existingId,
-            created: true,
-            dir: `collections/${existingId}`,
-          });
+          assert.deepStrictEqual(
+            yield* callTool("plan_init", { force: true, title: "Night Drive" }),
+            {
+              collectionId: existingId,
+              created: true,
+              dir: `collections/${existingId}`,
+            },
+          );
           assert.deepStrictEqual(readdirSync(join(channelRoot, "collections", existingId)), []);
           assert.deepStrictEqual(yield* collectionRows, [{ id: existingId, title: "Night Drive" }]);
         }),
-      ),
     ),
   );
 
   it.effect.each(["artifact", "approval", "rejection"] as const)(
     "force fails before changing a collection that has a downstream %s",
     (kind) =>
-      withChannel("nyaucast-plan-init-downstream-", (channelRoot) =>
-        planInitIn(
-          channelRoot,
-          newId,
+      withToolChannel(
+        "nyaucast-plan-init-downstream-",
+        { collectionIds: fixedCollectionId(newId) },
+        (channelRoot) =>
           Effect.gen(function* () {
             yield* insertCollection({ id: existingId, title: "Night Drive" });
             withExisting(channelRoot);
@@ -167,7 +154,9 @@ describe("plan.init", () => {
               yield* sql`INSERT INTO thumbnails (collection_id, path, created_at) VALUES (${existingId}, 'collections/x/thumbnail.png', '2026-09-02T00:00:00.000Z')`;
             }
 
-            const failure = yield* Effect.flip(planInit({ force: true, title: "Night Drive" }));
+            const failure = yield* Effect.flip(
+              callTool("plan_init", { force: true, title: "Night Drive" }),
+            );
 
             assert.strictEqual(failure._tag, "CollectionHasDownstreamRecords");
             assert.deepStrictEqual(yield* collectionRows, [
@@ -181,20 +170,19 @@ describe("plan.init", () => {
               kind === "artifact" ? 0 : 1,
             );
           }),
-        ),
       ),
   );
 
   it.effect("does not overwrite a record when the generated ID collides with an existing row", () =>
-    withChannel("nyaucast-plan-init-id-row-", (channelRoot) =>
-      planInitIn(
-        channelRoot,
-        existingId,
+    withToolChannel(
+      "nyaucast-plan-init-id-row-",
+      { collectionIds: fixedCollectionId(existingId) },
+      (channelRoot) =>
         Effect.gen(function* () {
           yield* insertCollection({ id: existingId, title: "Existing" });
           withExisting(channelRoot);
 
-          const exit = yield* Effect.exit(planInit({ title: "Morning Focus" }));
+          const exit = yield* Effect.exit(callTool("plan_init", { title: "Morning Focus" }));
 
           if (exit._tag === "Success") {
             assert.notStrictEqual(exit.value.collectionId, existingId);
@@ -208,21 +196,20 @@ describe("plan.init", () => {
             "keep.json",
           ]);
         }),
-      ),
     ),
   );
 
   it.effect(
     "does not overwrite a directory when the generated ID collides with an existing directory",
     () =>
-      withChannel("nyaucast-plan-init-id-dir-", (channelRoot) =>
-        planInitIn(
-          channelRoot,
-          existingId,
+      withToolChannel(
+        "nyaucast-plan-init-id-dir-",
+        { collectionIds: fixedCollectionId(existingId) },
+        (channelRoot) =>
           Effect.gen(function* () {
             withExisting(channelRoot);
 
-            const exit = yield* Effect.exit(planInit({ title: "Morning Focus" }));
+            const exit = yield* Effect.exit(callTool("plan_init", { title: "Morning Focus" }));
 
             assert.strictEqual(exit._tag, "Failure");
             assert.deepStrictEqual(readdirSync(join(channelRoot, "collections", existingId)), [
@@ -230,7 +217,26 @@ describe("plan.init", () => {
             ]);
             assert.deepStrictEqual(yield* collectionRows, []);
           }),
-        ),
       ),
+  );
+});
+
+describe("plan.init: unknown keys", () => {
+  it.effect("rejects an unknown key as invalid parameters and creates nothing", () =>
+    withToolChannel(
+      "nyaucast-plan-init-unknown-",
+      { collectionIds: fixedCollectionId(newId) },
+      (channelRoot) =>
+        Effect.gen(function* () {
+          const input = { channelDir: "/channels/deepfocus365", title: "Morning Focus" };
+
+          assert.strictEqual(
+            yield* rejectionReason("plan_init", input),
+            "ToolParameterValidationError",
+          );
+          assert.deepStrictEqual(yield* collectionRows, []);
+          assert.isFalse(existsSync(join(channelRoot, "collections", newId)));
+        }),
+    ),
   );
 });
