@@ -43,7 +43,7 @@ nyaucast collection produce <id>   # 叩いた事実が gate='produce' の承認
 nyaucast collection publish <id>   # 叩いた事実が gate='publish' の承認
 ```
 
-`approve` という独立操作は存在しない。**CLI は承認記録を書き、人間が次に取る行動を stdout に示して終わる。agent を起動しない。** agent の発動は人間が Claude Code 側で行い、knowledge codec のトリガー発話がその入口になる。
+`approve` という独立操作は存在しない。**CLI は承認記録を書いて終わる。agent を起動しない。**（「人間が次に取る行動を stdout に示す」責務は ADR-0009 決定 14 で外した。Consequences を参照。collection の CLI はまだ旧来の文章を出しており、#486 でそろえる） agent の発動は人間が Claude Code 側で行い、knowledge codec のトリガー発話がその入口になる。
 
 この分担により **nyaucast core は LLM を一切知らない**（ADR-0002）。
 
