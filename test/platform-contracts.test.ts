@@ -241,6 +241,46 @@ describe("K1 three identical check surfaces", () => {
     expect(health["maxCrap"]).toBeLessThanOrEqual(30);
   });
 
+  // ADR-0005 決定 7: Chrome を使ってよいのは explainer_render_cut と explainer_preview_cut だけ（tool 名の列挙で限定する）
+  test("only the two Chrome tools and the wiring can import the Chrome supply", () => {
+    const config = readFallowConfig();
+    const boundaries = requireRecord(config["boundaries"], "boundaries");
+    const zones = new Map(
+      (Array.isArray(boundaries["zones"]) ? boundaries["zones"] : []).map((zone) => {
+        const record = requireRecord(zone, "zone");
+        return [record["name"], record["patterns"]] as const;
+      }),
+    );
+    const fix = "Chrome を使う tool を増やすなら、ADR-0005 決定 7 の改訂を同じ差分に含める";
+
+    expect(zones.get("chrome")).toEqual(
+      expect.arrayContaining(["src/lib/chrome.ts", "src/lib/cdp.ts", "src/lib/chrome-pin.ts"]),
+    );
+    expect(zones.get("chrome-users"), fix).toEqual([
+      "src/tools/explainer.renderCut.ts",
+      "src/tools/explainer.previewCut.ts",
+      "src/compositions/capture.ts",
+    ]);
+    expect(zones.get("wiring"), "Layer を組む entry point と handler の配線だけ").toEqual([
+      "src/index.ts",
+      "src/mcp.ts",
+    ]);
+    expect(zones.get("core"), "残りの src はすべて境界の内側に入れる").toEqual(["src/**"]);
+
+    const importersOfChrome = (Array.isArray(boundaries["rules"]) ? boundaries["rules"] : [])
+      .map((rule) => requireRecord(rule, "rule"))
+      .filter((rule) =>
+        [rule["allow"], rule["allowTypeOnly"]].some(
+          (targets) => Array.isArray(targets) && targets.includes("chrome"),
+        ),
+      )
+      .map((rule) => rule["from"]);
+    expect(importersOfChrome.toSorted(), fix).toEqual(["chrome-users", "wiring"]);
+
+    const rules = requireRecord(config["rules"], "rules");
+    expect(rules["boundary-violation"], "境界の違反はゲートを落とす").toBe("error");
+  });
+
   test("dependency and suppression findings fail the gate instead of warning", () => {
     const rules = requireRecord(readFallowConfig()["rules"], "rules");
 
