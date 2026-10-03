@@ -4,7 +4,7 @@
 
 ## Status
 
-accepted (2026-07-24) / 改訂 2026-07-31（#178。動画生成工程を「agent が書く HTML composition → Chrome rasterize → mediabunny エンコード」のパイプラインへ載せ替え — 決定 6〜11 を追加。エンコード層の mediabunny + node-av 統一（決定 1）と ffmpeg CLI 不採用（決定 3）は不変。Chrome 依存は `video.render` / `video.preview` の 2 tool に限定して許容する）/ 改訂 2026-08-22（#332。Remotion への置き換え検討を不採用として Considered Options に追記 — 決定 1〜11 は不変）/ 改訂 2026-10-02（#467。解説動画の composition は agent が書かず、図解から組み立ての tool が作る — 決定 12・13 を追加。Chrome 依存の許可リスト（決定 7）は変えない） / 改訂 2026-10-02（#494。図解を ③ から外し、agent が書く入力として扱う。ADR-0009 決定 11）/ 改訂 2026-10-02（#475。決定 5 を Effect の失敗の扱いに合わせた） / 改訂 2026-10-03（#525。解説動画のダッキングをタイミング表から決める決定 14 と、最終の音声トラックを -14 LUFS / -2 dBTP にそろえる決定 15 を追加。決定 2 は collection の音楽ミックスに限る）
+accepted (2026-07-24) / 改訂 2026-07-31（#178。動画生成工程を「agent が書く HTML composition → Chrome rasterize → mediabunny エンコード」のパイプラインへ載せ替え — 決定 6〜11 を追加。エンコード層の mediabunny + node-av 統一（決定 1）と ffmpeg CLI 不採用（決定 3）は不変。Chrome 依存は `video.render` / `video.preview` の 2 tool に限定して許容する）/ 改訂 2026-08-22（#332。Remotion への置き換え検討を不採用として Considered Options に追記 — 決定 1〜11 は不変）/ 改訂 2026-10-02（#467。解説動画の composition は agent が書かず、図解から組み立ての tool が作る — 決定 12・13 を追加。Chrome 依存の許可リスト（決定 7）は変えない） / 改訂 2026-10-02（#494。図解を ③ から外し、agent が書く入力として扱う。ADR-0009 決定 11）/ 改訂 2026-10-02（#475。決定 5 を Effect の失敗の扱いに合わせた） / 改訂 2026-10-03（#525。解説動画のダッキングをタイミング表から決める決定 14 と、最終の音声トラックを -14 LUFS / -2 dBTP にそろえる決定 15 を追加。決定 2 は collection の音楽ミックスに限る） / 改訂 2026-10-03（#579。決定 4 の GPL 論点を再判断し、同じプロセスのまま維持すると決めた。ADR-0011）
 
 ## Context
 
@@ -32,7 +32,7 @@ accepted (2026-07-24) / 改訂 2026-07-31（#178。動画生成工程を「agent
 1. **音声（MIX/マスタリング）・動画生成・アップロード前検証（メタデータ読み）の全工程を mediabunny + `@mediabunny/server`（node-av 経由のネイティブ FFmpeg バインディング）に統一する。** 工程ごとの技術分岐は設けない。ffmpeg CLI 直接呼び出し、音声のみ WASM エンコーダ（`@mediabunny/mp3-encoder` 等）に逃がす構成のいずれも採用しない
 2. **LUFS 測定・正規化は `@audio/loudness-lufs`（MIT・純 JS）を npm 依存として採用する。** vendor 化はしない。BS.1770-4 準拠の integrated loudness を測定し、`gainLinear = 10 ** ((target - measured) / 20)` の単純ゲイン乗算で -14 LUFS に正規化する。増幅方向になる場合のみ `lufs-web` の true peak 測定でゲインを -1 dBTP 以内にキャップする（音楽ミックスは通常 -14 LUFS より大きく減衰方向が支配的なため、通常は素通りする安全弁）
 3. **ffmpeg CLI 直接呼び出しは採用しない。** Considered Options に撤退先として記録するに留め、実装はしない
-4. **node-av の GPLv3 ネイティブバイナリ依存を許容する。** 配布時の「結合著作物（実効 GPLv3）」論点は先送りし、nyaucast の公開/配布を具体的に検討する段階で本 ADR を改訂して再判断する
+4. **node-av の GPLv3 ネイティブバイナリ依存を許容する。** 配布時の「結合著作物（実効 GPLv3）」論点は先送りし、nyaucast の公開/配布を具体的に検討する段階で本 ADR を改訂して再判断する。（改訂 2026-10-03 / #579 で再判断済み）コアを GPLv3 互換の OSS で出すので、node-av は同じプロセスのまま使い、別プロセス化しない（ADR-0011 決定 1・2）
 5. **追加のエラーラッパーは設けない。** mediabunny/node-av の失敗は通常の throw / Promise reject で表面化する。呼ぶ側はそれを `Effect.tryPromise` で型付きの失敗に変えるだけで、ADR-0001「境界で変換」にそのまま乗る（改訂 2026-10-02 / #475。ADR-0001 決定 3 が「内部 throw」から「型付きの失敗」に変わったのに合わせた）
 
 （以下、改訂 2026-07-31 / #178 で追加）

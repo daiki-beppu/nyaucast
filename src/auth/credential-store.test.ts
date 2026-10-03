@@ -14,7 +14,7 @@ import { NodeServices } from "@effect/platform-node";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Option } from "effect";
 
-import { setClock, temporaryDirectory } from "../../test/helpers.ts";
+import { failureFacts, setClock, temporaryDirectory } from "../../test/helpers.ts";
 import { CredentialStore } from "./credential-store.ts";
 
 const channel = "deepfocus365";
@@ -134,6 +134,28 @@ describe("CredentialStore", () => {
       assert.strictEqual(readFileSync(oldDescriptor, "utf8"), oldContents);
       assert.deepStrictEqual(readStored(root), storedCredential());
       assert.strictEqual(modeBits(credentialPath(root)), 0o600);
+    }),
+  );
+
+  // 壊れたファイルを「未保存」として扱うと、権限エラーなども黙って未認証に見える。失敗のタグは codec が参照する契約。
+  it.effect.each([
+    { name: "is not JSON", contents: "{ not json" },
+    { name: "is JSON that does not match the stored credential", contents: '{"token":{}}' },
+  ])("fails as CredentialUnreadable when the stored file $name", ({ contents }) =>
+    Effect.gen(function* () {
+      const root = yield* temporaryDirectory("nyaucast-store-unreadable-");
+      mkdirSync(credentialDirectory(root), { recursive: true });
+      writeFileSync(credentialPath(root), contents);
+
+      const failure = yield* Effect.gen(function* () {
+        return yield* Effect.flip((yield* CredentialStore).read(channel, "youtube"));
+      }).pipe(provideStore(root));
+
+      assert.deepStrictEqual(failureFacts(failure), {
+        _tag: "CredentialUnreadable",
+        channel,
+        platform: "youtube",
+      });
     }),
   );
 
