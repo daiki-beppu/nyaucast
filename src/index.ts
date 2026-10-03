@@ -5,6 +5,7 @@ import { Cause, Console, Effect, Layer, Logger, Result } from "effect";
 import { McpProtocol, McpServer } from "effect/ai";
 import { Argument, CliError, Command } from "effect/cli";
 
+import { ChannelSettings } from "./channel/channel-settings.ts";
 import { CollectionIds } from "./collections/collection-ids.ts";
 import { CollectionDirectories } from "./collections/directories.ts";
 import { approveCollectionGate, rejectCollectionGate } from "./collections/gate-operations.ts";
@@ -12,6 +13,7 @@ import type { Gate } from "./db/gates.ts";
 import { LocalStore } from "./db/local-store.ts";
 import { NyaucastToolHandlers, NyaucastToolkit } from "./mcp.ts";
 import { describeFailure } from "./failure-report.ts";
+import { VideoIds } from "./videos/video-ids.ts";
 import { YouTubeAuth } from "./youtube/auth.ts";
 
 const version = "0.0.2";
@@ -69,6 +71,8 @@ const collection = Command.make("collection").pipe(
 const mcpHandlers = NyaucastToolHandlers.pipe(
   Layer.provide(CollectionDirectories.layer(channelRoot)),
   Layer.provide(CollectionIds.layer),
+  Layer.provide(ChannelSettings.layer(channelRoot)),
+  Layer.provide(VideoIds.layer),
   Layer.provide(localStore),
 );
 

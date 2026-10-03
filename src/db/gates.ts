@@ -18,13 +18,37 @@ interface GateState {
 
 const decodeGate = Schema.decodeUnknownEffect(Gate);
 
-const latestTimestamp = (collectionId: string, gate: Gate, decision: "approval" | "rejection") =>
+// ゲートの事実を持つ表の組。collection と解説動画で、表と対象の列だけが違う。
+interface GateTables {
+  readonly approvals: string;
+  readonly rejections: string;
+  readonly subjectColumn: string;
+}
+
+const collectionTables: GateTables = {
+  approvals: "approvals",
+  rejections: "rejections",
+  subjectColumn: "collection_id",
+};
+
+const explainerTables: GateTables = {
+  approvals: "explainer_approvals",
+  rejections: "explainer_rejections",
+  subjectColumn: "video_id",
+};
+
+const latestTimestamp = (
+  tables: GateTables,
+  subjectId: string,
+  gate: Gate,
+  decision: "approval" | "rejection",
+) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    const table = decision === "approval" ? tables.approvals : tables.rejections;
+    const timeColumn = decision === "approval" ? "approved_at" : "rejected_at";
     const rows =
-      decision === "approval"
-        ? yield* sql`SELECT approved_at AS timestamp FROM approvals WHERE collection_id = ${collectionId} AND gate = ${gate} ORDER BY approved_at DESC LIMIT 1`
-        : yield* sql`SELECT rejected_at AS timestamp FROM rejections WHERE collection_id = ${collectionId} AND gate = ${gate} ORDER BY rejected_at DESC LIMIT 1`;
+      yield* sql`SELECT ${sql(timeColumn)} AS timestamp FROM ${sql(table)} WHERE ${sql(tables.subjectColumn)} = ${subjectId} AND gate = ${gate} ORDER BY ${sql(timeColumn)} DESC LIMIT 1`;
     const timestamp = rows[0]?.["timestamp"];
     return typeof timestamp === "string" ? timestamp : undefined;
   });
@@ -52,23 +76,27 @@ const latestGateTimestamp = (
   return latestRejection;
 };
 
-export const getGateState = (
-  collectionId: string,
-  gate: Gate,
-): Effect.Effect<GateState, never, SqlClient.SqlClient> =>
-  Effect.gen(function* () {
-    const [latestApproval, latestRejection] = yield* Effect.all(
-      [
-        latestTimestamp(collectionId, gate, "approval"),
-        latestTimestamp(collectionId, gate, "rejection"),
-      ],
-      { concurrency: "unbounded" },
-    );
-    return {
-      decision: decideGate(latestApproval, latestRejection),
-      latestTimestamp: latestGateTimestamp(latestApproval, latestRejection),
-    };
-  }).pipe(Effect.orDie);
+const gateStateIn =
+  (tables: GateTables) =>
+  (subjectId: string, gate: Gate): Effect.Effect<GateState, never, SqlClient.SqlClient> =>
+    Effect.gen(function* () {
+      const [latestApproval, latestRejection] = yield* Effect.all(
+        [
+          latestTimestamp(tables, subjectId, gate, "approval"),
+          latestTimestamp(tables, subjectId, gate, "rejection"),
+        ],
+        { concurrency: "unbounded" },
+      );
+      return {
+        decision: decideGate(latestApproval, latestRejection),
+        latestTimestamp: latestGateTimestamp(latestApproval, latestRejection),
+      };
+    }).pipe(Effect.orDie);
+
+export const getGateState = gateStateIn(collectionTables);
+
+export const getExplainerGateDecision = (videoId: string, gate: Gate) =>
+  gateStateIn(explainerTables)(videoId, gate).pipe(Effect.map((state) => state.decision));
 
 export const getGateDecision = (collectionId: string, gate: Gate) =>
   getGateState(collectionId, gate).pipe(Effect.map((state) => state.decision));
@@ -89,3 +117,12 @@ const recordGateFact =
 
 export const recordApproval = recordGateFact("approval");
 export const recordRejection = recordGateFact("rejection");
+
+/** 企画ゲート（produce）の承認が 1 件でもあるか。承認は取り消せない事実なので、NO-GO の有無は見ない。 */
+export const hasExplainerPlanApproval = (videoId: string) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const rows =
+      yield* sql`SELECT video_id FROM explainer_approvals WHERE video_id = ${videoId} AND gate = 'produce' LIMIT 1`;
+    return rows.length > 0;
+  }).pipe(Effect.orDie);
