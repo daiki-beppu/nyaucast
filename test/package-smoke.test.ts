@@ -9,9 +9,11 @@ describe("K3 package smoke", () => {
 
     expect(toolNames.toSorted()).toEqual([
       "collection_status",
+      "explainer_assemble_composition",
       "explainer_fetch_topic_candidates",
       "explainer_mix_audio_track",
       "explainer_synthesize_narration",
+      "explainer_write_diagram",
       "explainer_write_plan",
       "explainer_write_script",
       "plan_check_title",

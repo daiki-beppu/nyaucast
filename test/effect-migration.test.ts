@@ -169,9 +169,11 @@ describe("full migration to Effect 4.0", () => {
       }
       assert.deepStrictEqual(definitions.toSorted(), [
         "collection.status.ts",
+        "explainer.assembleComposition.ts",
         "explainer.fetchTopicCandidates.ts",
         "explainer.mixAudioTrack.ts",
         "explainer.synthesizeNarration.ts",
+        "explainer.writeDiagram.ts",
         "explainer.writePlan.ts",
         "explainer.writeScript.ts",
         "plan.checkTitle.ts",

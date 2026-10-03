@@ -73,6 +73,7 @@ composition は HTML 1 ファイルで完結する — スタイル・スクリ�
 
 ## Related
 
+- `docs/reference/diagram-contract.md` — 解説動画の図解の契約（組み立ての tool が composition にする入力）
 - ADR-0005（改訂 2026-07-31 / #178）— 本契約を採用した決定記録
 - issue #176 — 記述規約・役割分担の設計（本書の出所）
 - issue #175 / PR #183 — end-to-end プロトタイプ（settle 規約・決定論検証の実証）

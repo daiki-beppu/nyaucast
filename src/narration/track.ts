@@ -1,4 +1,5 @@
 import { allocatePhrases, splitPhrases } from "./phrases.ts";
+import type { TimingTable } from "./timing-table.ts";
 import { outputSampleRate } from "./wav.ts";
 
 // 間合い（tool の定数）。48 kHz のサンプル数で持つ。
@@ -57,6 +58,9 @@ export const assembleTrack = (paragraphs: readonly NarratedParagraph[]) => {
   placed.forEach(({ source, start }) => samples.set(source.samples, start));
   return {
     samples,
-    timing: { durationSeconds: secondsOf(total), paragraphs: placed.map(timingOf) },
+    timing: {
+      durationSeconds: secondsOf(total),
+      paragraphs: placed.map(timingOf),
+    } satisfies TimingTable,
   };
 };

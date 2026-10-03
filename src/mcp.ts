@@ -14,6 +14,10 @@ import type { ThumbnailFiles } from "./thumbnails/thumbnail-files.ts";
 import { CollectionStatusTool, collectionStatus } from "./tools/collection.status.ts";
 import { PlanCheckTitleTool, planCheckTitle } from "./tools/plan.checkTitle.ts";
 import {
+  ExplainerAssembleCompositionTool,
+  explainerAssembleComposition,
+} from "./tools/explainer.assembleComposition.ts";
+import {
   ExplainerFetchTopicCandidatesTool,
   explainerFetchTopicCandidates,
 } from "./tools/explainer.fetchTopicCandidates.ts";
@@ -25,6 +29,10 @@ import {
   ExplainerSynthesizeNarrationTool,
   explainerSynthesizeNarration,
 } from "./tools/explainer.synthesizeNarration.ts";
+import {
+  ExplainerWriteDiagramTool,
+  explainerWriteDiagram,
+} from "./tools/explainer.writeDiagram.ts";
 import { ExplainerWritePlanTool, explainerWritePlan } from "./tools/explainer.writePlan.ts";
 import { ExplainerWriteScriptTool, explainerWriteScript } from "./tools/explainer.writeScript.ts";
 import { PlanInitTool, planInit } from "./tools/plan.init.ts";
@@ -48,7 +56,9 @@ export const NyaucastToolkit = Toolkit.make(
   ExplainerFetchTopicCandidatesTool,
   ExplainerWritePlanTool,
   ExplainerWriteScriptTool,
+  ExplainerWriteDiagramTool,
   ExplainerSynthesizeNarrationTool,
+  ExplainerAssembleCompositionTool,
   ExplainerMixAudioTrackTool,
   VideoStatusTool,
   VideoGenerateThumbnailsTool,
@@ -75,12 +85,16 @@ export const NyaucastToolHandlers = NyaucastToolkit.toLayer(
     >();
     return NyaucastToolkit.of({
       collection_status: (input) => collectionStatus(input).pipe(Effect.provideContext(context)),
+      explainer_assemble_composition: (input) =>
+        explainerAssembleComposition(input).pipe(Effect.provideContext(context)),
       explainer_fetch_topic_candidates: (input) =>
         explainerFetchTopicCandidates(input).pipe(Effect.provideContext(context)),
       explainer_mix_audio_track: (input) =>
         explainerMixAudioTrack(input).pipe(Effect.provideContext(context)),
       explainer_synthesize_narration: (input) =>
         explainerSynthesizeNarration(input).pipe(Effect.provideContext(context)),
+      explainer_write_diagram: (input) =>
+        explainerWriteDiagram(input).pipe(Effect.provideContext(context)),
       explainer_write_plan: (input) =>
         explainerWritePlan(input).pipe(Effect.provideContext(context)),
       explainer_write_script: (input) =>
