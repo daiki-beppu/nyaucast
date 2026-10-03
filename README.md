@@ -30,6 +30,8 @@ v0.1.0 に向けて開発中。ゲートは first-party の解説動画チャン
 
 [Apache License 2.0](LICENSE) で提供する。著作権表示は [NOTICE](NOTICE) にある。
 
+nyaucast のソースは Apache-2.0 で提供する。実行には GPLv3 でライセンスされた node-av（libx264 を含むビルド）が必要で、nyaucast を node-av と一緒に頒布・実行する場合、全体は GPLv3 の条件に従う。
+
 ## 旧称 tayk からの移行
 
 旧称 tayk の設定を使っている場合は、次のコマンドで設定ディレクトリを移す。

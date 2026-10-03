@@ -1,6 +1,7 @@
 allowBuilds:
   actionlint: true
   esbuild: true
+  node-av: true
 pmOnFail: ignore
 publicHoistPattern:
   - oxfmt

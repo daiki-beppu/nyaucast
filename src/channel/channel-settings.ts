@@ -42,7 +42,18 @@ const Voice = Schema.Struct({
 });
 export type Voice = typeof Voice.Type;
 
+// BGM。有効・無効は必ず宣言する。上書きできるのは音量（ナレーション比の dB）と下げ幅（dB）だけで、時間の値はコードの定数。
+const Bgm = Schema.Struct({
+  duckingDb: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(6)),
+  ),
+  enabled: Schema.Boolean,
+  volumeDb: Schema.Finite.pipe(Schema.withDecodingDefaultKey(Effect.succeed(-12))),
+});
+export type Bgm = typeof Bgm.Type;
+
 const ExplainerSettings = Schema.Struct({
+  bgm: Schema.optionalKey(Bgm),
   feeds: Schema.Array(Feed).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
   genre: Schema.String,
   hitPatterns: Schema.Record(Schema.String, Schema.Struct({ description: Schema.String })),

@@ -2,6 +2,7 @@ import { Effect, Layer, Stream } from "effect";
 import type { Toolkit } from "effect/ai";
 import { AiError, Tool } from "effect/ai";
 
+import { BgmPool } from "../src/channel/bgm-pool.ts";
 import { CollectionIds } from "../src/collections/collection-ids.ts";
 import { CollectionDirectories } from "../src/collections/directories.ts";
 import { NyaucastToolHandlers, NyaucastToolkit } from "../src/mcp.ts";
@@ -89,6 +90,7 @@ export const withToolChannel = <A, E, R>(
       return use(channelRoot).pipe(
         Effect.provide(
           Layer.mergeAll(
+            BgmPool.layer(channelRoot),
             CollectionDirectories.layer(channelRoot),
             options.collectionIds ?? CollectionIds.layer,
             ThumbnailFiles.layer(channelRoot),
