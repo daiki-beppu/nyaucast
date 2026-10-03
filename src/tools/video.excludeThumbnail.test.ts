@@ -1,7 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import { Effect } from "effect";
 
-import { explainerConfig, planInput, withVideoChannel } from "../../test/explainer-helpers.ts";
+import { explainerConfig, planInput } from "../../test/explainer-helpers.ts";
 import {
   accepts,
   failureFacts,
@@ -9,9 +9,9 @@ import {
   selectAll,
   setClock,
 } from "../../test/helpers.ts";
+import { callTool, rejectionReason, withToolChannel } from "../../test/tool-helpers.ts";
 import { insertCandidate } from "../../test/thumbnail-facts.ts";
-import { explainerWritePlan } from "./explainer.writePlan.ts";
-import { VideoExcludeThumbnailTool, videoExcludeThumbnail } from "./video.excludeThumbnail.ts";
+import { VideoExcludeThumbnailTool } from "./video.excludeThumbnail.ts";
 
 const noon = "2026-10-03T12:00:00.000Z";
 
@@ -26,7 +26,7 @@ const exclusion = (overrides: Record<string, unknown> = {}) => ({
 // 候補 1-1 と 1-2 がある動画 V1。
 const seedVideoWithCandidates = Effect.gen(function* () {
   yield* setClock(noon);
-  yield* explainerWritePlan(planInput());
+  yield* callTool("explainer_write_plan", planInput());
   yield* insertCandidate({ number: 1, round: 1, videoId: "V1" });
   yield* insertCandidate({ number: 2, round: 1, videoId: "V1" });
 });
@@ -61,11 +61,11 @@ describe("video.excludeThumbnail: excluding a candidate", () => {
   it.effect(
     "appends the exclusion with its reason and the clock time, and keeps the candidate",
     () =>
-      withVideoChannel("nyaucast-exclude-thumbnail-", explainerConfig, () =>
+      withToolChannel("nyaucast-exclude-thumbnail-", { config: explainerConfig }, () =>
         Effect.gen(function* () {
           yield* seedVideoWithCandidates;
 
-          const result = yield* videoExcludeThumbnail(exclusion());
+          const result = yield* callTool("video_exclude_thumbnail", exclusion());
 
           assert.isTrue(result.recorded);
           const rows = yield* exclusionRows;
@@ -83,11 +83,11 @@ describe("video.excludeThumbnail: excluding a candidate", () => {
   );
 
   it.effect("returns only facts; the result rejects action fields", () =>
-    withVideoChannel("nyaucast-exclude-thumbnail-facts-", explainerConfig, () =>
+    withToolChannel("nyaucast-exclude-thumbnail-facts-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* seedVideoWithCandidates;
 
-        const result = yield* videoExcludeThumbnail(exclusion());
+        const result = yield* callTool("video_exclude_thumbnail", exclusion());
 
         const schema = VideoExcludeThumbnailTool.successSchema;
         assert.isTrue(accepts(schema, result));
@@ -99,12 +99,15 @@ describe("video.excludeThumbnail: excluding a candidate", () => {
   it.effect(
     "appends nothing for a candidate that is already excluded, and returns the earlier exclusion",
     () =>
-      withVideoChannel("nyaucast-exclude-thumbnail-twice-", explainerConfig, () =>
+      withToolChannel("nyaucast-exclude-thumbnail-twice-", { config: explainerConfig }, () =>
         Effect.gen(function* () {
           yield* seedVideoWithCandidates;
-          const first = yield* videoExcludeThumbnail(exclusion());
+          const first = yield* callTool("video_exclude_thumbnail", exclusion());
 
-          const second = yield* videoExcludeThumbnail(exclusion({ reason: "別の理由" }));
+          const second = yield* callTool(
+            "video_exclude_thumbnail",
+            exclusion({ reason: "別の理由" }),
+          );
 
           assert.isFalse(second.recorded);
           assert.strictEqual(second.reason, first.reason);
@@ -114,12 +117,12 @@ describe("video.excludeThumbnail: excluding a candidate", () => {
   );
 
   it.effect("excludes two different candidates of the same video separately", () =>
-    withVideoChannel("nyaucast-exclude-thumbnail-two-", explainerConfig, () =>
+    withToolChannel("nyaucast-exclude-thumbnail-two-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* seedVideoWithCandidates;
 
-        yield* videoExcludeThumbnail(exclusion({ number: 1 }));
-        const second = yield* videoExcludeThumbnail(exclusion({ number: 2 }));
+        yield* callTool("video_exclude_thumbnail", exclusion({ number: 1 }));
+        const second = yield* callTool("video_exclude_thumbnail", exclusion({ number: 2 }));
 
         assert.isTrue(second.recorded);
         assert.strictEqual((yield* exclusionRows).length, 2);
@@ -128,11 +131,13 @@ describe("video.excludeThumbnail: excluding a candidate", () => {
   );
 
   it.effect("fails with ThumbnailCandidateNotFound for a candidate that does not exist", () =>
-    withVideoChannel("nyaucast-exclude-thumbnail-missing-", explainerConfig, () =>
+    withToolChannel("nyaucast-exclude-thumbnail-missing-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* seedVideoWithCandidates;
 
-        const failure = yield* Effect.flip(videoExcludeThumbnail(exclusion({ number: 9 })));
+        const failure = yield* Effect.flip(
+          callTool("video_exclude_thumbnail", exclusion({ number: 9 })),
+        );
 
         assert.strictEqual(failure._tag, "ThumbnailCandidateNotFound");
         assert.strictEqual((yield* exclusionRows).length, 0);
@@ -141,12 +146,14 @@ describe("video.excludeThumbnail: excluding a candidate", () => {
   );
 
   it.effect("does not take a candidate of another video as the candidate of this one", () =>
-    withVideoChannel("nyaucast-exclude-thumbnail-other-video-", explainerConfig, () =>
+    withToolChannel("nyaucast-exclude-thumbnail-other-video-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* seedVideoWithCandidates;
-        yield* explainerWritePlan(planInput({ title: "Why cats knead" }));
+        yield* callTool("explainer_write_plan", planInput({ title: "Why cats knead" }));
 
-        const failure = yield* Effect.flip(videoExcludeThumbnail(exclusion({ videoId: "V2" })));
+        const failure = yield* Effect.flip(
+          callTool("video_exclude_thumbnail", exclusion({ videoId: "V2" })),
+        );
 
         assert.strictEqual(failure._tag, "ThumbnailCandidateNotFound");
         assert.strictEqual((yield* exclusionRows).length, 0);
@@ -155,12 +162,31 @@ describe("video.excludeThumbnail: excluding a candidate", () => {
   );
 
   it.effect("fails with VideoNotFound for an unknown video", () =>
-    withVideoChannel("nyaucast-exclude-thumbnail-unknown-", explainerConfig, () =>
+    withToolChannel("nyaucast-exclude-thumbnail-unknown-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
-        const failure = yield* Effect.flip(videoExcludeThumbnail(exclusion({ videoId: "nope" })));
+        const failure = yield* Effect.flip(
+          callTool("video_exclude_thumbnail", exclusion({ videoId: "nope" })),
+        );
 
         assert.strictEqual(failure._tag, "VideoNotFound");
         assert.strictEqual(failureFacts(failure)["videoId"], "nope");
+      }),
+    ),
+  );
+});
+
+describe("video.excludeThumbnail: unknown keys", () => {
+  it.effect("rejects an unknown key as invalid parameters and records no exclusion", () =>
+    withToolChannel("nyaucast-exclude-thumbnail-unknown-", { config: explainerConfig }, () =>
+      Effect.gen(function* () {
+        yield* seedVideoWithCandidates;
+        const input = { ...exclusion(), next: "select" };
+
+        assert.strictEqual(
+          yield* rejectionReason("video_exclude_thumbnail", input),
+          "ToolParameterValidationError",
+        );
+        assert.strictEqual((yield* exclusionRows).length, 0);
       }),
     ),
   );

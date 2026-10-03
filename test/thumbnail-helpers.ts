@@ -1,7 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { NodeFileSystem, NodePath, NodeServices } from "@effect/platform-node";
 import { Effect, Layer } from "effect";
 import {
   HttpClient,
@@ -11,9 +10,6 @@ import {
 } from "effect/http";
 
 import { StaticSecrets } from "../src/auth/secrets.ts";
-import { ThumbnailFiles } from "../src/thumbnails/thumbnail-files.ts";
-import { fakeCodex, type FakeCodex } from "./codex-helpers.ts";
-import { withVideoChannel } from "./explainer-helpers.ts";
 
 export const geminiKey = "GEMINI_KEY_SENTINEL";
 
@@ -128,35 +124,6 @@ export function fakeGemini(replies: readonly FakeReply[]) {
 }
 
 export type FakeGemini = ReturnType<typeof fakeGemini>;
-
-/**
- * tool が使う外部の継ぎ目（偽の Gemini の HTTP と静的シークレット、偽の codex の子プロセス、実ファイルの成果物の置き場）。
- * 子プロセスは常に偽物で、本物の codex は起動しない。
- */
-const thumbnailServices = (channelRoot: string, gemini: FakeGemini, codex: FakeCodex) =>
-  Layer.mergeAll(
-    ThumbnailFiles.layer(channelRoot).pipe(Layer.provide(NodeServices.layer)),
-    gemini.http,
-    gemini.secrets,
-    codex.layer,
-    NodeFileSystem.layer,
-    NodePath.layer,
-  );
-
-/**
- * 一時チャンネル（実ファイルの libSQL）に、偽の Gemini・偽の codex・サムネイルの成果物の置き場を足して use を動かす。
- * codex を省略すると、応答を持たない偽物が入る（`exec` の呼び出しは想定外として defect になる）。
- */
-export const withThumbnailChannel = <A, E, R>(
-  prefix: string,
-  config: string | undefined,
-  gemini: FakeGemini,
-  use: (channelRoot: string) => Effect.Effect<A, E, R>,
-  codex: FakeCodex = fakeCodex(),
-) =>
-  withVideoChannel(prefix, config, (channelRoot) =>
-    use(channelRoot).pipe(Effect.provide(thumbnailServices(channelRoot, gemini, codex))),
-  );
 
 /** チャンネルルートからの相対パスへバイト列を書く（参照画像などの前提データ用）。 */
 export function writeChannelFile(channelRoot: string, relativePath: string, bytes: Uint8Array) {

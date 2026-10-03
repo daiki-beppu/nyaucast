@@ -8,7 +8,6 @@ import {
   fixedVideoId,
   planInput,
   source,
-  withVideoChannel,
 } from "../../test/explainer-helpers.ts";
 import {
   accepts,
@@ -17,7 +16,8 @@ import {
   setClock,
   writeVideoConfig,
 } from "../../test/helpers.ts";
-import { ExplainerWritePlanTool, explainerWritePlan } from "./explainer.writePlan.ts";
+import { callTool, rejectionReason, withToolChannel } from "../../test/tool-helpers.ts";
+import { ExplainerWritePlanTool } from "./explainer.writePlan.ts";
 
 const noon = "2026-10-03T12:00:00.000Z";
 
@@ -102,11 +102,11 @@ describe("explainer.writePlan: parameters and result", () => {
 
 describe("explainer.writePlan: recording a plan", () => {
   it.effect("records a plan with no sources and returns it with the clock time as updatedAt", () =>
-    withVideoChannel("nyaucast-write-plan-new-", explainerConfig, () =>
+    withToolChannel("nyaucast-write-plan-new-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
 
-        const result = yield* explainerWritePlan(planInput());
+        const result = yield* callTool("explainer_write_plan", planInput());
 
         assert.deepStrictEqual(result, {
           created: true,
@@ -126,12 +126,12 @@ describe("explainer.writePlan: recording a plan", () => {
   );
 
   it.effect("keeps the sources in order, with the first as the primary source", () =>
-    withVideoChannel("nyaucast-write-plan-sources-", explainerConfig, () =>
+    withToolChannel("nyaucast-write-plan-sources-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
         const sources = [source("https://ex.com/primary"), source("https://ex.com/second")];
 
-        const result = yield* explainerWritePlan(planInput({ sources }));
+        const result = yield* callTool("explainer_write_plan", planInput({ sources }));
 
         assert.deepStrictEqual(result.plan.sources, sources);
       }),
@@ -139,10 +139,13 @@ describe("explainer.writePlan: recording a plan", () => {
   );
 
   it.effect("stores exactly the plan fields and no article body", () =>
-    withVideoChannel("nyaucast-write-plan-columns-", explainerConfig, () =>
+    withToolChannel("nyaucast-write-plan-columns-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
-        yield* explainerWritePlan(planInput({ sources: [source("https://ex.com/a")] }));
+        yield* callTool(
+          "explainer_write_plan",
+          planInput({ sources: [source("https://ex.com/a")] }),
+        );
 
         const rows = yield* selectAll("explainer_plans");
 
@@ -161,12 +164,12 @@ describe("explainer.writePlan: recording a plan", () => {
   );
 
   it.effect("fails with UndeclaredHitPattern for a hit pattern the channel did not declare", () =>
-    withVideoChannel("nyaucast-write-plan-pattern-", explainerConfig, () =>
+    withToolChannel("nyaucast-write-plan-pattern-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
 
         const failure = yield* Effect.flip(
-          explainerWritePlan(planInput({ hitPattern: "clickbait" })),
+          callTool("explainer_write_plan", planInput({ hitPattern: "clickbait" })),
         );
 
         assert.strictEqual(failure._tag, "UndeclaredHitPattern");
@@ -177,12 +180,16 @@ describe("explainer.writePlan: recording a plan", () => {
   );
 
   it.effect("records a plan under each declared hit pattern", () =>
-    withVideoChannel("nyaucast-write-plan-patterns-", explainerConfig, () =>
+    withToolChannel("nyaucast-write-plan-patterns-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
 
-        const first = yield* explainerWritePlan(planInput({ hitPattern: "shock", title: "A" }));
-        const second = yield* explainerWritePlan(
+        const first = yield* callTool(
+          "explainer_write_plan",
+          planInput({ hitPattern: "shock", title: "A" }),
+        );
+        const second = yield* callTool(
+          "explainer_write_plan",
           planInput({ hitPattern: "contrarian", title: "B" }),
         );
 
@@ -197,14 +204,16 @@ describe("explainer.writePlan: idempotency on the primary source", () => {
   it.effect(
     "returns the existing plan when only utm_*, the fragment, and a trailing slash differ",
     () =>
-      withVideoChannel("nyaucast-write-plan-dedupe-", explainerConfig, () =>
+      withToolChannel("nyaucast-write-plan-dedupe-", { config: explainerConfig }, () =>
         Effect.gen(function* () {
           yield* setClock(noon);
-          const first = yield* explainerWritePlan(
+          const first = yield* callTool(
+            "explainer_write_plan",
             planInput({ sources: [source("https://ex.com/a")] }),
           );
 
-          const second = yield* explainerWritePlan(
+          const second = yield* callTool(
+            "explainer_write_plan",
             planInput({
               sources: [source("https://ex.com/a/?utm_source=x&utm_medium=y#sec")],
               title: "A different title proposal",
@@ -221,14 +230,16 @@ describe("explainer.writePlan: idempotency on the primary source", () => {
   );
 
   it.effect("keeps query arguments other than utm_* when matching", () =>
-    withVideoChannel("nyaucast-write-plan-dedupe-query-", explainerConfig, () =>
+    withToolChannel("nyaucast-write-plan-dedupe-query-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
-        const first = yield* explainerWritePlan(
+        const first = yield* callTool(
+          "explainer_write_plan",
           planInput({ sources: [source("https://ex.com/a?id=1&utm_campaign=z")] }),
         );
 
-        const second = yield* explainerWritePlan(
+        const second = yield* callTool(
+          "explainer_write_plan",
           planInput({ sources: [source("https://ex.com/a/?id=1")] }),
         );
 
@@ -239,19 +250,22 @@ describe("explainer.writePlan: idempotency on the primary source", () => {
   );
 
   it.effect("only the primary source decides the key, not the later sources", () =>
-    withVideoChannel("nyaucast-write-plan-dedupe-primary-", explainerConfig, () =>
+    withToolChannel("nyaucast-write-plan-dedupe-primary-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
-        const first = yield* explainerWritePlan(
+        const first = yield* callTool(
+          "explainer_write_plan",
           planInput({
             sources: [source("https://ex.com/a"), source("https://ex.com/other")],
           }),
         );
 
-        const second = yield* explainerWritePlan(
+        const second = yield* callTool(
+          "explainer_write_plan",
           planInput({ sources: [source("https://ex.com/a"), source("https://ex.com/different")] }),
         );
-        const third = yield* explainerWritePlan(
+        const third = yield* callTool(
+          "explainer_write_plan",
           planInput({ sources: [source("https://ex.com/other"), source("https://ex.com/a")] }),
         );
 
@@ -274,14 +288,16 @@ describe("explainer.writePlan: idempotency on the primary source", () => {
     ["a / inside a query value", "https://ex.com/a?next=/", "https://ex.com/a"],
     ["an upper-case UTM_ argument", "https://ex.com/a?UTM_source=x", "https://ex.com/a"],
   ] as const)("does not treat %s as the same source", ([, otherUrl, existingUrl]) =>
-    withVideoChannel("nyaucast-write-plan-dedupe-negative-", explainerConfig, () =>
+    withToolChannel("nyaucast-write-plan-dedupe-negative-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
-        const existing = yield* explainerWritePlan(
+        const existing = yield* callTool(
+          "explainer_write_plan",
           planInput({ sources: [source(existingUrl)], title: "Existing" }),
         );
 
-        const other = yield* explainerWritePlan(
+        const other = yield* callTool(
+          "explainer_write_plan",
           planInput({ sources: [source(otherUrl)], title: "Other" }),
         );
 
@@ -293,15 +309,17 @@ describe("explainer.writePlan: idempotency on the primary source", () => {
   );
 
   it.effect("returns an abandoned video as the existing one instead of creating another", () =>
-    withVideoChannel("nyaucast-write-plan-dedupe-abandoned-", explainerConfig, () =>
+    withToolChannel("nyaucast-write-plan-dedupe-abandoned-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
-        const first = yield* explainerWritePlan(
+        const first = yield* callTool(
+          "explainer_write_plan",
           planInput({ sources: [source("https://ex.com/a")] }),
         );
         yield* insertGateFact("rejection", first.videoId, "produce", noon);
 
-        const second = yield* explainerWritePlan(
+        const second = yield* callTool(
+          "explainer_write_plan",
           planInput({ sources: [source("https://ex.com/a/?utm_source=x")] }),
         );
 
@@ -316,16 +334,19 @@ describe("explainer.writePlan: idempotency on the primary source", () => {
 
 describe("explainer.writePlan: concurrent calls", () => {
   it.effect("creates one video when the same primary source is recorded concurrently", () =>
-    withVideoChannel("nyaucast-write-plan-concurrent-", explainerConfig, () =>
+    withToolChannel("nyaucast-write-plan-concurrent-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
         const input = planInput({ sources: [source("https://ex.com/a")] });
 
         const results = yield* Effect.all(
           [
-            explainerWritePlan(input),
-            explainerWritePlan({ ...input, sources: [source("https://ex.com/a/?utm_source=x")] }),
-            explainerWritePlan(input),
+            callTool("explainer_write_plan", input),
+            callTool("explainer_write_plan", {
+              ...input,
+              sources: [source("https://ex.com/a/?utm_source=x")],
+            }),
+            callTool("explainer_write_plan", input),
           ],
           { concurrency: "unbounded" },
         );
@@ -339,10 +360,10 @@ describe("explainer.writePlan: concurrent calls", () => {
   );
 
   it.effect("appends one version when the same new content overwrites a video concurrently", () =>
-    withVideoChannel("nyaucast-write-plan-overwrite-concurrent-", explainerConfig, () =>
+    withToolChannel("nyaucast-write-plan-overwrite-concurrent-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
-        const first = yield* explainerWritePlan(planInput());
+        const first = yield* callTool("explainer_write_plan", planInput());
         const revised = planInput({
           points: ["revised"],
           title: "Why cats purr, revised",
@@ -358,7 +379,7 @@ describe("explainer.writePlan: concurrent calls", () => {
             clock.currentTimeMillis,
           ),
         };
-        const overwriteSlowly = explainerWritePlan(revised).pipe(
+        const overwriteSlowly = callTool("explainer_write_plan", revised).pipe(
           Effect.provideService(Clock.Clock, slowClock),
         );
 
@@ -380,12 +401,15 @@ describe("explainer.writePlan: concurrent calls", () => {
 
 describe("explainer.writePlan: idempotency without a source", () => {
   it.effect("records a plan with no sources and returns the existing one for the same title", () =>
-    withVideoChannel("nyaucast-write-plan-title-", explainerConfig, () =>
+    withToolChannel("nyaucast-write-plan-title-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
-        const first = yield* explainerWritePlan(planInput({ title: "X" }));
+        const first = yield* callTool("explainer_write_plan", planInput({ title: "X" }));
 
-        const second = yield* explainerWritePlan(planInput({ points: ["other"], title: "X" }));
+        const second = yield* callTool(
+          "explainer_write_plan",
+          planInput({ points: ["other"], title: "X" }),
+        );
 
         assert.strictEqual(first.created, true);
         assert.strictEqual(second.created, false);
@@ -398,12 +422,12 @@ describe("explainer.writePlan: idempotency without a source", () => {
   );
 
   it.effect("creates another video for a different title with no sources", () =>
-    withVideoChannel("nyaucast-write-plan-title-other-", explainerConfig, () =>
+    withToolChannel("nyaucast-write-plan-title-other-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
-        const first = yield* explainerWritePlan(planInput({ title: "X" }));
+        const first = yield* callTool("explainer_write_plan", planInput({ title: "X" }));
 
-        const second = yield* explainerWritePlan(planInput({ title: "Y" }));
+        const second = yield* callTool("explainer_write_plan", planInput({ title: "Y" }));
 
         assert.strictEqual(second.created, true);
         assert.notStrictEqual(second.videoId, first.videoId);
@@ -412,14 +436,16 @@ describe("explainer.writePlan: idempotency without a source", () => {
   );
 
   it.effect("does not match a title proposal against the primary source URL of another plan", () =>
-    withVideoChannel("nyaucast-write-plan-title-url-", explainerConfig, () =>
+    withToolChannel("nyaucast-write-plan-title-url-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
-        const sourced = yield* explainerWritePlan(
+        const sourced = yield* callTool(
+          "explainer_write_plan",
           planInput({ sources: [source("https://ex.com/a")], title: "Sourced" }),
         );
 
-        const untitledBySource = yield* explainerWritePlan(
+        const untitledBySource = yield* callTool(
+          "explainer_write_plan",
           planInput({ title: "https://ex.com/a" }),
         );
 
@@ -433,14 +459,18 @@ describe("explainer.writePlan: idempotency without a source", () => {
   it.effect(
     "does not treat a plan with a primary source as matching the same title with no source",
     () =>
-      withVideoChannel("nyaucast-write-plan-title-sourced-", explainerConfig, () =>
+      withToolChannel("nyaucast-write-plan-title-sourced-", { config: explainerConfig }, () =>
         Effect.gen(function* () {
           yield* setClock(noon);
-          const sourced = yield* explainerWritePlan(
+          const sourced = yield* callTool(
+            "explainer_write_plan",
             planInput({ sources: [source("https://ex.com/a")], title: "Same title" }),
           );
 
-          const unsourced = yield* explainerWritePlan(planInput({ title: "Same title" }));
+          const unsourced = yield* callTool(
+            "explainer_write_plan",
+            planInput({ title: "Same title" }),
+          );
 
           assert.strictEqual(unsourced.created, true);
           assert.notStrictEqual(unsourced.videoId, sourced.videoId);
@@ -451,37 +481,39 @@ describe("explainer.writePlan: idempotency without a source", () => {
   it.effect(
     "fails with VideoIdCollision and leaves the existing row alone when the generated ID is taken",
     () =>
-      withVideoChannel(
+      withToolChannel(
         "nyaucast-write-plan-collision-",
-        explainerConfig,
+        { config: explainerConfig, videoIds: fixedVideoId("V1") },
         () =>
           Effect.gen(function* () {
             yield* setClock(noon);
-            const first = yield* explainerWritePlan(planInput({ title: "First" }));
+            const first = yield* callTool("explainer_write_plan", planInput({ title: "First" }));
             const before = yield* selectAll("explainer_plans");
 
-            const failure = yield* Effect.flip(explainerWritePlan(planInput({ title: "Second" })));
+            const failure = yield* Effect.flip(
+              callTool("explainer_write_plan", planInput({ title: "Second" })),
+            );
 
             assert.strictEqual(first.videoId, "V1");
             assert.strictEqual(failure._tag, "VideoIdCollision");
             assert.deepStrictEqual(yield* selectAll("explainer_plans"), before);
             assert.strictEqual(yield* count("explainer_videos"), 1);
           }),
-        fixedVideoId("V1"),
       ),
   );
 });
 
 describe("explainer.writePlan: overwriting by video ID", () => {
   it.effect("appends a new version, records its time, and returns the latest plan", () =>
-    withVideoChannel("nyaucast-write-plan-overwrite-", explainerConfig, () =>
+    withToolChannel("nyaucast-write-plan-overwrite-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
-        const first = yield* explainerWritePlan(planInput());
+        const first = yield* callTool("explainer_write_plan", planInput());
         const later = "2026-10-04T08:30:00.000Z";
         yield* setClock(later);
 
-        const second = yield* explainerWritePlan(
+        const second = yield* callTool(
+          "explainer_write_plan",
           planInput({
             points: ["revised"],
             title: "Why cats purr, revised",
@@ -505,14 +537,17 @@ describe("explainer.writePlan: overwriting by video ID", () => {
   );
 
   it.effect("does not append a version when the content is identical", () =>
-    withVideoChannel("nyaucast-write-plan-overwrite-same-", explainerConfig, () =>
+    withToolChannel("nyaucast-write-plan-overwrite-same-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
         const input = planInput({ sources: [source("https://ex.com/a")] });
-        const first = yield* explainerWritePlan(input);
+        const first = yield* callTool("explainer_write_plan", input);
         yield* setClock("2026-10-04T08:30:00.000Z");
 
-        const second = yield* explainerWritePlan({ ...input, videoId: first.videoId });
+        const second = yield* callTool("explainer_write_plan", {
+          ...input,
+          videoId: first.videoId,
+        });
 
         assert.strictEqual(second.created, false);
         assert.deepStrictEqual(second.plan, first.plan);
@@ -525,15 +560,17 @@ describe("explainer.writePlan: overwriting by video ID", () => {
   it.effect(
     "puts each new version strictly after the previous one even when the clock has not moved",
     () =>
-      withVideoChannel("nyaucast-write-plan-overwrite-tick-", explainerConfig, () =>
+      withToolChannel("nyaucast-write-plan-overwrite-tick-", { config: explainerConfig }, () =>
         Effect.gen(function* () {
           yield* setClock(noon);
-          const first = yield* explainerWritePlan(planInput());
+          const first = yield* callTool("explainer_write_plan", planInput());
 
-          const second = yield* explainerWritePlan(
+          const second = yield* callTool(
+            "explainer_write_plan",
             planInput({ title: "Second", videoId: first.videoId }),
           );
-          const third = yield* explainerWritePlan(
+          const third = yield* callTool(
+            "explainer_write_plan",
             planInput({ title: "Third", videoId: first.videoId }),
           );
 
@@ -546,11 +583,13 @@ describe("explainer.writePlan: overwriting by video ID", () => {
   );
 
   it.effect("fails with VideoNotFound for a video ID that does not exist", () =>
-    withVideoChannel("nyaucast-write-plan-overwrite-missing-", explainerConfig, () =>
+    withToolChannel("nyaucast-write-plan-overwrite-missing-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
 
-        const failure = yield* Effect.flip(explainerWritePlan(planInput({ videoId: "missing" })));
+        const failure = yield* Effect.flip(
+          callTool("explainer_write_plan", planInput({ videoId: "missing" })),
+        );
 
         assert.strictEqual(failure._tag, "VideoNotFound");
         assert.strictEqual(yield* count("explainer_videos"), 0);
@@ -560,20 +599,24 @@ describe("explainer.writePlan: overwriting by video ID", () => {
   );
 
   it.effect("matches later new plans against the source of the latest version, not the first", () =>
-    withVideoChannel("nyaucast-write-plan-overwrite-key-", explainerConfig, () =>
+    withToolChannel("nyaucast-write-plan-overwrite-key-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
-        const first = yield* explainerWritePlan(
+        const first = yield* callTool(
+          "explainer_write_plan",
           planInput({ sources: [source("https://ex.com/a")] }),
         );
-        yield* explainerWritePlan(
+        yield* callTool(
+          "explainer_write_plan",
           planInput({ sources: [source("https://ex.com/b")], videoId: first.videoId }),
         );
 
-        const followsLatest = yield* explainerWritePlan(
+        const followsLatest = yield* callTool(
+          "explainer_write_plan",
           planInput({ sources: [source("https://ex.com/b/?utm_source=x")], title: "Other" }),
         );
-        const oldSource = yield* explainerWritePlan(
+        const oldSource = yield* callTool(
+          "explainer_write_plan",
           planInput({ sources: [source("https://ex.com/a")], title: "Other" }),
         );
 
@@ -586,13 +629,16 @@ describe("explainer.writePlan: overwriting by video ID", () => {
   );
 
   it.effect("rejects an undeclared hit pattern on overwrite and appends nothing", () =>
-    withVideoChannel("nyaucast-write-plan-overwrite-pattern-", explainerConfig, () =>
+    withToolChannel("nyaucast-write-plan-overwrite-pattern-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
-        const first = yield* explainerWritePlan(planInput());
+        const first = yield* callTool("explainer_write_plan", planInput());
 
         const failure = yield* Effect.flip(
-          explainerWritePlan(planInput({ hitPattern: "clickbait", videoId: first.videoId })),
+          callTool(
+            "explainer_write_plan",
+            planInput({ hitPattern: "clickbait", videoId: first.videoId }),
+          ),
         );
 
         assert.strictEqual(failure._tag, "UndeclaredHitPattern");
@@ -604,14 +650,14 @@ describe("explainer.writePlan: overwriting by video ID", () => {
 
 describe("explainer.writePlan: overwrite locks", () => {
   it.effect("fails with PlanAlreadyApproved after the produce approval and appends nothing", () =>
-    withVideoChannel("nyaucast-write-plan-approved-", explainerConfig, () =>
+    withToolChannel("nyaucast-write-plan-approved-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
-        const first = yield* explainerWritePlan(planInput());
+        const first = yield* callTool("explainer_write_plan", planInput());
         yield* insertGateFact("approval", first.videoId, "produce", "2026-10-03T13:00:00.000Z");
 
         const failure = yield* Effect.flip(
-          explainerWritePlan(planInput({ title: "Changed", videoId: first.videoId })),
+          callTool("explainer_write_plan", planInput({ title: "Changed", videoId: first.videoId })),
         );
 
         assert.strictEqual(failure._tag, "PlanAlreadyApproved");
@@ -621,14 +667,14 @@ describe("explainer.writePlan: overwrite locks", () => {
   );
 
   it.effect("fails with VideoAbandoned after a NO-GO and appends nothing", () =>
-    withVideoChannel("nyaucast-write-plan-abandoned-", explainerConfig, () =>
+    withToolChannel("nyaucast-write-plan-abandoned-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
-        const first = yield* explainerWritePlan(planInput());
+        const first = yield* callTool("explainer_write_plan", planInput());
         yield* insertGateFact("rejection", first.videoId, "produce", "2026-10-03T13:00:00.000Z");
 
         const failure = yield* Effect.flip(
-          explainerWritePlan(planInput({ title: "Changed", videoId: first.videoId })),
+          callTool("explainer_write_plan", planInput({ title: "Changed", videoId: first.videoId })),
         );
 
         assert.strictEqual(failure._tag, "VideoAbandoned");
@@ -638,15 +684,15 @@ describe("explainer.writePlan: overwrite locks", () => {
   );
 
   it.effect("reports PlanAlreadyApproved when the video is both approved and abandoned", () =>
-    withVideoChannel("nyaucast-write-plan-approved-abandoned-", explainerConfig, () =>
+    withToolChannel("nyaucast-write-plan-approved-abandoned-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
-        const first = yield* explainerWritePlan(planInput());
+        const first = yield* callTool("explainer_write_plan", planInput());
         yield* insertGateFact("approval", first.videoId, "produce", "2026-10-03T13:00:00.000Z");
         yield* insertGateFact("rejection", first.videoId, "publish", "2026-10-03T14:00:00.000Z");
 
         const failure = yield* Effect.flip(
-          explainerWritePlan(planInput({ title: "Changed", videoId: first.videoId })),
+          callTool("explainer_write_plan", planInput({ title: "Changed", videoId: first.videoId })),
         );
 
         assert.strictEqual(failure._tag, "PlanAlreadyApproved");
@@ -655,15 +701,15 @@ describe("explainer.writePlan: overwrite locks", () => {
   );
 
   it.effect("fails an overwrite with identical content too once the plan is approved", () =>
-    withVideoChannel("nyaucast-write-plan-approved-same-", explainerConfig, () =>
+    withToolChannel("nyaucast-write-plan-approved-same-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
         const input = planInput();
-        const first = yield* explainerWritePlan(input);
+        const first = yield* callTool("explainer_write_plan", input);
         yield* insertGateFact("approval", first.videoId, "produce", "2026-10-03T13:00:00.000Z");
 
         const failure = yield* Effect.flip(
-          explainerWritePlan({ ...input, videoId: first.videoId }),
+          callTool("explainer_write_plan", { ...input, videoId: first.videoId }),
         );
 
         assert.strictEqual(failure._tag, "PlanAlreadyApproved");
@@ -672,13 +718,14 @@ describe("explainer.writePlan: overwrite locks", () => {
   );
 
   it.effect("does not lock the plan for an approval of the publish gate alone", () =>
-    withVideoChannel("nyaucast-write-plan-publish-approval-", explainerConfig, () =>
+    withToolChannel("nyaucast-write-plan-publish-approval-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
-        const first = yield* explainerWritePlan(planInput());
+        const first = yield* callTool("explainer_write_plan", planInput());
         yield* insertGateFact("approval", first.videoId, "publish", "2026-10-03T13:00:00.000Z");
 
-        const second = yield* explainerWritePlan(
+        const second = yield* callTool(
+          "explainer_write_plan",
           planInput({ title: "Changed", videoId: first.videoId }),
         );
 
@@ -688,14 +735,15 @@ describe("explainer.writePlan: overwrite locks", () => {
   );
 
   it.effect("does not let an approval of another video lock this one", () =>
-    withVideoChannel("nyaucast-write-plan-approved-other-", explainerConfig, () =>
+    withToolChannel("nyaucast-write-plan-approved-other-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
-        const first = yield* explainerWritePlan(planInput({ title: "First" }));
-        const other = yield* explainerWritePlan(planInput({ title: "Other" }));
+        const first = yield* callTool("explainer_write_plan", planInput({ title: "First" }));
+        const other = yield* callTool("explainer_write_plan", planInput({ title: "Other" }));
         yield* insertGateFact("approval", other.videoId, "produce", "2026-10-03T13:00:00.000Z");
 
-        const second = yield* explainerWritePlan(
+        const second = yield* callTool(
+          "explainer_write_plan",
           planInput({ title: "First, revised", videoId: first.videoId }),
         );
 
@@ -707,9 +755,9 @@ describe("explainer.writePlan: overwrite locks", () => {
 
 describe("explainer.writePlan: channel kind", () => {
   it.effect("fails with NotExplainerChannel when the channel kind is not explainer", () =>
-    withVideoChannel("nyaucast-write-plan-collection-", collectionConfig, () =>
+    withToolChannel("nyaucast-write-plan-collection-", { config: collectionConfig }, () =>
       Effect.gen(function* () {
-        const failure = yield* Effect.flip(explainerWritePlan(planInput()));
+        const failure = yield* Effect.flip(callTool("explainer_write_plan", planInput()));
 
         assert.strictEqual(failure._tag, "NotExplainerChannel");
         assert.strictEqual(yield* count("explainer_videos"), 0);
@@ -718,9 +766,9 @@ describe("explainer.writePlan: channel kind", () => {
   );
 
   it.effect("fails with ChannelConfigNotFound when the channel has no video config", () =>
-    withVideoChannel("nyaucast-write-plan-noconfig-", undefined, () =>
+    withToolChannel("nyaucast-write-plan-noconfig-", {}, () =>
       Effect.gen(function* () {
-        const failure = yield* Effect.flip(explainerWritePlan(planInput()));
+        const failure = yield* Effect.flip(callTool("explainer_write_plan", planInput()));
 
         assert.strictEqual(failure._tag, "ChannelConfigNotFound");
       }),
@@ -736,9 +784,9 @@ describe("explainer.writePlan: channel kind", () => {
       JSON.stringify({ genre: "tech", hitPatterns: { shock: {} }, kind: "explainer" }),
     ],
   ] as const)("fails with InvalidChannelConfig for %s", ([, content]) =>
-    withVideoChannel("nyaucast-write-plan-invalid-", content, () =>
+    withToolChannel("nyaucast-write-plan-invalid-", { config: content }, () =>
       Effect.gen(function* () {
-        const failure = yield* Effect.flip(explainerWritePlan(planInput()));
+        const failure = yield* Effect.flip(callTool("explainer_write_plan", planInput()));
 
         assert.strictEqual(failure._tag, "InvalidChannelConfig");
       }),
@@ -748,17 +796,35 @@ describe("explainer.writePlan: channel kind", () => {
   it.effect(
     "reads the config on every call, so a config written after the layer was built is used",
     () =>
-      withVideoChannel("nyaucast-write-plan-late-config-", undefined, (channelRoot) =>
+      withToolChannel("nyaucast-write-plan-late-config-", {}, (channelRoot) =>
         Effect.gen(function* () {
           yield* setClock(noon);
-          const before = yield* Effect.flip(explainerWritePlan(planInput()));
+          const before = yield* Effect.flip(callTool("explainer_write_plan", planInput()));
           writeVideoConfig(channelRoot, explainerConfig);
 
-          const after = yield* explainerWritePlan(planInput());
+          const after = yield* callTool("explainer_write_plan", planInput());
 
           assert.strictEqual(before._tag, "ChannelConfigNotFound");
           assert.strictEqual(after.created, true);
         }),
       ),
+  );
+});
+
+describe("explainer.writePlan: unknown keys", () => {
+  it.effect("rejects an unknown key as invalid parameters and records nothing", () =>
+    withToolChannel("nyaucast-write-plan-unknown-", { config: explainerConfig }, () =>
+      Effect.gen(function* () {
+        yield* setClock(noon);
+        const input = { ...planInput(), next: "approve" };
+
+        assert.strictEqual(
+          yield* rejectionReason("explainer_write_plan", input),
+          "ToolParameterValidationError",
+        );
+        assert.strictEqual(yield* count("explainer_videos"), 0);
+        assert.strictEqual(yield* count("explainer_plans"), 0);
+      }),
+    ),
   );
 });

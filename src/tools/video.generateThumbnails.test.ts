@@ -17,16 +17,14 @@ import {
   channelFileExists,
   fakeGemini,
   readChannelFile,
-  withThumbnailChannel,
   writeChannelFile,
   type FakeReply,
 } from "../../test/thumbnail-helpers.ts";
 import { jpegSize, maxThumbnailBytes, noisePng, solidPng } from "../../test/thumbnail-images.ts";
-import { explainerWritePlan } from "./explainer.writePlan.ts";
+import { callTool, rejectionReason, withToolChannel } from "../../test/tool-helpers.ts";
 import {
   VideoGenerateThumbnailsTool,
   copyrightAvoidancePhrase,
-  videoGenerateThumbnails,
 } from "./video.generateThumbnails.ts";
 
 // テストの時計（TestClock）は止まっているが、別の fiber が動き出すまでの実時間は進む。
@@ -66,7 +64,7 @@ const rowCount = selectAll("explainer_thumbnail_candidates").pipe(
 );
 
 const recordPlan = (overrides: Record<string, unknown> = {}) =>
-  setClock(noon).pipe(Effect.andThen(explainerWritePlan(planInput(overrides))));
+  setClock(noon).pipe(Effect.andThen(callTool("explainer_write_plan", planInput(overrides))));
 
 describe("video.generateThumbnails: parameters", () => {
   it("is named with its wire name", () => {
@@ -104,15 +102,14 @@ describe("video.generateThumbnails: writing candidates", () => {
     "writes 3 candidates by default: a 1920x1080 JPG and a 320x180 small one each, and a row each",
     () => {
       const gemini = fakeGemini([good, good, good]);
-      return withThumbnailChannel(
+      return withToolChannel(
         "nyaucast-thumbnails-default-",
-        explainerConfigWith(thumbnailType()),
-        gemini,
+        { config: explainerConfigWith(thumbnailType()), gemini },
         (channelRoot) =>
           Effect.gen(function* () {
             yield* recordPlan();
 
-            const result = yield* videoGenerateThumbnails(input());
+            const result = yield* callTool("video_generate_thumbnails", input());
 
             assert.strictEqual(gemini.calls.length, 3);
             assert.strictEqual(result.created, 3);
@@ -162,15 +159,14 @@ describe("video.generateThumbnails: writing candidates", () => {
 
   it.effect("makes as many candidates as the channel declares", () => {
     const gemini = fakeGemini([good, good]);
-    return withThumbnailChannel(
+    return withToolChannel(
       "nyaucast-thumbnails-count-",
-      explainerConfigWith(thumbnailType({ candidates: 2 })),
-      gemini,
+      { config: explainerConfigWith(thumbnailType({ candidates: 2 })), gemini },
       () =>
         Effect.gen(function* () {
           yield* recordPlan();
 
-          const result = yield* videoGenerateThumbnails(input());
+          const result = yield* callTool("video_generate_thumbnails", input());
 
           assert.strictEqual(gemini.calls.length, 2);
           assert.strictEqual(result.created, 2);
@@ -182,15 +178,14 @@ describe("video.generateThumbnails: writing candidates", () => {
 
   it.effect("returns only facts; the result rejects action fields at every level", () => {
     const gemini = fakeGemini([good]);
-    return withThumbnailChannel(
+    return withToolChannel(
       "nyaucast-thumbnails-facts-",
-      explainerConfigWith(thumbnailType({ candidates: 1 })),
-      gemini,
+      { config: explainerConfigWith(thumbnailType({ candidates: 1 })), gemini },
       () =>
         Effect.gen(function* () {
           yield* recordPlan();
 
-          const result = yield* videoGenerateThumbnails(input());
+          const result = yield* callTool("video_generate_thumbnails", input());
 
           const schema = VideoGenerateThumbnailsTool.successSchema;
           assert.isTrue(accepts(schema, result));
@@ -219,15 +214,14 @@ describe("video.generateThumbnails: the prompt", () => {
     "carries the text, the background description, the style and the text instructions",
     () => {
       const gemini = fakeGemini([good]);
-      return withThumbnailChannel(
+      return withToolChannel(
         "nyaucast-thumbnails-prompt-",
-        explainerConfigWith({ ...declared, candidates: 1 }),
-        gemini,
+        { config: explainerConfigWith({ ...declared, candidates: 1 }), gemini },
         () =>
           Effect.gen(function* () {
             yield* recordPlan();
 
-            yield* videoGenerateThumbnails(input());
+            yield* callTool("video_generate_thumbnails", input());
 
             const prompt = gemini.calls[0]?.prompt ?? "";
             for (const part of [
@@ -250,16 +244,15 @@ describe("video.generateThumbnails: the prompt", () => {
     ["every setting changed", { bannedWords: ["x"], style: "photo", textInstructions: "small" }],
   ] as const)("always carries the copyright-avoiding phrase: %s", ([, overrides]) => {
     const gemini = fakeGemini([good]);
-    return withThumbnailChannel(
+    return withToolChannel(
       "nyaucast-thumbnails-copyright-",
-      explainerConfigWith(thumbnailType({ ...overrides, candidates: 1 })),
-      gemini,
+      { config: explainerConfigWith(thumbnailType({ ...overrides, candidates: 1 })), gemini },
       (channelRoot) =>
         Effect.gen(function* () {
           writeChannelFile(channelRoot, "thumbnails/references/a.png", solidPng(8, 8));
           yield* recordPlan();
 
-          yield* videoGenerateThumbnails(input());
+          yield* callTool("video_generate_thumbnails", input());
 
           assert.isAbove(copyrightAvoidancePhrase.length, 0);
           assert.include(gemini.calls[0]?.prompt ?? "", copyrightAvoidancePhrase);
@@ -275,15 +268,16 @@ describe("video.generateThumbnails: banned words", () => {
     check: (failure: { _tag: string }) => void,
   ) => {
     const gemini = fakeGemini([good, good, good]);
-    return withThumbnailChannel(
+    return withToolChannel(
       "nyaucast-thumbnails-banned-",
-      explainerConfigWith(thumbnailType({ bannedWords })),
-      gemini,
+      { config: explainerConfigWith(thumbnailType({ bannedWords })), gemini },
       () =>
         Effect.gen(function* () {
           yield* recordPlan();
 
-          const failure = yield* Effect.flip(videoGenerateThumbnails(input(overrides)));
+          const failure = yield* Effect.flip(
+            callTool("video_generate_thumbnails", input(overrides)),
+          );
 
           check(failure);
           assert.strictEqual(gemini.calls.length, 0);
@@ -324,15 +318,17 @@ describe("video.generateThumbnails: banned words", () => {
 
   it.effect("calls the provider when neither the text nor the background has a banned word", () => {
     const gemini = fakeGemini([good]);
-    return withThumbnailChannel(
+    return withToolChannel(
       "nyaucast-thumbnails-not-banned-",
-      explainerConfigWith(thumbnailType({ bannedWords: ["ロゴ"], candidates: 1 })),
-      gemini,
+      {
+        config: explainerConfigWith(thumbnailType({ bannedWords: ["ロゴ"], candidates: 1 })),
+        gemini,
+      },
       () =>
         Effect.gen(function* () {
           yield* recordPlan();
 
-          const result = yield* videoGenerateThumbnails(input());
+          const result = yield* callTool("video_generate_thumbnails", input());
 
           assert.strictEqual(gemini.calls.length, 1);
           assert.strictEqual(result.created, 1);
@@ -346,15 +342,14 @@ describe("video.generateThumbnails: what has to exist before the provider is cal
     "fails with ThumbnailTypeNotDeclared when the channel declares no thumbnail type",
     () => {
       const gemini = fakeGemini([good]);
-      return withThumbnailChannel(
+      return withToolChannel(
         "nyaucast-thumbnails-undeclared-",
-        explainerConfigWith(),
-        gemini,
+        { config: explainerConfigWith(), gemini },
         () =>
           Effect.gen(function* () {
             yield* recordPlan();
 
-            const failure = yield* Effect.flip(videoGenerateThumbnails(input()));
+            const failure = yield* Effect.flip(callTool("video_generate_thumbnails", input()));
 
             assert.strictEqual(failure._tag, "ThumbnailTypeNotDeclared");
             assert.strictEqual(gemini.calls.length, 0);
@@ -366,13 +361,14 @@ describe("video.generateThumbnails: what has to exist before the provider is cal
 
   it.effect("fails with VideoNotFound for an unknown video", () => {
     const gemini = fakeGemini([good]);
-    return withThumbnailChannel(
+    return withToolChannel(
       "nyaucast-thumbnails-unknown-video-",
-      explainerConfigWith(thumbnailType()),
-      gemini,
+      { config: explainerConfigWith(thumbnailType()), gemini },
       () =>
         Effect.gen(function* () {
-          const failure = yield* Effect.flip(videoGenerateThumbnails(input({ videoId: "nope" })));
+          const failure = yield* Effect.flip(
+            callTool("video_generate_thumbnails", input({ videoId: "nope" })),
+          );
 
           assert.strictEqual(failure._tag, "VideoNotFound");
           assert.strictEqual(gemini.calls.length, 0);
@@ -384,15 +380,19 @@ describe("video.generateThumbnails: what has to exist before the provider is cal
     "fails with ReferenceImageNotFound for a declared reference image that is missing",
     () => {
       const gemini = fakeGemini([good]);
-      return withThumbnailChannel(
+      return withToolChannel(
         "nyaucast-thumbnails-missing-reference-",
-        explainerConfigWith(thumbnailType({ referenceImages: ["thumbnails/references/gone.png"] })),
-        gemini,
+        {
+          config: explainerConfigWith(
+            thumbnailType({ referenceImages: ["thumbnails/references/gone.png"] }),
+          ),
+          gemini,
+        },
         () =>
           Effect.gen(function* () {
             yield* recordPlan();
 
-            const failure = yield* Effect.flip(videoGenerateThumbnails(input()));
+            const failure = yield* Effect.flip(callTool("video_generate_thumbnails", input()));
 
             assert.strictEqual(failure._tag, "ReferenceImageNotFound");
             assert.strictEqual(failureFacts(failure)["path"], "thumbnails/references/gone.png");
@@ -423,19 +423,18 @@ describe("video.generateThumbnails: reference images", () => {
     "rotates through the reference images, and the next round starts with the one not used last",
     () => {
       const gemini = fakeGemini([good, good, good, good, good, good]);
-      return withThumbnailChannel(
+      return withToolChannel(
         "nyaucast-thumbnails-rotation-",
-        explainerConfigWith(declared),
-        gemini,
+        { config: explainerConfigWith(declared), gemini },
         (channelRoot) =>
           Effect.gen(function* () {
             writeReferences(channelRoot);
             yield* recordPlan();
 
-            yield* videoGenerateThumbnails(input());
+            yield* callTool("video_generate_thumbnails", input());
             assert.deepStrictEqual(used(gemini), [[a], [b], [a]]);
 
-            yield* videoGenerateThumbnails(input({ force: true }));
+            yield* callTool("video_generate_thumbnails", input({ force: true }));
             assert.deepStrictEqual(used(gemini), [[a], [b], [a], [b], [a], [b]]);
           }),
       );
@@ -444,18 +443,17 @@ describe("video.generateThumbnails: reference images", () => {
 
   it.effect("avoids the reference image used last even when it was used for another video", () => {
     const gemini = fakeGemini([good, good]);
-    return withThumbnailChannel(
+    return withToolChannel(
       "nyaucast-thumbnails-rotation-videos-",
-      explainerConfigWith({ ...declared, candidates: 1 }),
-      gemini,
+      { config: explainerConfigWith({ ...declared, candidates: 1 }), gemini },
       (channelRoot) =>
         Effect.gen(function* () {
           writeReferences(channelRoot);
           yield* recordPlan();
           const second = yield* recordPlan({ title: "Why cats knead" });
 
-          yield* videoGenerateThumbnails(input());
-          yield* videoGenerateThumbnails(input({ videoId: second.videoId }));
+          yield* callTool("video_generate_thumbnails", input());
+          yield* callTool("video_generate_thumbnails", input({ videoId: second.videoId }));
 
           assert.strictEqual(second.videoId, "V2");
           assert.deepStrictEqual(used(gemini), [[a], [b]]);
@@ -465,15 +463,14 @@ describe("video.generateThumbnails: reference images", () => {
 
   it.effect("sends no reference image when the channel declares none", () => {
     const gemini = fakeGemini([good]);
-    return withThumbnailChannel(
+    return withToolChannel(
       "nyaucast-thumbnails-no-reference-",
-      explainerConfigWith(thumbnailType({ candidates: 1 })),
-      gemini,
+      { config: explainerConfigWith(thumbnailType({ candidates: 1 })), gemini },
       () =>
         Effect.gen(function* () {
           yield* recordPlan();
 
-          yield* videoGenerateThumbnails(input());
+          yield* callTool("video_generate_thumbnails", input());
 
           assert.deepStrictEqual(used(gemini), [[]]);
         }),
@@ -486,15 +483,14 @@ describe("video.generateThumbnails: resuming and regenerating", () => {
     "calls the provider once more after a run that failed after its second candidate",
     () => {
       const gemini = fakeGemini([good, good, { status: 500 }, good]);
-      return withThumbnailChannel(
+      return withToolChannel(
         "nyaucast-thumbnails-resume-",
-        explainerConfigWith(thumbnailType({ candidates: 3 })),
-        gemini,
+        { config: explainerConfigWith(thumbnailType({ candidates: 3 })), gemini },
         (channelRoot) =>
           Effect.gen(function* () {
             yield* recordPlan();
 
-            const failure = yield* Effect.flip(videoGenerateThumbnails(input()));
+            const failure = yield* Effect.flip(callTool("video_generate_thumbnails", input()));
 
             assert.strictEqual(failure._tag, "GeminiHttpFailure");
             assert.strictEqual(failureFacts(failure)["status"], 500);
@@ -506,7 +502,7 @@ describe("video.generateThumbnails: resuming and regenerating", () => {
             assert.isTrue(channelFileExists(channelRoot, "videos/V1/thumbnails/1-2.jpg"));
             assert.isFalse(channelFileExists(channelRoot, "videos/V1/thumbnails/1-3.jpg"));
 
-            const resumed = yield* videoGenerateThumbnails(input());
+            const resumed = yield* callTool("video_generate_thumbnails", input());
 
             assert.strictEqual(gemini.calls.length, 4);
             assert.strictEqual(resumed.created, 1);
@@ -533,16 +529,18 @@ describe("video.generateThumbnails: resuming and regenerating", () => {
     "does not call the provider again once the round is complete, even for a different text",
     () => {
       const gemini = fakeGemini([good, good, good]);
-      return withThumbnailChannel(
+      return withToolChannel(
         "nyaucast-thumbnails-complete-",
-        explainerConfigWith(thumbnailType({ candidates: 3 })),
-        gemini,
+        { config: explainerConfigWith(thumbnailType({ candidates: 3 })), gemini },
         () =>
           Effect.gen(function* () {
             yield* recordPlan();
-            yield* videoGenerateThumbnails(input());
+            yield* callTool("video_generate_thumbnails", input());
 
-            const again = yield* videoGenerateThumbnails(input({ text: "まったく別の文言" }));
+            const again = yield* callTool(
+              "video_generate_thumbnails",
+              input({ text: "まったく別の文言" }),
+            );
 
             assert.strictEqual(gemini.calls.length, 3);
             assert.strictEqual(again.created, 0);
@@ -557,16 +555,18 @@ describe("video.generateThumbnails: resuming and regenerating", () => {
     "calls the provider once per candidate when two calls for the same video run at once",
     () => {
       const gemini = fakeGemini([good, good, good]);
-      return withThumbnailChannel(
+      return withToolChannel(
         "nyaucast-thumbnails-concurrent-",
-        explainerConfigWith(thumbnailType({ candidates: 3 })),
-        gemini,
+        { config: explainerConfigWith(thumbnailType({ candidates: 3 })), gemini },
         () =>
           Effect.gen(function* () {
             yield* recordPlan();
 
             const results = yield* Effect.all(
-              [videoGenerateThumbnails(input()), videoGenerateThumbnails(input())],
+              [
+                callTool("video_generate_thumbnails", input()),
+                callTool("video_generate_thumbnails", input()),
+              ],
               { concurrency: 2 },
             );
 
@@ -582,17 +582,16 @@ describe("video.generateThumbnails: resuming and regenerating", () => {
     "makes a new round of all candidates only with force, leaving the earlier round alone",
     () => {
       const gemini = fakeGemini([good, good, good, good, good, good]);
-      return withThumbnailChannel(
+      return withToolChannel(
         "nyaucast-thumbnails-force-",
-        explainerConfigWith(thumbnailType({ candidates: 3 })),
-        gemini,
+        { config: explainerConfigWith(thumbnailType({ candidates: 3 })), gemini },
         (channelRoot) =>
           Effect.gen(function* () {
             yield* recordPlan();
-            yield* videoGenerateThumbnails(input());
+            yield* callTool("video_generate_thumbnails", input());
             const firstRound = readChannelFile(channelRoot, "videos/V1/thumbnails/1-1.jpg");
 
-            const forced = yield* videoGenerateThumbnails(input({ force: true }));
+            const forced = yield* callTool("video_generate_thumbnails", input({ force: true }));
 
             assert.strictEqual(gemini.calls.length, 6);
             assert.strictEqual(forced.round, 2);
@@ -615,15 +614,14 @@ describe("video.generateThumbnails: resuming and regenerating", () => {
 describe("video.generateThumbnails: checking the generated image", () => {
   const rejected = (reply: FakeReply, reason: string) => {
     const gemini = fakeGemini([reply]);
-    return withThumbnailChannel(
+    return withToolChannel(
       "nyaucast-thumbnails-rejected-",
-      explainerConfigWith(thumbnailType({ candidates: 1 })),
-      gemini,
+      { config: explainerConfigWith(thumbnailType({ candidates: 1 })), gemini },
       (channelRoot) =>
         Effect.gen(function* () {
           yield* recordPlan();
 
-          const failure = yield* Effect.flip(videoGenerateThumbnails(input()));
+          const failure = yield* Effect.flip(callTool("video_generate_thumbnails", input()));
 
           assert.strictEqual(failure._tag, "ThumbnailImageRejected");
           assert.strictEqual(failureFacts(failure)["reason"], reason);
@@ -663,15 +661,14 @@ describe("video.generateThumbnails: checking the generated image", () => {
     ["3840x2160 (4K)", solidPng(3840, 2160)],
   ] as const)("makes a 1920x1080 JPG and a 320x180 small one of a %s image", ([, image]) => {
     const gemini = fakeGemini([{ image }]);
-    return withThumbnailChannel(
+    return withToolChannel(
       "nyaucast-thumbnails-accepted-",
-      explainerConfigWith(thumbnailType({ candidates: 1 })),
-      gemini,
+      { config: explainerConfigWith(thumbnailType({ candidates: 1 })), gemini },
       (channelRoot) =>
         Effect.gen(function* () {
           yield* recordPlan();
 
-          const result = yield* videoGenerateThumbnails(input());
+          const result = yield* callTool("video_generate_thumbnails", input());
 
           assert.strictEqual(result.created, 1);
           const key = result.candidates[0]?.key ?? "";
@@ -691,15 +688,14 @@ describe("video.generateThumbnails: checking the generated image", () => {
     // 1920x1080 のノイズ（振幅 ±90）は、sharp 0.35.5 の 4:4:4 の JPEG で品質 80 が約 2.23 MB（収まらない）、
     // 品質 70 が約 1.79 MB。品質 80 で打ち切ると候補にならない。
     const gemini = fakeGemini([{ image: noisePng(1920, 1080, 90) }]);
-    return withThumbnailChannel(
+    return withToolChannel(
       "nyaucast-thumbnails-quality-",
-      explainerConfigWith(thumbnailType({ candidates: 1 })),
-      gemini,
+      { config: explainerConfigWith(thumbnailType({ candidates: 1 })), gemini },
       (channelRoot) =>
         Effect.gen(function* () {
           yield* recordPlan();
 
-          const result = yield* videoGenerateThumbnails(input());
+          const result = yield* callTool("video_generate_thumbnails", input());
 
           const body = readChannelFile(channelRoot, result.candidates[0]?.key ?? "");
           assert.deepStrictEqual(jpegSize(body), { height: 1080, width: 1920 });
@@ -712,15 +708,14 @@ describe("video.generateThumbnails: checking the generated image", () => {
     "keeps the candidates written before a rejected image, and the next run continues from that number",
     () => {
       const gemini = fakeGemini([good, { image: solidPng(1200, 675) }, good, good]);
-      return withThumbnailChannel(
+      return withToolChannel(
         "nyaucast-thumbnails-rejected-midway-",
-        explainerConfigWith(thumbnailType({ candidates: 3 })),
-        gemini,
+        { config: explainerConfigWith(thumbnailType({ candidates: 3 })), gemini },
         () =>
           Effect.gen(function* () {
             yield* recordPlan();
 
-            const failure = yield* Effect.flip(videoGenerateThumbnails(input()));
+            const failure = yield* Effect.flip(callTool("video_generate_thumbnails", input()));
 
             assert.strictEqual(failure._tag, "ThumbnailImageRejected");
             assert.deepStrictEqual(
@@ -728,7 +723,7 @@ describe("video.generateThumbnails: checking the generated image", () => {
               [1],
             );
 
-            const resumed = yield* videoGenerateThumbnails(input());
+            const resumed = yield* callTool("video_generate_thumbnails", input());
 
             assert.strictEqual(gemini.calls.length, 4);
             assert.strictEqual(resumed.created, 2);
@@ -747,15 +742,14 @@ describe("video.generateThumbnails: checking the generated image", () => {
 
   it.effect("writes no candidate when the provider's answer has no image", () => {
     const gemini = fakeGemini([{ body: { candidates: [] } }]);
-    return withThumbnailChannel(
+    return withToolChannel(
       "nyaucast-thumbnails-no-image-",
-      explainerConfigWith(thumbnailType({ candidates: 1 })),
-      gemini,
+      { config: explainerConfigWith(thumbnailType({ candidates: 1 })), gemini },
       () =>
         Effect.gen(function* () {
           yield* recordPlan();
 
-          const failure = yield* Effect.flip(videoGenerateThumbnails(input()));
+          const failure = yield* Effect.flip(callTool("video_generate_thumbnails", input()));
 
           assert.strictEqual(failure._tag, "GeminiResponseInvalid");
           assert.strictEqual(yield* rowCount, 0);
@@ -776,12 +770,10 @@ describe("video.generateThumbnails: the codex provider", () => {
     use: (channelRoot: string, gemini: ReturnType<typeof fakeGemini>) => Effect.Effect<A, E, R>,
   ) => {
     const gemini = fakeGemini([]);
-    return withThumbnailChannel(
+    return withToolChannel(
       prefix,
-      explainerConfigWith(codexType(overrides)),
-      gemini,
+      { config: explainerConfigWith(codexType(overrides)), gemini, codex },
       (channelRoot) => use(channelRoot, gemini),
-      codex,
     );
   };
 
@@ -801,7 +793,7 @@ describe("video.generateThumbnails: the codex provider", () => {
         Effect.gen(function* () {
           yield* recordPlan();
 
-          const result = yield* videoGenerateThumbnails(input());
+          const result = yield* callTool("video_generate_thumbnails", input());
 
           assert.deepStrictEqual(
             codex.calls.map((call) => [call.command, call.args[0], call.args[1]]),
@@ -855,7 +847,7 @@ describe("video.generateThumbnails: the codex provider", () => {
       Effect.gen(function* () {
         yield* recordPlan();
 
-        const running = yield* Effect.forkChild(videoGenerateThumbnails(input()));
+        const running = yield* Effect.forkChild(callTool("video_generate_thumbnails", input()));
         yield* waitUntil(() => codex.execCalls.length >= 1);
         // 並行なら 2 本目が起動できる時間を与えてから確かめる。逐次なら 1 本目の終了まで起動しない。
         yield* realDelay(100);
@@ -879,7 +871,7 @@ describe("video.generateThumbnails: the codex provider", () => {
       Effect.gen(function* () {
         yield* recordPlan();
 
-        const result = yield* videoGenerateThumbnails(input());
+        const result = yield* callTool("video_generate_thumbnails", input());
 
         assert.strictEqual(codex.execCalls.length, 2);
         assert.strictEqual(result.created, 2);
@@ -904,7 +896,7 @@ describe("video.generateThumbnails: the codex provider", () => {
           Effect.gen(function* () {
             yield* recordPlan();
 
-            yield* videoGenerateThumbnails(input());
+            yield* callTool("video_generate_thumbnails", input());
 
             const instruction = codex.execCalls[0]?.args.at(-1) ?? "";
             for (const part of [
@@ -927,7 +919,8 @@ describe("video.generateThumbnails: the codex provider", () => {
       Effect.gen(function* () {
         yield* recordPlan();
 
-        yield* videoGenerateThumbnails(
+        yield* callTool(
+          "video_generate_thumbnails",
           input({ background: "引用符 ' \" と $(rm -rf /) と ; echo" }),
         );
 
@@ -961,7 +954,7 @@ describe("video.generateThumbnails: the codex provider", () => {
               writeReferences(channelRoot);
               yield* recordPlan();
 
-              yield* videoGenerateThumbnails(input());
+              yield* callTool("video_generate_thumbnails", input());
 
               assert.deepStrictEqual(
                 codex.execCalls.map((call) => call.imageBytes),
@@ -984,7 +977,7 @@ describe("video.generateThumbnails: the codex provider", () => {
         Effect.gen(function* () {
           yield* recordPlan();
 
-          yield* videoGenerateThumbnails(input());
+          yield* callTool("video_generate_thumbnails", input());
 
           const [call] = codex.execCalls;
           // --image も -- も付かない 8 要素。最後の 1 つが指示文で、偽物はそれを prompt として読む。
@@ -1013,7 +1006,7 @@ describe("video.generateThumbnails: the codex provider", () => {
           Effect.gen(function* () {
             yield* recordPlan();
 
-            const failure = yield* Effect.flip(videoGenerateThumbnails(input()));
+            const failure = yield* Effect.flip(callTool("video_generate_thumbnails", input()));
 
             assert.strictEqual(failure._tag, "ReferenceImageNotFound");
             assert.strictEqual(codex.calls.length, 0);
@@ -1029,7 +1022,9 @@ describe("video.generateThumbnails: the codex provider", () => {
         Effect.gen(function* () {
           yield* recordPlan();
 
-          const failure = yield* Effect.flip(videoGenerateThumbnails(input({ text: "ロゴ入り" })));
+          const failure = yield* Effect.flip(
+            callTool("video_generate_thumbnails", input({ text: "ロゴ入り" })),
+          );
 
           assert.strictEqual(failure._tag, "BannedThumbnailWords");
           assert.strictEqual(codex.calls.length, 0);
@@ -1042,7 +1037,9 @@ describe("video.generateThumbnails: the codex provider", () => {
       const codex = fakeCodex();
       return withCodex("nyaucast-thumbnails-codex-unknown-", {}, codex, () =>
         Effect.gen(function* () {
-          const failure = yield* Effect.flip(videoGenerateThumbnails(input({ videoId: "nope" })));
+          const failure = yield* Effect.flip(
+            callTool("video_generate_thumbnails", input({ videoId: "nope" })),
+          );
 
           assert.strictEqual(failure._tag, "VideoNotFound");
           assert.strictEqual(codex.calls.length, 0);
@@ -1064,7 +1061,7 @@ describe("video.generateThumbnails: the codex provider", () => {
             Effect.gen(function* () {
               yield* recordPlan();
 
-              const failure = yield* Effect.flip(videoGenerateThumbnails(input()));
+              const failure = yield* Effect.flip(callTool("video_generate_thumbnails", input()));
 
               assert.strictEqual(failure._tag, "CodexNotLoggedIn");
               assert.deepStrictEqual(
@@ -1085,7 +1082,7 @@ describe("video.generateThumbnails: the codex provider", () => {
         Effect.gen(function* () {
           yield* recordPlan();
 
-          const failure = yield* Effect.flip(videoGenerateThumbnails(input()));
+          const failure = yield* Effect.flip(callTool("video_generate_thumbnails", input()));
 
           assert.strictEqual(failure._tag, "CodexUnavailable");
           assert.strictEqual(codex.execCalls.length, 0);
@@ -1100,7 +1097,7 @@ describe("video.generateThumbnails: the codex provider", () => {
         Effect.gen(function* () {
           yield* recordPlan();
 
-          yield* videoGenerateThumbnails(input());
+          yield* callTool("video_generate_thumbnails", input());
 
           assert.strictEqual(codex.calls.filter((call) => call.args[0] === "login").length, 1);
         }),
@@ -1112,10 +1109,10 @@ describe("video.generateThumbnails: the codex provider", () => {
       return withCodex("nyaucast-thumbnails-codex-complete-", {}, codex, () =>
         Effect.gen(function* () {
           yield* recordPlan();
-          yield* videoGenerateThumbnails(input());
+          yield* callTool("video_generate_thumbnails", input());
           const before = codex.calls.length;
 
-          const again = yield* videoGenerateThumbnails(input());
+          const again = yield* callTool("video_generate_thumbnails", input());
 
           assert.strictEqual(again.created, 0);
           assert.strictEqual(codex.calls.length, before);
@@ -1135,7 +1132,7 @@ describe("video.generateThumbnails: the codex provider", () => {
           Effect.gen(function* () {
             yield* recordPlan();
 
-            const failure = yield* Effect.flip(videoGenerateThumbnails(input()));
+            const failure = yield* Effect.flip(callTool("video_generate_thumbnails", input()));
 
             assert.strictEqual(failure._tag, "ThumbnailImageRejected");
             assert.strictEqual(failureFacts(failure)["reason"], reason);
@@ -1170,7 +1167,7 @@ describe("video.generateThumbnails: the codex provider", () => {
           Effect.gen(function* () {
             yield* recordPlan();
 
-            const result = yield* videoGenerateThumbnails(input());
+            const result = yield* callTool("video_generate_thumbnails", input());
 
             const key = result.candidates[0]?.key ?? "";
             assert.deepStrictEqual(jpegSize(readChannelFile(channelRoot, key)), {
@@ -1202,7 +1199,7 @@ describe("video.generateThumbnails: the codex provider", () => {
           Effect.gen(function* () {
             yield* recordPlan();
 
-            const failure = yield* Effect.flip(videoGenerateThumbnails(input()));
+            const failure = yield* Effect.flip(callTool("video_generate_thumbnails", input()));
 
             assert.strictEqual(failure._tag, "CodexExecFailed");
             assert.deepStrictEqual(failureFacts(failure)["exitCode"], 2);
@@ -1214,7 +1211,7 @@ describe("video.generateThumbnails: the codex provider", () => {
             assert.isTrue(channelFileExists(channelRoot, "videos/V1/thumbnails/1-1.jpg"));
             assert.isFalse(channelFileExists(channelRoot, "videos/V1/thumbnails/1-2.jpg"));
 
-            const resumed = yield* videoGenerateThumbnails(input());
+            const resumed = yield* callTool("video_generate_thumbnails", input());
 
             assert.strictEqual(codex.execCalls.length, 4);
             assert.strictEqual(resumed.created, 2);
@@ -1237,7 +1234,7 @@ describe("video.generateThumbnails: the codex provider", () => {
         Effect.gen(function* () {
           yield* recordPlan();
 
-          const failure = yield* Effect.flip(videoGenerateThumbnails(input()));
+          const failure = yield* Effect.flip(callTool("video_generate_thumbnails", input()));
 
           assert.strictEqual(failure._tag, "CodexImageMissing");
           assert.strictEqual(yield* rowCount, 0);
@@ -1252,9 +1249,9 @@ describe("video.generateThumbnails: the codex provider", () => {
       return withCodex("nyaucast-thumbnails-codex-force-", {}, codex, () =>
         Effect.gen(function* () {
           yield* recordPlan();
-          yield* videoGenerateThumbnails(input());
+          yield* callTool("video_generate_thumbnails", input());
 
-          const forced = yield* videoGenerateThumbnails(input({ force: true }));
+          const forced = yield* callTool("video_generate_thumbnails", input({ force: true }));
 
           assert.strictEqual(forced.round, 2);
           assert.strictEqual(forced.created, 3);
@@ -1288,5 +1285,28 @@ describe("video.generateThumbnails: the failures codex can cause", () => {
     assert.isTrue(accepts(schema, { _tag: "CodexUnavailable" }));
     assert.isTrue(accepts(schema, { _tag: "CodexExecFailed", exitCode: 1 }));
     assert.isTrue(accepts(schema, { _tag: "CodexImageMissing" }));
+  });
+});
+
+describe("video.generateThumbnails: unknown keys", () => {
+  it.effect("rejects an unknown key as invalid parameters, before the provider is called", () => {
+    const gemini = fakeGemini([good]);
+    return withToolChannel(
+      "nyaucast-thumbnails-unknown-",
+      { config: explainerConfigWith(thumbnailType({ candidates: 1 })), gemini },
+      (channelRoot) =>
+        Effect.gen(function* () {
+          yield* recordPlan();
+          const request = { ...input(), next: "select" };
+
+          assert.strictEqual(
+            yield* rejectionReason("video_generate_thumbnails", request),
+            "ToolParameterValidationError",
+          );
+          assert.strictEqual(gemini.calls.length, 0);
+          assert.strictEqual(yield* rowCount, 0);
+          assert.isFalse(channelFileExists(channelRoot, "videos/V1/thumbnails/1-1.jpg"));
+        }),
+    );
   });
 });
