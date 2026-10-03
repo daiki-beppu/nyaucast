@@ -1,16 +1,18 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
 
 import { NodeServices } from "@effect/platform-node";
 import { ConfigProvider, Effect, Layer, Result, Schema, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/process";
 import { SqlClient } from "effect/sql";
-import { TestClock } from "effect/testing";
+import { TestClock, TestConsole } from "effect/testing";
 
+import { ChannelAccounts } from "../src/auth/accounts.ts";
+import { CredentialStore } from "../src/auth/credential-store.ts";
 import { LocalStore } from "../src/db/local-store.ts";
+import { YouTubeAuth } from "../src/youtube/auth.ts";
 
 export function withTemporaryDirectory<T>(prefix: string, execute: (directory: string) => T): T {
   const directory = mkdtempSync(join(tmpdir(), prefix));
@@ -56,6 +58,37 @@ export const channelLayer = (channelRoot: string) =>
     NodeServices.layer,
   );
 
+/** CLI のプログラムへ渡す local store。SqlClient だけを出し、FileSystem / Path は内側で満たす。 */
+export const localStoreLayer = (channelRoot: string) =>
+  LocalStore.layer(localDatabaseUrl(channelRoot)).pipe(Layer.provide(NodeServices.layer));
+
+const notUsed = Effect.die("このテストでは使わないサブコマンドの Layer が組まれた");
+
+/** auth を使わないテストが CLI のプログラムへ渡す Layer。組まれたら失敗する。 */
+export const unusedAuthLayer = Layer.mergeAll(
+  Layer.effect(ChannelAccounts, notUsed),
+  Layer.effect(CredentialStore, notUsed),
+  Layer.effect(YouTubeAuth, notUsed),
+);
+
+/** local store を使わないテストが CLI のプログラムへ渡す Layer。組まれたら失敗する。 */
+export const unusedLocalStoreLayer = Layer.effect(SqlClient.SqlClient, notUsed);
+
+/**
+ * CLI のプログラムを in-process で実行する。観測点は 3 つ: 成功・失敗（outcome）、stdout の行（logs）、stderr の行（errors）。
+ * TestConsole は同じテストの中の実行をまたいで行を溜める（Layer は同じ参照なら同じ instance になる）ので、
+ * この実行が出した行だけを返す。
+ */
+export const runProgram = <A, E, R>(program: Effect.Effect<A, E, R>) =>
+  Effect.gen(function* () {
+    const logsBefore = (yield* TestConsole.logLines).length;
+    const errorsBefore = (yield* TestConsole.errorLines).length;
+    const outcome = yield* Effect.result(program);
+    const logs = (yield* TestConsole.logLines).slice(logsBefore).map(String);
+    const errors = (yield* TestConsole.errorLines).slice(errorsBefore).map(String);
+    return { errors, logs, outcome, stdout: logs.map((line) => `${line}\n`).join("") };
+  }).pipe(Effect.provide(TestConsole.layer));
+
 /** 一時ディレクトリを 1 つ作り、その中のチャンネルとして use を実行する（スコープ終了で後始末）。 */
 export const withChannel = <A, E, R>(
   prefix: string,
@@ -97,15 +130,6 @@ export function writeVideoConfig(channelRoot: string, content: string): void {
   writeFileSync(join(channelRoot, "config", "channel", "video.json"), content);
 }
 
-/** 契約テスト（プロセスを起動する側）が、DB を作ってマイグレーションを適用するための入口。 */
-export function openLocalStoreOnce(channelRoot: string): Promise<void> {
-  return Effect.runPromise(
-    Effect.gen(function* () {
-      yield* SqlClient.SqlClient;
-    }).pipe(Effect.provide(channelLayer(channelRoot))),
-  );
-}
-
 export function seedCollection(
   channelRoot: string,
   collection: { id: string; title: string },
@@ -125,19 +149,6 @@ export function seedRejection(
       yield* sql`INSERT INTO rejections (collection_id, gate, rejected_at) VALUES (${fact.collectionId}, ${fact.gate}, ${fact.rejectedAt})`;
     }).pipe(Effect.provide(channelLayer(channelRoot))),
   );
-}
-
-/** プロセスが書いた事実を、実装に依存せず読み出す（読み取り専用）。 */
-export function readRows(
-  databasePath: string,
-  table: "approvals" | "collections" | "rejections" | "thumbnails",
-): Record<string, unknown>[] {
-  const database = new DatabaseSync(databasePath, { readOnly: true });
-  try {
-    return database.prepare(`SELECT * FROM ${table}`).all();
-  } finally {
-    database.close();
-  }
 }
 
 type Decoder = Parameters<typeof Schema.decodeUnknownResult>[0];

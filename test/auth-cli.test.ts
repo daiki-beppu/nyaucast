@@ -4,20 +4,21 @@ import { join } from "node:path";
 import { NodeServices } from "@effect/platform-node";
 import { assert, describe, expect, it, vi } from "@effect/vitest";
 import { Effect, Layer } from "effect";
-import { CliError, Command } from "effect/cli";
+import { CliError } from "effect/cli";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { TestClock, TestConsole } from "effect/testing";
 
 import { ChannelAccounts } from "../src/auth/accounts.ts";
-import { authCommand } from "../src/auth/cli.ts";
 import { CredentialStore } from "../src/auth/credential-store.ts";
 import { StaticSecrets } from "../src/auth/secrets.ts";
+import { nyaucastCli } from "../src/cli.ts";
 import { YouTubeAuth } from "../src/youtube/auth.ts";
 import {
   environment,
   failureFacts,
   fakeSpawner,
   temporaryDirectory,
+  unusedLocalStoreLayer,
   writeJsonFile,
 } from "./helpers.ts";
 
@@ -96,13 +97,15 @@ function runAuth(
     const logsBefore = (yield* TestConsole.logLines).length;
     const errorsBefore = (yield* TestConsole.errorLines).length;
     const outcome = yield* Effect.result(
-      Command.runWith(authCommand, { version: "test" })(arguments_),
+      nyaucastCli({ auth: layer, localStore: unusedLocalStoreLayer, mcpServer: Layer.empty })([
+        "auth",
+        ...arguments_,
+      ]),
     );
     const logs = (yield* TestConsole.logLines).slice(logsBefore).map(String);
     const errors = (yield* TestConsole.errorLines).slice(errorsBefore).map(String);
     return { authorize, errors, logs, outcome, spawned: spawner.calls };
   }).pipe(
-    Effect.provide(layer),
     Effect.provide(NodeServices.layer),
     Effect.provide(environment(options.env ?? secretEnvironment)),
     Effect.provide(TestConsole.layer),
@@ -258,6 +261,8 @@ describe("nyaucast auth <channel> <platform>", () => {
           const { authorize, errors, logs, outcome } = yield* runAuth(paths, arguments_);
 
           assert.isTrue(CliError.isCliError(failureOf(outcome)));
+          // effect/cli は使い方を stdout、エラーを stderr に出す。エラーが stderr に出ていることも確かめる。
+          assert.isAbove(errors.length, 0);
           const output = [...logs, ...errors].join("\n");
           assert.include(output, shows);
           assert.notMatch(output, /\n\s+at /u);
