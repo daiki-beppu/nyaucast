@@ -59,7 +59,7 @@ ADR-0007 で workflow tool を廃止したため、区間を歩く手順を持�
 
 ## Related
 
-- ADR-0001（thin architecture）/ ADR-0003（Node 配布と pnpm）/ ADR-0006（takt を製品の orchestration に採らない）/ ADR-0007（codec を読んだ agent が区間を歩く）/ ADR-0009（解説動画と 4 SNS 配信）/ ADR-0011（配布モデル。リポの公開を決めた）
+- ADR-0001（thin architecture）/ ADR-0003（Node 配布と pnpm）/ ADR-0006（takt を製品の orchestration に採らない）/ ADR-0007（codec を読んだ agent が区間を歩く）/ ADR-0009（解説動画と 3 SNS 配信）/ ADR-0011（配布モデル。リポの公開を決めた）
 - issue #471「knowledge codec の置き場と下流への配り方」（地図 #457 の決定 ticket）
 - issue #587「リポ公開に合わせて ADR-0010 の private 前提を改める」（地図 #574 の決定 ticket）
 - 旧 issue #20（codec の配布・更新方式の確定）/ #13（v0.1 codec の範囲と深さ）/ #401（collection-lifecycle codec の執筆と配布整備）— 材料

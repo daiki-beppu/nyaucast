@@ -53,7 +53,7 @@ map #353「開発基盤スクラップアンドビルド」で **bun の完全�
 - `pnpm-lock.yaml` は GitHub dependency graph が実依存を読める単一 YAML document を維持する
 - 消費者は JS（dist）を受け取るため、`engines.node` は type stripping の版制約から自由になる
 - dist ビルドの破綻は `prepack` が publish 前に検出する — 「静かに進行する事故」にはならない
-- **本改訂は実装に先行する**（スクラップアンドビルド前提）。改訂時点の実装（Bun 委譲 bin ランチャ・`bun run check`・flake 供給・npm 例外を使う統合テスト）は旧決定のままであり、後続の実装 issue 列（#369〜#373）が本改訂へ追従する。乖離は意図した過渡状態であって黙認ではない
+- 改訂時点の実装（Bun 委譲 bin ランチャ・`bun run check`・flake 供給・npm 例外を使う統合テスト）は、後続の実装 issue 列（#369〜#373）で本改訂へ追従済み
 - Stryker は監査ツールであり check の直列チェーンに入れない。運用の正書は `docs/agents/mutation-audit.md`
 - 用語の正書は CONTEXT.md — 「Node 互換表面」「mutation testing」「改変拒否契約テスト」
 - Trusted Publisher は stage publish のみを許可し（Allow npm publish なし）、パッケージ設定は 2FA 必須・bypass 2FA token 禁止とする。CI 単独では公開できず、長期 token も存在しない（#448）
@@ -62,6 +62,6 @@ map #353「開発基盤スクラップアンドビルド」で **bun の完全�
 ## Related
 
 - ADR-0001（runtime は Node / 境界で変換）/ CONTEXT.md「nyaucast」「first-party (下流)」「external user」「Node 互換表面」「mutation testing」「改変拒否契約テスト」
-- wayfinder map #353「開発基盤スクラップアンドビルド」とその ticket #354（ツールチェーン供給 — Node 版管理の出所）/ #363（bun 撤去の範囲と後継 — 決定 1〜5 改訂の出所）/ #364（Node type stripping 実測。findings: `docs/research/node-type-stripping.md`）/ #365（pnpm 事実調査。findings: `docs/research/pnpm-toolchain.md`）/ #362（Vite+ 実態調査。findings: `docs/research/vite-plus.md`）
+- wayfinder map #353「開発基盤スクラップアンドビルド」とその ticket #354（ツールチェーン供給 — Node 版管理の出所）/ #363（bun 撤去の範囲と後継 — 決定 1〜5 改訂の出所）/ #364（Node type stripping 実測）/ #365（pnpm 事実調査）/ #362（Vite+ 実態調査）。findings は各 issue の解決コメントにある
 - wayfinder map #343「Stryker mutation testing 導入」（2026-08-25 改訂の出所。#345 / #349 / #351）
 - issue #368（本改訂の docs 先行反映）/ `docs/agents/mutation-audit.md`（mutation 監査の運用）
