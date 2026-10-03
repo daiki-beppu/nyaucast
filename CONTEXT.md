@@ -44,11 +44,11 @@ _Avoid_: BYO アプリ
 ## アーキテクチャ
 
 **MCP tool**:
-nyaucast が expose する型付き操作。agent (Claude Code / Codex 等) が直接呼ぶ第一級インターフェース。primitive tool (細粒度) 1 層と、local store への読み口で構成される (ADR-0007)。設計ベンチマーク: [html2pptx.app](https://html2pptx.app/) の Skill + MCP tool + REST 3 層。ドット表記 (`benchmark.collect`) が正書。MCP protocol 上の wire 名はドットをアンダースコアへ機械変換した `benchmark_collect` 形式（Claude API の tool 名制約 `^[a-zA-Z0-9_-]{1,64}$` にドットが含まれないため）。
+nyaucast が expose する型付き操作。agent (Claude Code / Codex 等) が直接呼ぶ第一級インターフェース。primitive tool (細粒度) 1 層と、local store への読み口で構成される (ADR-0007)。設計ベンチマーク: [html2pptx.app](https://html2pptx.app/) の Skill + MCP tool + REST 3 層。ドット表記 (`video.generateThumbnails`) が正書で、実装ファイル名もこの形 (`src/tools/<domain>.<name>.ts`)。MCP protocol 上の wire 名はドットをアンダースコアへ、camelCase を snake_case へ変換した `video_generate_thumbnails` 形式（Claude API の tool 名制約 `^[a-zA-Z0-9_-]{1,64}$` にドットが含まれないため）。
 _Avoid_: API endpoint, command (MCP tool は MCP protocol で expose される typed operation)、wire 名にドットを使うこと
 
 **primitive tool**:
-単一操作を行う細粒度の MCP tool。`audio.master` / `thumbnail.generate` / `benchmark.collect` 等。knowledge codec を読んだ agent がこれを順に呼んで collection lifecycle を進める。関門は各 tool の事前条件が持ち、すべての tool が冪等 (実体があれば作らず返す) + 明示的な再生成手段を備える (ADR-0007)。
+単一操作を行う細粒度の MCP tool。`plan.init` / `explainer.writePlan` / `video.generateThumbnails` 等。knowledge codec を読んだ agent がこれを順に呼んで動画の lifecycle を進める。関門は各 tool の事前条件が持ち、すべての tool が冪等 (実体があれば作らず返す) + 明示的な再生成手段を備える (ADR-0007)。
 _Avoid_: workflow tool (粗粒度の MCP tool を置く設計は ADR-0007 で廃止した。区間を歩くのは codec を読んだ agent であり、tool ではない)
 
 **ゲート承認**:
@@ -64,7 +64,7 @@ core の MCP tool を各プロトコルへ橋渡しする薄いラッパ。MCP a
 _Avoid_: thin client, thin wrapper (同一概念。canonical は adapter)
 
 **tracer**:
-アーキテクチャ規約 (ADR-0001) を確定させるために最初に end-to-end で通す垂直スライス。plan 区間（benchmark 収集 → local store 書き込み → read model クエリ → 企画出力）が該当 — データ 4 分類と read model の設計を最初に実地検証できるため。
+アーキテクチャ規約 (ADR-0001) を確定させるために最初に end-to-end で通す垂直スライス。collection の plan 区間（`plan.init` で collection を作り local store に書く → `plan.checkTitle` → `collection.status` で read model を読む）が該当 — データ 4 分類と read model の設計を最初に実地検証できるため。
 _Avoid_: PoC (PoC は撤退判定用の別物)
 
 ## 設定・データ形式
@@ -94,7 +94,7 @@ _Avoid_: キャッシュ (③ と混同する)、SSOT (read model は読み口�
 ## テスト・品質検証
 
 **改変拒否契約テスト**:
-リポジトリ設定・workflow 定義・配布契約などの改変を検知して拒否する契約テスト層。`src` を import せず、node を被検体（子プロセスとして起動される対象）として検証する。過去の `docs/audits/` 文書ではこれを「mutation test」と呼んでいたが、今後この意味では使わない（過去文書は書き換えない）。
+リポジトリ設定・workflow 定義・配布契約・CLI の外形などの改変を検知して拒否する契約テスト層で、`test/` に置く（contract project）。配布物の起動は node を子プロセスとして検証し、CLI は `src` を import して in-process で実行してよい（#561 以降）。過去の `docs/audits/` 文書ではこれを「mutation test」と呼んでいたが、今後この意味では使わない（過去文書は書き換えない）。
 _Avoid_: mutation test (Stryker の mutation testing と衝突する旧称)
 
 **mutation testing**:
@@ -127,7 +127,7 @@ collection 内の個別トラックをクロスフェード結合した最終音
 ## マルチチャンネル運用
 
 **channel registry**:
-運営者が所有する全 first-party チャンネルリポのパス一覧。`~/.config/nyaucast/channels.json` に JSON 配列で格納する。各エントリはチャンネルリポの絶対パスのみを持ち、表示名等のメタデータは各リポの `config/channel/meta.json` から動的に解決する（二重管理の回避）。
+運営者が所有する全 first-party チャンネルリポのパス一覧。`~/.config/nyaucast/channels.json` に JSON 配列で格納する。各エントリはチャンネルリポの絶対パスのみを持つ。CLI の `<channel>` 引数が指すチャンネル名は、このパスのディレクトリ名（basename）とする。
 _Avoid_: channel list, channel config (config は `config/channel/*.json` のこと)
 
 **channel bootstrap**:

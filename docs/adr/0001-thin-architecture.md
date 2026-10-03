@@ -22,11 +22,11 @@ accepted (2026-07-08) / 改訂 2026-08-27（#387。tracer 実装でディレク�
 8. **tracer で確定した配置と schema**:
    - tool は `src/tools/<domain>.<name>.ts`、tool 単体テストは同層の `<domain>.<name>.test.ts`
    - collection 成果物は channel root 直下の `collections/<collection_id>/` にフラット配置する
-   - local store は `<CHANNEL_DIR>/data/local.db`。`collections` は `id` / `title`、produce 区間の成果物実体行は `thumbnails(collection_id, path, created_at)`、ゲート事実は append-only の `approvals(collection_id, gate, approved_at)` / `rejections(collection_id, gate, rejected_at)` に保存する。進捗列は持たない。解説動画のゲート事実は、同形の append-only な表を解説動画専用に別に持つ（ADR-0009 決定 7。表名は実装 ticket で決める）
+   - local store は `<CHANNEL_DIR>/data/local.db`。`collections` は `id` / `title`、produce 区間の成果物実体行は `thumbnails(collection_id, path, created_at)`、ゲート事実は append-only の `approvals(collection_id, gate, approved_at)` / `rejections(collection_id, gate, rejected_at)` に保存する。進捗列は持たない。解説動画のゲート事実は、同形の append-only な表を解説動画専用に別に持つ（ADR-0009 決定 7）。表は `explainer_videos` / `explainer_plans` / `explainer_approvals` / `explainer_rejections`、サムネイルの候補・除外・選択は `explainer_thumbnail_candidates` / `explainer_thumbnail_exclusions` / `explainer_thumbnail_selections`
    - channel registry は `~/.config/nyaucast/channels.json` の絶対パス文字列の JSON 配列とする
 9. **Effect の組み立て方**（2026-10-02 / #475）:
    - service は `Context.Service` で定義し、static な `layer` で提供する。Layer を組むのは entry point の 1 か所だけで、`NodeRuntime.runMain` を呼ぶのもそこだけにする。tool と core は `run*` を呼ばない
-   - MCP tool は `effect/ai` の `Tool.make` で定義し、`Toolkit.make` に並べた引数を tool 一覧とする（決定 2 の registry を置かない形は、これで保つ）。MCP の stdio サーバーは `effect/ai` の `McpServer`、CLI は `effect/cli`、外部への HTTP は `effect/http` の `HttpClient` で書く。公式 MCP SDK、自前の引数解析、素の `fetch` は使わない
+   - MCP tool は `effect/ai` の `Tool.make` で定義し、`Toolkit.make` に並べた引数を tool 一覧とする（決定 2 の registry を置かない形は、これで保つ）。MCP の stdio サーバーは `effect/ai` の `McpServer`、CLI は `effect/cli`、外部への HTTP は `effect/http` の `HttpClient` で書く。公式 MCP SDK、自前の引数解析、素の `fetch` は使わない。例外として、YouTube の OAuth（認可コードの交換とトークンの更新）は公式の `google-auth-library` の `OAuth2Client` に任せ、その通信は `HttpClient` を通らない（改訂 2026-10-04。実装に合わせて明文化）
    - tool 名は MCP に出る名前で書く（`plan_init` の形。Claude API の tool 名はドットを許さない）。入力は strict にして、未知のキーを拒否する
    - `effect` と `@effect/*` は exact pin にする。unstable と表示されたモジュール（ai / cli / http / sql）の破壊的変更は、pin を上げる差分の中で受け止める
    - テストは `@effect/vitest` で書く（vite-plus 1.0 が同梱する vitest 5 で動く）。現在時刻は `Clock` から取り、テストでは `TestClock` で進める
@@ -50,7 +50,7 @@ accepted (2026-07-08) / 改訂 2026-08-27（#387。tracer 実装でディレク�
 
 ## Consequences
 
-- tracer（plan 区間）は本規約の最初の適用対象となり、決定 8 の配置と schema を確定した
+- tracer（plan 区間。`plan.init` / `plan.checkTitle` / `collection.status`）は本規約の最初の適用対象となり、決定 8 の配置と schema を確定した
 - ~~takt 運用は組み込み default workflow を素のまま使う。レビュー終了条件（仕様引用必須 / ラウンド上限）は予防的に導入せず、レビューが 3 ラウンドを超える再発を観測したら実データを根拠に別 ADR で導入する（旧 ADR-0021 の決定）~~
   → **ADR-0008 で置き換え**（2026-07-26）。nyaucast 専用 workflow を採用し、設計ゲート（fix では診断ゲート）・ADR 整合検査・レビュー ⇄ 修正ループ上限 3 回（CI 待機・レビュー待機のような待機ループは別枠の閾値）を構造として持つ。本項の「予防的に導入しない」は、無人完走を目標に据えた時点で前提が変わったため覆した。経緯は ADR-0008 を参照。
   → さらに ADR-0008 は 2026-08-26（#368）に「builtin 直用。nyaucast 固有の workflow 資産を持たない」へ主旨転換した。専用 workflow と独自ゲートは全廃され、品質装置は takt builtin が持つ。

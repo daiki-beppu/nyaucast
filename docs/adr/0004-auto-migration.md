@@ -14,7 +14,7 @@ local store はチャンネルリポごとの `<CHANNEL_DIR>/data/local.db`（li
 
 1. **nyaucast が DB を開くとき、未適用マイグレーションを自動適用する**（`effect/sql` の Migrator。改訂 2026-10-02 / #475。旧: drizzle-orm の `migrate()`）。明示的な migrate コマンドを前提工程にしない
 2. **マイグレーションは additive（追加的）を原則とする**。カラム削除・型変更・テーブル再構築などの破壊的変更は ADR 級の判断として個別に文書化する
-3. **適用前に DB ファイルをコピーバックアップする**（`local.db.bak-<version>` 形式）。embedded ファイル DB のため `cp` 一発で完全バックアップになる
+3. **適用前に DB ファイルをコピーバックアップする**（`local.db.bak-<最新マイグレーションの id>` 形式。未適用のマイグレーションがあるときだけ取る）。embedded ファイル DB のため `cp` 一発で完全バックアップになる
 4. **マイグレーションは手で書き、git 管理して npm パッケージに同梱する**（改訂 2026-10-02 / #475。旧: `drizzle-kit generate` で生成し、schema 定義を `src/db/schema.ts` に集約）。1 本は `<id>_<name>` の名前を持ち、SQL を実行する Effect として書く。表の行の型は、読み書きする側が Effect Schema で検証する
 
 ## Why

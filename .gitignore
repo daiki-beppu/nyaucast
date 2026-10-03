@@ -1,5 +1,4 @@
 node_modules/
-.vite-hooks/_/
 .worktrees/
 .claude/worktrees/
 .direnv/
