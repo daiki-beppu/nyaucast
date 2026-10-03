@@ -1,5 +1,4 @@
-import { Effect } from "effect";
-import { SqlClient } from "effect/sql";
+import { appendOnlyTriggers, applyStatements } from "./append-only.ts";
 
 // 解説動画の表。collection の表と同じく、事実は積むだけで進捗の列は持たない。
 const gateFactTable = (table: string, timeColumn: string) =>
@@ -10,15 +9,6 @@ const gateFactTable = (table: string, timeColumn: string) =>
 	FOREIGN KEY (\`video_id\`) REFERENCES \`explainer_videos\`(\`id\`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "${table}_gate" CHECK("${table}"."gate" IN ('produce', 'publish'))
 )`;
-
-const appendOnlyTriggers = (table: string) =>
-  ["UPDATE", "DELETE"].map(
-    (operation) => `CREATE TRIGGER \`${table}_no_${operation.toLowerCase()}\`
-BEFORE ${operation} ON \`${table}\`
-BEGIN
-	SELECT RAISE(ABORT, '${table} are append-only');
-END`,
-  );
 
 const tables = [
   "explainer_videos",
@@ -48,9 +38,4 @@ const statements = [
   ...tables.flatMap(appendOnlyTriggers),
 ];
 
-export default Effect.gen(function* () {
-  const sql = yield* SqlClient.SqlClient;
-  yield* sql.withTransaction(
-    Effect.forEach(statements, (statement) => sql.unsafe(statement), { discard: true }),
-  );
-});
+export default applyStatements(statements);

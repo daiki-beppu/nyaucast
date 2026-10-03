@@ -10,6 +10,12 @@ import {
   withVideoChannel,
 } from "../../test/explainer-helpers.ts";
 import { accepts, publishedAdditionalProperties, setClock } from "../../test/helpers.ts";
+import {
+  insertCandidate,
+  insertExclusion,
+  insertSelection,
+  smallKeyOf,
+} from "../../test/thumbnail-facts.ts";
 import { explainerWritePlan } from "./explainer.writePlan.ts";
 import { VideoStatusTool, videoStatus } from "./video.status.ts";
 
@@ -52,6 +58,7 @@ describe("video.status: parameters and result", () => {
         title: "T",
         updatedAt: noon,
       },
+      thumbnails: { candidates: [], exclusions: [] },
       videoId: "V1",
     };
 
@@ -61,8 +68,39 @@ describe("video.status: parameters and result", () => {
       { ...status, next: "approve" },
       { ...status, command: "video approve" },
       { ...status, plan: { ...status.plan, next: "approve" } },
+      { ...status, thumbnails: { ...status.thumbnails, next: "select" } },
     ]) {
       assert.isFalse(accepts(VideoStatusTool.successSchema, outputWithAction));
+    }
+  });
+
+  it("accepts a status with candidates, exclusions and a selection, and rejects action fields in them", () => {
+    const at = "2026-10-03T12:00:00.000Z";
+    const candidate = {
+      createdAt: at,
+      key: "videos/V1/thumbnails/1-1.jpg",
+      number: 1,
+      origin: "generated",
+      round: 1,
+      smallKey: "videos/V1/thumbnails/1-1.small.jpg",
+    };
+    const exclusion = { excludedAt: at, number: 1, reason: "typo", round: 1 };
+    const selection = { key: candidate.key, number: 1, round: 1, selectedAt: at };
+    const status = {
+      abandoned: false,
+      plan: { hitPattern: "shock", points: [], sources: [], title: "T", updatedAt: at },
+      thumbnails: { candidates: [candidate], exclusions: [exclusion], selection },
+      videoId: "V1",
+    };
+    const withThumbnails = (thumbnails: unknown) => ({ ...status, thumbnails });
+
+    assert.isTrue(accepts(VideoStatusTool.successSchema, status));
+    for (const thumbnails of [
+      { ...status.thumbnails, candidates: [{ ...candidate, next: "exclude" }] },
+      { ...status.thumbnails, exclusions: [{ ...exclusion, next: "select" }] },
+      { ...status.thumbnails, selection: { ...selection, command: "video produce" } },
+    ]) {
+      assert.isFalse(accepts(VideoStatusTool.successSchema, withThumbnails(thumbnails)));
     }
   });
 });
@@ -81,6 +119,7 @@ describe("video.status: reading a video", () => {
         assert.deepStrictEqual(status, {
           abandoned: false,
           plan: written.plan,
+          thumbnails: { candidates: [], exclusions: [] },
           videoId: written.videoId,
         });
       }),
@@ -221,6 +260,193 @@ describe("video.status: channel kind", () => {
         const failure = yield* Effect.flip(videoStatus({ videoId: "V1" }));
 
         assert.strictEqual(failure._tag, "InvalidChannelConfig");
+      }),
+    ),
+  );
+});
+
+describe("video.status: thumbnails", () => {
+  const at = (hour: number) => `2026-10-03T${String(hour).padStart(2, "0")}:00:00.000Z`;
+
+  it.effect("returns every candidate with its keys, origin and time, and every exclusion", () =>
+    withVideoChannel("nyaucast-video-status-thumbnails-", explainerConfig, () =>
+      Effect.gen(function* () {
+        yield* setClock(noon);
+        const written = yield* explainerWritePlan(planInput());
+        const keyOne = yield* insertCandidate({
+          createdAt: at(13),
+          number: 1,
+          round: 1,
+          videoId: written.videoId,
+        });
+        yield* insertCandidate({
+          createdAt: at(13),
+          number: 2,
+          round: 1,
+          videoId: written.videoId,
+        });
+        const keyFile = yield* insertCandidate({
+          createdAt: at(15),
+          number: 1,
+          origin: "file",
+          round: 2,
+          videoId: written.videoId,
+        });
+        yield* insertExclusion({
+          excludedAt: at(14),
+          number: 2,
+          reason: "文字が読めない",
+          round: 1,
+          videoId: written.videoId,
+        });
+
+        const status = yield* videoStatus({ videoId: written.videoId });
+
+        assert.deepStrictEqual(status.thumbnails.candidates, [
+          {
+            createdAt: at(13),
+            key: keyOne,
+            number: 1,
+            origin: "generated",
+            round: 1,
+            smallKey: smallKeyOf(keyOne),
+          },
+          {
+            createdAt: at(13),
+            key: "videos/V1/thumbnails/1-2.jpg",
+            number: 2,
+            origin: "generated",
+            round: 1,
+            smallKey: "videos/V1/thumbnails/1-2.small.jpg",
+          },
+          {
+            createdAt: at(15),
+            key: keyFile,
+            number: 1,
+            origin: "file",
+            round: 2,
+            smallKey: smallKeyOf(keyFile),
+          },
+        ]);
+        assert.deepStrictEqual(status.thumbnails.exclusions, [
+          { excludedAt: at(14), number: 2, reason: "文字が読めない", round: 1 },
+        ]);
+        assert.isUndefined(status.thumbnails.selection);
+      }),
+    ),
+  );
+
+  it.effect("keeps an excluded candidate in the candidates", () =>
+    withVideoChannel("nyaucast-video-status-excluded-", explainerConfig, () =>
+      Effect.gen(function* () {
+        yield* setClock(noon);
+        const written = yield* explainerWritePlan(planInput());
+        yield* insertCandidate({ number: 1, round: 1, videoId: written.videoId });
+        yield* insertExclusion({
+          excludedAt: at(14),
+          number: 1,
+          reason: "x",
+          round: 1,
+          videoId: written.videoId,
+        });
+
+        const status = yield* videoStatus({ videoId: written.videoId });
+
+        assert.strictEqual(status.thumbnails.candidates.length, 1);
+        assert.strictEqual(status.thumbnails.exclusions.length, 1);
+      }),
+    ),
+  );
+
+  it.effect("returns the last selection, with the key of the candidate it points at", () =>
+    withVideoChannel("nyaucast-video-status-selection-", explainerConfig, () =>
+      Effect.gen(function* () {
+        yield* setClock(noon);
+        const written = yield* explainerWritePlan(planInput());
+        yield* insertCandidate({ number: 1, round: 1, videoId: written.videoId });
+        const keyTwo = yield* insertCandidate({ number: 2, round: 1, videoId: written.videoId });
+        yield* insertSelection({
+          number: 1,
+          round: 1,
+          selectedAt: at(13),
+          videoId: written.videoId,
+        });
+        yield* insertSelection({
+          number: 2,
+          round: 1,
+          selectedAt: at(14),
+          videoId: written.videoId,
+        });
+
+        const status = yield* videoStatus({ videoId: written.videoId });
+
+        assert.deepStrictEqual(status.thumbnails.selection, {
+          key: keyTwo,
+          number: 2,
+          round: 1,
+          selectedAt: at(14),
+        });
+      }),
+    ),
+  );
+
+  it.effect("returns the later selection even when it points at a candidate chosen before", () =>
+    withVideoChannel("nyaucast-video-status-reselected-", explainerConfig, () =>
+      Effect.gen(function* () {
+        yield* setClock(noon);
+        const written = yield* explainerWritePlan(planInput());
+        const keyOne = yield* insertCandidate({ number: 1, round: 1, videoId: written.videoId });
+        yield* insertCandidate({ number: 2, round: 1, videoId: written.videoId });
+        yield* insertSelection({
+          number: 1,
+          round: 1,
+          selectedAt: at(13),
+          videoId: written.videoId,
+        });
+        yield* insertSelection({
+          number: 2,
+          round: 1,
+          selectedAt: at(14),
+          videoId: written.videoId,
+        });
+        yield* insertSelection({
+          number: 1,
+          round: 1,
+          selectedAt: at(15),
+          videoId: written.videoId,
+        });
+
+        const status = yield* videoStatus({ videoId: written.videoId });
+
+        assert.deepStrictEqual(status.thumbnails.selection, {
+          key: keyOne,
+          number: 1,
+          round: 1,
+          selectedAt: at(15),
+        });
+      }),
+    ),
+  );
+
+  it.effect("does not return another video's candidates, exclusions or selection", () =>
+    withVideoChannel("nyaucast-video-status-thumbnails-other-", explainerConfig, () =>
+      Effect.gen(function* () {
+        yield* setClock(noon);
+        const first = yield* explainerWritePlan(planInput({ title: "First" }));
+        const other = yield* explainerWritePlan(planInput({ title: "Other" }));
+        yield* insertCandidate({ number: 1, round: 1, videoId: other.videoId });
+        yield* insertExclusion({
+          excludedAt: at(14),
+          number: 1,
+          reason: "x",
+          round: 1,
+          videoId: other.videoId,
+        });
+        yield* insertSelection({ number: 1, round: 1, selectedAt: at(15), videoId: other.videoId });
+
+        const status = yield* videoStatus({ videoId: first.videoId });
+
+        assert.deepStrictEqual(status.thumbnails, { candidates: [], exclusions: [] });
       }),
     ),
   );

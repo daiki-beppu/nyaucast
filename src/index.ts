@@ -17,14 +17,19 @@ import { CollectionDirectories } from "./collections/directories.ts";
 import { approveCollectionGate, rejectCollectionGate } from "./collections/gate-operations.ts";
 import type { Gate } from "./db/gates.ts";
 import { LocalStore } from "./db/local-store.ts";
+import { ThumbnailFiles } from "./thumbnails/thumbnail-files.ts";
 import { NyaucastToolHandlers, NyaucastToolkit } from "./mcp.ts";
 import { describeFailure } from "./failure-report.ts";
+import { videoCommand } from "./videos/cli.ts";
 import { VideoIds } from "./videos/video-ids.ts";
 import { YouTubeAuth } from "./youtube/auth.ts";
 
 const version = "0.0.2";
 const channelRoot = process.cwd();
 const localStore = LocalStore.layer(pathToFileURL(`${channelRoot}/data/local.db`).href);
+// ホームディレクトリは、ここで 1 回だけ解決して各 Layer に渡す。
+const configRoot = join(homedir(), ".config", "nyaucast");
+const thumbnailFiles = ThumbnailFiles.layer(channelRoot);
 
 function gateOperationMessage(
   collectionId: string,
@@ -79,6 +84,9 @@ const mcpHandlers = NyaucastToolHandlers.pipe(
   Layer.provide(CollectionIds.layer),
   Layer.provide(ChannelSettings.layer(channelRoot)),
   Layer.provide(VideoIds.layer),
+  Layer.provide(thumbnailFiles),
+  Layer.provide(StaticSecrets.layer({ configRoot })),
+  Layer.provide(NodeHttpClient.layerUndici),
   Layer.provide(localStore),
 );
 
@@ -95,8 +103,6 @@ const mcpServer = McpServer.toolkit(NyaucastToolkit).pipe(
 
 const mcp = Command.make("mcp", {}, () => Layer.launch(mcpServer));
 
-// ホームディレクトリは、ここで 1 回だけ解決して各 Layer に渡す。
-const configRoot = join(homedir(), ".config", "nyaucast");
 const credentialStore = CredentialStore.layer({ credentialRoot: join(configRoot, "credentials") });
 const authServices = Layer.mergeAll(
   ChannelAccounts.layer({ configRoot }),
@@ -114,6 +120,10 @@ const authServices = Layer.mergeAll(
 
 const auth = authCommand.pipe(Command.provide(authServices));
 
+const video = videoCommand.pipe(
+  Command.provide(Layer.mergeAll(localStore, ChannelSettings.layer(channelRoot), thumbnailFiles)),
+);
+
 // effect/cli の引数の誤りは、cli 自身が使い方とエラーを出力済み。二重に出さない。
 const reportFailure = (cause: Cause.Cause<unknown>) => {
   const failure = Cause.findFail(cause);
@@ -126,7 +136,7 @@ const reportFailure = (cause: Cause.Cause<unknown>) => {
 };
 
 Command.make("nyaucast").pipe(
-  Command.withSubcommands([collection, mcp, auth]),
+  Command.withSubcommands([collection, mcp, auth, video]),
   Command.run({ version }),
   Effect.tapCause(reportFailure),
   Effect.provide(NodeServices.layer),

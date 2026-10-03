@@ -15,10 +15,24 @@ export class NotExplainerChannel extends Schema.TaggedError<NotExplainerChannel>
   { kind: Schema.String },
 ) {}
 
+const PositiveInteger = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThan(0));
+
+// サムネイルの型。provider は必ず選ぶ（既定値なし）。この版で受けるのは gemini だけ。
+const ThumbnailType = Schema.Struct({
+  bannedWords: Schema.Array(Schema.String),
+  candidates: PositiveInteger.pipe(Schema.withDecodingDefaultKey(Effect.succeed(3))),
+  provider: Schema.Literal("gemini"),
+  referenceImages: Schema.Array(Schema.String),
+  style: Schema.String,
+  textInstructions: Schema.String,
+});
+export type ThumbnailType = typeof ThumbnailType.Type;
+
 const ExplainerSettings = Schema.Struct({
   genre: Schema.String,
   hitPatterns: Schema.Record(Schema.String, Schema.Struct({ description: Schema.String })),
   kind: Schema.Literal("explainer"),
+  thumbnail: Schema.optionalKey(ThumbnailType),
 });
 type ExplainerSettings = typeof ExplainerSettings.Type;
 

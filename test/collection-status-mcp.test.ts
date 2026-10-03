@@ -72,6 +72,8 @@ describe("collection status MCP tool", () => {
           "explainer_write_plan",
           "plan_check_title",
           "plan_init",
+          "video_exclude_thumbnail",
+          "video_generate_thumbnails",
           "video_status",
         ]);
 

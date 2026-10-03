@@ -4,10 +4,13 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { fileServices } from "./account-key.ts";
 
 // 失敗は、シークレットの名前だけを事実に持つ。参照（op://…）も値も持たない。
-class SecretNotConfigured extends Schema.TaggedError<SecretNotConfigured>()("SecretNotConfigured", {
-  name: Schema.String,
-}) {}
-class SecretResolutionFailed extends Schema.TaggedError<SecretResolutionFailed>()(
+export class SecretNotConfigured extends Schema.TaggedError<SecretNotConfigured>()(
+  "SecretNotConfigured",
+  {
+    name: Schema.String,
+  },
+) {}
+export class SecretResolutionFailed extends Schema.TaggedError<SecretResolutionFailed>()(
   "SecretResolutionFailed",
   { name: Schema.String },
 ) {}

@@ -172,6 +172,8 @@ describe("full migration to Effect 4.0", () => {
         "explainer.writePlan.ts",
         "plan.checkTitle.ts",
         "plan.init.ts",
+        "video.excludeThumbnail.ts",
+        "video.generateThumbnails.ts",
         "video.status.ts",
       ]);
     });
