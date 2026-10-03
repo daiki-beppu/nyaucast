@@ -13,6 +13,10 @@ import type { ThumbnailFiles } from "./thumbnails/thumbnail-files.ts";
 import { CollectionStatusTool, collectionStatus } from "./tools/collection.status.ts";
 import { PlanCheckTitleTool, planCheckTitle } from "./tools/plan.checkTitle.ts";
 import {
+  ExplainerFetchTopicCandidatesTool,
+  explainerFetchTopicCandidates,
+} from "./tools/explainer.fetchTopicCandidates.ts";
+import {
   ExplainerSynthesizeNarrationTool,
   explainerSynthesizeNarration,
 } from "./tools/explainer.synthesizeNarration.ts";
@@ -36,6 +40,7 @@ export const NyaucastToolkit = Toolkit.make(
   PlanInitTool,
   PlanCheckTitleTool,
   CollectionStatusTool,
+  ExplainerFetchTopicCandidatesTool,
   ExplainerWritePlanTool,
   ExplainerWriteScriptTool,
   ExplainerSynthesizeNarrationTool,
@@ -63,6 +68,8 @@ export const NyaucastToolHandlers = NyaucastToolkit.toLayer(
     >();
     return NyaucastToolkit.of({
       collection_status: (input) => collectionStatus(input).pipe(Effect.provideContext(context)),
+      explainer_fetch_topic_candidates: (input) =>
+        explainerFetchTopicCandidates(input).pipe(Effect.provideContext(context)),
       explainer_synthesize_narration: (input) =>
         explainerSynthesizeNarration(input).pipe(Effect.provideContext(context)),
       explainer_write_plan: (input) =>
