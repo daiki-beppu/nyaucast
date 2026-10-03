@@ -13,14 +13,14 @@ accepted (2026-07-08) / 改訂 2026-08-27（#387。tracer 実装でディレク�
 ## Decision
 
 1. **1 MCP tool = 実装 1 ファイル + テスト 1 ファイル**。tool 定義ファイルに入出力 schema・description・handler を同居させる。schema / service / index を別ファイルに分割しない
-2. **registry を置かない**。tool 一覧は entry point でのフラットな import 配列のみ。「登録」という工程を存在させない
+2. **registry を置かない**。tool 一覧は entry point でのフラットな import 配列のみ。「登録」という工程を存在させない。配列はチャンネルの種類ごとに 1 本ずつ持ち、起動したチャンネルの種類の配列だけを公開する（改訂 2026-10-04 / #487。ADR-0009 決定 7）
 3. **エラーは型付きの失敗として持ち、境界で変換する**（改訂 2026-10-02 / #475。旧: 内部 throw）。失敗は `Schema.TaggedError` で定義し、Effect の失敗のチャネルに載せる。MCP adapter が MCP のツールエラー（宣言した失敗）とパラメータ不正（-32602）へ、CLI adapter が exit code へ変換する。`Result` 型・`createService` フレーム・`toServiceError` を手で書くセレモニーは引き続き導入しない（失敗の型は Effect が持つ）。他の ADR や reference で「throw する」と書いた箇所は、「tool が型付きの失敗で終わる」と読む
 4. **adapter は MCP primary + CLI thin の 2 本**（CONTEXT.md「adapter」）。adapter に業務ロジックを書かない
 5. **runtime は Node、コードは Effect 4.0、schema は Effect Schema、DB は libSQL + `@effect/sql-libsql`**（runtime は 2026-08-26 / #368 で改訂 — 配布・開発の実行モデルは ADR-0003。Effect・schema・DB は 2026-10-02 / #475 で改訂 — 旧: zod / Drizzle。マイグレーションは ADR-0004）
 6. **旧リポから引き継ぐ決定**（本リポで再議論しない）: npm 配布（旧 ADR-0006）/ `nyaucast` ブランド（旧 ADR-0007）/ JSON-only config（旧 ADR-0009）/ libSQL local store（旧 ADR-0017）/ CONTEXT.md の全用語
 7. **本規約の確定は tracer（plan 区間）の end-to-end 完走をもって行う**。tracer 実装中に破綻した項目は本 ADR を改訂して直す（黙って逸脱しない）
 8. **tracer で確定した配置と schema**:
-   - tool は `src/tools/<domain>.<name>.ts`、tool 単体テストは同層の `<domain>.<name>.test.ts`
+   - tool は `src/tools/<種類>/<domain>.<name>.ts`、tool 単体テストは同層の `<domain>.<name>.test.ts`。種類は `explainer` / `collection` で、両方の種類で中身が同じ tool は `src/tools/` の直下に置く（改訂 2026-10-04 / #487。旧: `src/tools/<domain>.<name>.ts`）
    - collection 成果物は channel root 直下の `collections/<collection_id>/` にフラット配置する
    - local store は `<CHANNEL_DIR>/data/local.db`。`collections` は `id` / `title`、produce 区間の成果物実体行は `thumbnails(collection_id, path, created_at)`、ゲート事実は append-only の `approvals(collection_id, gate, approved_at)` / `rejections(collection_id, gate, rejected_at)` に保存する。進捗列は持たない。解説動画のゲート事実は、同形の append-only な表を解説動画専用に別に持つ（ADR-0009 決定 7）。表は `explainer_videos` / `explainer_plans` / `explainer_approvals` / `explainer_rejections`、サムネイルの候補・除外・選択は `explainer_thumbnail_candidates` / `explainer_thumbnail_exclusions` / `explainer_thumbnail_selections`
    - channel registry は `~/.config/nyaucast/channels.json` の絶対パス文字列の JSON 配列とする
