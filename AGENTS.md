@@ -12,7 +12,8 @@ YouTube チャンネル運営を自動化するツールキット。skill に蓄
 - パッケージマネージャは pnpm v12。`packageManager` フィールドの exact pin が SSOT。旧 pnpm からの自動切替は native binary の build と複数 document lockfile を発生させるため使わず、ローカルには pin 版を事前導入する。`pnpm-workspace.yaml` の `pmOnFail: ignore` は GitHub dependency graph が読める単一 document lockfile を維持するための明示設定。corepack は使わない
 - test / lint / format / 型検査は Vite+（npm パッケージ `vite-plus`、`vp` CLI）が一元管理する。同梱ツールは exact pin で、個別ツールを devDependencies に重複して置かない
 - **パッケージ操作は `vp install` を正とし（lockfile 検出で pnpm へ委譲）、vp が覆わない操作（任意 script 実行・pack 等）は pnpm を使う。npm / yarn / bun とそのラッパを使わない** — 例外条項なし（publish も pnpm）
-- **検査ゲートは `pnpm run check` の 1 コマンド**（最初に失敗したゲートで止まる）。CI も同じ script を呼ぶため、ここで通れば CI でも通る。git hook は置かないので、push 前に自分で実行する。GitHub Actions の workflow 定義は actionlint として check の中にある。ゲートが何本あり何を実行するかは `package.json` の `check` script だけが定義する — **このファイルを含め、どこにも書き写さない**
+- **検査ゲートは `pnpm run check` の 1 コマンド**（最初に失敗したゲートで止まる）。CI も同じ script を呼ぶため、ここで通れば CI でも通る。git hook は pre-commit の整形（`vp staged`）だけで、check は push 前に自分で実行する。GitHub Actions の workflow 定義は actionlint として check の中にある。ゲートが何本あり何を実行するかは `package.json` の `check` script だけが定義する — **このファイルを含め、どこにも書き写さない**
+- git hook の dispatcher（`.vite-hooks/_/`）は追跡しており、`core.hooksPath` は相対パス `.vite-hooks/_` なので、どの worktree でもその worktree の hook が動く。依存を install していない worktree では hook が `vite-plus` を見つけられずコミットが失敗するので、worktree を作ったら依存 install を実行する。`vp` の更新で dispatcher に差分が出たら、そのままコミットする
 
 ## アーキテクチャ（ADR-0001）
 
