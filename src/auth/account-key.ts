@@ -1,7 +1,7 @@
 import { Effect, FileSystem, Path, Schema } from "effect";
 
-/** 認証に対応する SNS。Instagram と X は後続の issue でここへ足す。 */
-export const platforms = ["youtube"] as const;
+/** 認証に対応する SNS。status の行はこの順に並ぶ。 */
+export const platforms = ["youtube", "instagram", "x"] as const;
 export type Platform = (typeof platforms)[number];
 
 // 失敗は、タグと事実だけを持つ。

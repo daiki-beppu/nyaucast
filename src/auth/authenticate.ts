@@ -1,5 +1,7 @@
 import { Effect, Schema } from "effect";
 
+import { InstagramAuth } from "../instagram/auth.ts";
+import { XAuth } from "../x/auth.ts";
 import { YouTubeAuth } from "../youtube/auth.ts";
 import type { Platform } from "./account-key.ts";
 import { ChannelAccounts } from "./accounts.ts";
@@ -15,6 +17,8 @@ class AccountMismatch extends Schema.TaggedError<AccountMismatch>()("AccountMism
 
 // SNS ごとに違うのは、トークンの取得と ID の問い合わせだけ。照合と保存は共通。
 const authorizers = {
+  instagram: (channel: string) => InstagramAuth.use((auth) => auth.authorize(channel)),
+  x: (channel: string) => XAuth.use((auth) => auth.authorize(channel)),
   youtube: (channel: string) => YouTubeAuth.use((auth) => auth.authorize(channel)),
 } satisfies Record<Platform, (channel: string) => unknown>;
 

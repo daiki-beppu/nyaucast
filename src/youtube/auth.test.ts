@@ -11,6 +11,7 @@ import type { Credentials } from "google-auth-library";
 import { failureFacts, setClock, temporaryDirectory } from "../../test/helpers.ts";
 import { CredentialStore } from "../auth/credential-store.ts";
 import { StaticSecrets } from "../auth/secrets.ts";
+import { deriveAuthState } from "../auth/status.ts";
 import { YouTubeAuth } from "./auth.ts";
 
 const channel = "deepfocus365";
@@ -400,6 +401,34 @@ describe("YouTube authentication", () => {
 
           assert.strictEqual(token, "EXISTING");
           assert.deepStrictEqual(readStored(root), newer);
+        }),
+    );
+
+    // 有効な access token が残っているだけの取得成功は、refresh token が使えることを示さない。
+    it.effect(
+      "keeps a recorded refresh failure when the SDK gives a token without changing the credentials",
+      () =>
+        Effect.gen(function* () {
+          const root = yield* temporaryDirectory("nyaucast-youtube-refresh-failed-kept-");
+          const path = seedCredential(
+            root,
+            envelope({ refreshFailedAt: Date.parse("2029-01-01T00:00:00.000Z") }),
+          );
+          const contentsBefore = readFileSync(path, "utf8");
+          const modifiedBefore = statSync(path).mtimeMs;
+          const oauthClient = createOAuthClientFake({});
+
+          const token = yield* Effect.gen(function* () {
+            return yield* (yield* YouTubeAuth).getAccessToken(channel);
+          }).pipe(provideAuth({ createOAuthClient: clientFor(oauthClient), credentialRoot: root }));
+
+          assert.strictEqual(token, accessToken);
+          assert.strictEqual(readFileSync(path, "utf8"), contentsBefore);
+          assert.strictEqual(statSync(path).mtimeMs, modifiedBefore);
+          assert.strictEqual(
+            deriveAuthState(readStored(root), "UC_A", Date.parse("2029-06-01T00:00:00.000Z")),
+            "refresh_failed",
+          );
         }),
     );
 
