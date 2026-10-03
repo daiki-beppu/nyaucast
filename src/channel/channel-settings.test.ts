@@ -68,7 +68,15 @@ describe("ChannelSettings: the thumbnail type", () => {
       }),
   );
 
-  it.effect.each(["codex", "openai", ""] as const)(
+  it.effect.each(["gemini", "codex"] as const)("accepts the provider %j", (provider) =>
+    Effect.gen(function* () {
+      const settings = yield* settingsOf(explainerConfigWith(thumbnailType({ provider })));
+
+      assert.strictEqual(settings.thumbnail?.provider, provider);
+    }),
+  );
+
+  it.effect.each(["openai", ""] as const)(
     "fails with InvalidChannelConfig for the provider %j, which this release does not accept",
     (provider) =>
       Effect.gen(function* () {
