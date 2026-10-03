@@ -13,7 +13,9 @@ const packageRoot = resolve(import.meta.dirname, "..");
 const toolNames = [
   "collection_status",
   "explainer_fetch_topic_candidates",
+  "explainer_synthesize_narration",
   "explainer_write_plan",
+  "explainer_write_script",
   "plan_check_title",
   "plan_init",
   "video_exclude_thumbnail",

@@ -1,5 +1,6 @@
 import { Context, Effect, FileSystem, Layer, Path, Schema } from "effect";
 
+import { atomicWriter } from "../files/atomic-write.ts";
 import { smallThumbnailKey } from "../db/explainer-thumbnails.ts";
 
 export class ReferenceImageNotFound extends Schema.TaggedError<ReferenceImageNotFound>()(
@@ -42,14 +43,7 @@ export class ThumbnailFiles extends Context.Service<
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
 
-        const writeAtomically = (key: string, bytes: Uint8Array) =>
-          Effect.gen(function* () {
-            const target = path.join(channelRoot, key);
-            const temporary = `${target}.tmp`;
-            yield* fileSystem.makeDirectory(path.dirname(target), { recursive: true });
-            yield* fileSystem.writeFile(temporary, bytes);
-            yield* fileSystem.rename(temporary, target);
-          });
+        const writeAtomically = yield* atomicWriter(channelRoot);
 
         const write = (key: string, files: { body: Uint8Array; small: Uint8Array }) =>
           Effect.all(

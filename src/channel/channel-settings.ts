@@ -32,6 +32,15 @@ export type ThumbnailType = typeof ThumbnailType.Type;
 
 // 題材を取るフィード（RSS / Atom）。省略した設定は、フィードを登録していないものとして扱う。
 const Feed = Schema.Struct({ name: Schema.String, url: HttpUrl });
+// ボイス（音声合成）。全チャンネル共有の既定値は持たず、すべての項目を宣言する。adapter は gemini の 1 本だけ。
+const Voice = Schema.Struct({
+  adapter: Schema.Literal("gemini"),
+  charactersPerSecond: Schema.Finite.check(Schema.isGreaterThan(0)),
+  directorNotes: Schema.String,
+  model: Schema.String,
+  name: Schema.String,
+});
+export type Voice = typeof Voice.Type;
 
 const ExplainerSettings = Schema.Struct({
   feeds: Schema.Array(Feed).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
@@ -39,6 +48,7 @@ const ExplainerSettings = Schema.Struct({
   hitPatterns: Schema.Record(Schema.String, Schema.Struct({ description: Schema.String })),
   kind: Schema.Literal("explainer"),
   thumbnail: Schema.optionalKey(ThumbnailType),
+  voice: Schema.optionalKey(Voice),
 });
 type ExplainerSettings = typeof ExplainerSettings.Type;
 
