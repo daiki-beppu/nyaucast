@@ -9,6 +9,7 @@ import { McpProtocol, McpServer } from "effect/ai";
 import { ChannelAccounts } from "./auth/accounts.ts";
 import { CredentialStore } from "./auth/credential-store.ts";
 import { StaticSecrets } from "./auth/secrets.ts";
+import { BgmPool } from "./channel/bgm-pool.ts";
 import { ChannelSettings } from "./channel/channel-settings.ts";
 import { CollectionIds } from "./collections/collection-ids.ts";
 import { CollectionDirectories } from "./collections/directories.ts";
@@ -31,6 +32,7 @@ const thumbnailFiles = ThumbnailFiles.layer(channelRoot);
 // MCP は stdout が JSON-RPC 専用。tool の handler と DB が整ってから stdio の server を起動する
 // （起動後すぐの tools/list が空にならないよう、tool の登録は server が読み始める前に終える）。
 const mcpHandlers = NyaucastToolHandlers.pipe(
+  Layer.provide(BgmPool.layer(channelRoot)),
   Layer.provide(CollectionDirectories.layer(channelRoot)),
   Layer.provide(CollectionIds.layer),
   Layer.provide(ChannelSettings.layer(channelRoot)),
