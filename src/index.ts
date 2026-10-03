@@ -1,10 +1,16 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { NodeRuntime, NodeServices, NodeStdio } from "@effect/platform-node";
+import { NodeHttpClient, NodeRuntime, NodeServices, NodeStdio } from "@effect/platform-node";
 import { Cause, Console, Effect, Layer, Logger, Result } from "effect";
 import { McpProtocol, McpServer } from "effect/ai";
 import { Argument, CliError, Command } from "effect/cli";
 
+import { ChannelAccounts } from "./auth/accounts.ts";
+import { authCommand } from "./auth/cli.ts";
+import { CredentialStore } from "./auth/credential-store.ts";
+import { StaticSecrets } from "./auth/secrets.ts";
 import { ChannelSettings } from "./channel/channel-settings.ts";
 import { CollectionIds } from "./collections/collection-ids.ts";
 import { CollectionDirectories } from "./collections/directories.ts";
@@ -89,11 +95,24 @@ const mcpServer = McpServer.toolkit(NyaucastToolkit).pipe(
 
 const mcp = Command.make("mcp", {}, () => Layer.launch(mcpServer));
 
-const auth = Command.make("auth", { channel: Argument.String("channel") }, ({ channel }) =>
-  YouTubeAuth.use((youtubeAuth) => youtubeAuth.authenticate(channel)).pipe(
-    Effect.provide(YouTubeAuth.layerProduction),
+// ホームディレクトリは、ここで 1 回だけ解決して各 Layer に渡す。
+const configRoot = join(homedir(), ".config", "nyaucast");
+const credentialStore = CredentialStore.layer({ credentialRoot: join(configRoot, "credentials") });
+const authServices = Layer.mergeAll(
+  ChannelAccounts.layer({ configRoot }),
+  credentialStore,
+  YouTubeAuth.layerProduction.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        credentialStore,
+        StaticSecrets.layer({ configRoot }),
+        NodeHttpClient.layerUndici,
+      ),
+    ),
   ),
 );
+
+const auth = authCommand.pipe(Command.provide(authServices));
 
 // effect/cli の引数の誤りは、cli 自身が使い方とエラーを出力済み。二重に出さない。
 const reportFailure = (cause: Cause.Cause<unknown>) => {

@@ -1,8 +1,15 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
+import { NodeServices } from "@effect/platform-node";
 import { assert, describe, expect, it, vi } from "@effect/vitest";
 import { Clock, Effect, Fiber, Layer, Schema } from "effect";
 import { HttpBody, HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 import { TestClock } from "effect/testing";
 
+import { temporaryDirectory } from "../../test/helpers.ts";
+import { CredentialStore } from "../auth/credential-store.ts";
+import { StaticSecrets } from "../auth/secrets.ts";
 import { YouTubeAuth } from "./auth.ts";
 import { YouTubeClient } from "./client.ts";
 
@@ -42,16 +49,9 @@ interface RecordedCall {
 }
 
 // 偽の YouTube: 呼ばれた順に記録し（時刻は Clock から。TestClock が進めた仮想時刻）、用意した応答を順に返す。
-function createFixture(responses: readonly Response[]) {
+function fakeYouTube(responses: readonly Response[]) {
   const pending = [...responses];
   const calls: RecordedCall[] = [];
-  const getAccessToken = vi.fn(() => Effect.succeed(accessToken));
-  const refreshAccessToken = vi.fn(() => Effect.succeed("REFRESHED_ACCESS_TOKEN"));
-  const auth = YouTubeAuth.of({
-    authenticate: () => Effect.void,
-    getAccessToken,
-    refreshAccessToken,
-  });
   const http = HttpClient.make((request, url) =>
     Effect.gen(function* () {
       calls.push({
@@ -73,11 +73,23 @@ function createFixture(responses: readonly Response[]) {
       return HttpClientResponse.fromWeb(request, response);
     }),
   );
+  return { calls, http: Layer.succeed(HttpClient.HttpClient, http) };
+}
+
+function createFixture(responses: readonly Response[]) {
+  const youtube = fakeYouTube(responses);
+  const getAccessToken = vi.fn(() => Effect.succeed(accessToken));
+  const refreshAccessToken = vi.fn(() => Effect.succeed("REFRESHED_ACCESS_TOKEN"));
+  const auth = YouTubeAuth.of({
+    authorize: () => Effect.die("authorize is not part of the request client"),
+    getAccessToken,
+    refreshAccessToken,
+  });
   const layer = YouTubeClient.layer.pipe(
     Layer.provide(Layer.succeed(YouTubeAuth, auth)),
-    Layer.provide(Layer.succeed(HttpClient.HttpClient, http)),
+    Layer.provide(youtube.http),
   );
-  return { calls, getAccessToken, layer, refreshAccessToken };
+  return { calls: youtube.calls, getAccessToken, layer, refreshAccessToken };
 }
 
 type Fixture = ReturnType<typeof createFixture>;
@@ -445,7 +457,7 @@ describe("YouTube REST client", () => {
     () =>
       Effect.gen(function* () {
         const auth = YouTubeAuth.of({
-          authenticate: () => Effect.void,
+          authorize: () => Effect.die("authorize is not part of the request client"),
           getAccessToken: () => Effect.succeed(accessToken),
           refreshAccessToken: () => Effect.succeed("unused"),
         });
@@ -476,4 +488,116 @@ describe("YouTube REST client", () => {
         assert.isFalse(failure.message.includes(accessToken));
       }),
   );
+
+  describe("with the real credential store", () => {
+    const channel = "deepfocus365";
+    const storedAccessToken = "STORED_ACCESS_TOKEN_SENTINEL";
+    const refreshedAccessToken = "REFRESHED_BY_SDK_SENTINEL";
+
+    // 本物の YouTubeAuth と CredentialStore を、一時ディレクトリの credentials/<channel>/youtube.json の上に組む。
+    // 外部は偽物: Google の OAuth（SDK）・静的なシークレットの解決・YouTube の HTTP。
+    function realAuthFixture(
+      credentialRoot: string,
+      responses: readonly Response[],
+      oauth: { refreshed?: string },
+    ) {
+      const youtube = fakeYouTube(responses);
+      let credentials: Record<string, unknown> = {};
+      const oauthClient = {
+        get credentials() {
+          return credentials;
+        },
+        set credentials(value: Record<string, unknown>) {
+          credentials = value;
+        },
+        getAccessToken: async () => ({ token: credentials["access_token"] as string }),
+        refreshAccessToken: async () => {
+          credentials = { access_token: oauth.refreshed, refresh_token: "REFRESH_TOKEN_SENTINEL" };
+          return { credentials };
+        },
+        setCredentials: (value: Record<string, unknown>) => {
+          credentials = value;
+        },
+      };
+      const auth = YouTubeAuth.layer({
+        authorize: (() => Effect.die("authorize is not part of the request client")) as never,
+        createOAuthClient: (() => oauthClient) as never,
+      }).pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            CredentialStore.layer({ credentialRoot }).pipe(Layer.provide(NodeServices.layer)),
+            Layer.succeed(
+              StaticSecrets,
+              StaticSecrets.of({ resolve: () => Effect.succeed("SECRET") }),
+            ),
+            youtube.http,
+          ),
+        ),
+      );
+      const layer = YouTubeClient.layer.pipe(Layer.provide(auth), Layer.provide(youtube.http));
+      return { calls: youtube.calls, layer };
+    }
+
+    function seedToken(credentialRoot: string) {
+      mkdirSync(join(credentialRoot, channel), { recursive: true });
+      writeFileSync(
+        join(credentialRoot, channel, "youtube.json"),
+        JSON.stringify({
+          accountId: "UC_A",
+          token: { access_token: storedAccessToken, refresh_token: "REFRESH_TOKEN_SENTINEL" },
+        }),
+        { mode: 0o600 },
+      );
+    }
+
+    const requestVideo = (layer: Layer.Layer<YouTubeClient>) =>
+      Effect.gen(function* () {
+        const client = yield* YouTubeClient;
+        const fiber = yield* Effect.forkChild(
+          Effect.result(
+            client.request({ channel, schema: responseSchema, url: `${videoUrl}?id=video-1` }),
+          ),
+        );
+        yield* TestClock.adjust("1 hour");
+        return yield* Fiber.join(fiber);
+      }).pipe(Effect.provide(layer));
+
+    it.effect("sends the access token saved under credentials/<channel>/youtube.json", () =>
+      Effect.gen(function* () {
+        const credentialRoot = yield* temporaryDirectory("nyaucast-client-real-store-");
+        seedToken(credentialRoot);
+        const fixture = realAuthFixture(credentialRoot, [jsonResponse(night)], {});
+
+        const result = yield* requestVideo(fixture.layer);
+
+        assert.deepStrictEqual(succeeded(result), night);
+        assert.deepStrictEqual(
+          fixture.calls.map((call) => call.authorization),
+          [`Bearer ${storedAccessToken}`],
+        );
+      }),
+    );
+
+    it.effect(
+      "retries an unauthorized response with the token refreshed through that same store",
+      () =>
+        Effect.gen(function* () {
+          const credentialRoot = yield* temporaryDirectory("nyaucast-client-real-store-refresh-");
+          seedToken(credentialRoot);
+          const fixture = realAuthFixture(
+            credentialRoot,
+            [googleError(401, ["authError"]), jsonResponse(night)],
+            { refreshed: refreshedAccessToken },
+          );
+
+          const result = yield* requestVideo(fixture.layer);
+
+          assert.deepStrictEqual(succeeded(result), night);
+          assert.deepStrictEqual(
+            fixture.calls.map((call) => call.authorization),
+            [`Bearer ${storedAccessToken}`, `Bearer ${refreshedAccessToken}`],
+          );
+        }),
+    );
+  });
 });
