@@ -2,6 +2,7 @@
   "name": "nyaucast",
   "version": "0.0.2",
   "description": "YouTube channel operations toolkit",
+  "license": "UNLICENSED",
   "repository": {
     "type": "git",
     "url": "https://github.com/daiki-beppu/nyaucast.git"
