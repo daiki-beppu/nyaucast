@@ -169,8 +169,10 @@ describe("full migration to Effect 4.0", () => {
       }
       assert.deepStrictEqual(definitions.toSorted(), [
         "collection.status.ts",
+        "explainer.writePlan.ts",
         "plan.checkTitle.ts",
         "plan.init.ts",
+        "video.status.ts",
       ]);
     });
   });

@@ -25,7 +25,10 @@
     "ignore": [
       "src/db/schema.ts",
       "src/db/gates.ts",
+      "src/channel/channel-settings.ts",
+      "src/tools/explainer.writePlan.ts",
       "src/tools/plan.init.ts",
+      "src/tools/video.status.ts",
       "test/helpers.ts",
       "test/package-smoke-support.ts",
       "test/fixtures/**"

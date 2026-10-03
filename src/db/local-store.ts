@@ -5,9 +5,10 @@ import { Effect, FileSystem, Layer, Path } from "effect";
 import { SqlClient } from "effect/sql";
 
 import initial from "./migrations/0001_initial.ts";
+import explainerVideos from "./migrations/0002_explainer_videos.ts";
 
 // <id>_<name> をキーにした手書きのマイグレーション。新しいものは id を増やして足す。
-const migrations = { "0001_initial": initial };
+const migrations = { "0001_initial": initial, "0002_explainer_videos": explainerVideos };
 
 const latestMigrationId = Math.max(
   ...Object.keys(migrations).map((name) => Number.parseInt(name, 10)),
