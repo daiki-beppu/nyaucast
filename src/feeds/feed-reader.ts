@@ -78,9 +78,9 @@ const resolveUrl = (raw: string, base: string): string | undefined => {
   return URL.canParse(raw, base) ? new URL(raw, base).href : undefined;
 };
 
-// 候補にできる URL は http(s) だけ。相対 URL はフィードの URL を基準に解決する。
-const absoluteHttpUrl = (raw: string | undefined, feedUrl: string): string | undefined => {
-  const resolved = raw && resolveUrl(raw, feedUrl);
+// 候補にできる URL は http(s) だけ。相対 URL は、フィードを実際に取った URL（転送の後）を基準に解決する。
+const absoluteHttpUrl = (raw: string | undefined, baseUrl: string): string | undefined => {
+  const resolved = raw && resolveUrl(raw, baseUrl);
   return resolved && /^https?:/iu.test(resolved) ? resolved : undefined;
 };
 
@@ -145,9 +145,13 @@ const rawItems = (document: Node): readonly RawItem[] | undefined => {
   return asArray(format.items(document[format.root])).map((item) => format.read(item));
 };
 
-const candidatesOf = (feed: Feed, items: readonly RawItem[]): readonly TopicCandidate[] =>
+const candidatesOf = (
+  feed: Feed,
+  baseUrl: string,
+  items: readonly RawItem[],
+): readonly TopicCandidate[] =>
   items.flatMap((item) => {
-    const url = absoluteHttpUrl(item.link, feed.url);
+    const url = absoluteHttpUrl(item.link, baseUrl);
     if (url === undefined) return [];
     const publishedAt = isoDate(item.publishedAt);
     return [
@@ -161,7 +165,10 @@ const candidatesOf = (feed: Feed, items: readonly RawItem[]): readonly TopicCand
     ];
   });
 
-const parseFeed = (feed: Feed, text: string): Result.Result<readonly TopicCandidate[], Failure> => {
+const parseFeed = (
+  feed: Feed,
+  { baseUrl, text }: FetchedFeed,
+): Result.Result<readonly TopicCandidate[], Failure> => {
   if (XMLValidator.validate(text) !== true) return Result.fail({ reason: "InvalidFeed" });
   // validate は DOCTYPE の中身を検査しない。外部実体の宣言などは parse が例外で拒否するので、ここで分類する。
   const document = Result.try({
@@ -172,19 +179,30 @@ const parseFeed = (feed: Feed, text: string): Result.Result<readonly TopicCandid
     const items = isNode(parsed) ? rawItems(parsed) : undefined;
     return items === undefined
       ? Result.fail<Failure>({ reason: "InvalidFeed" })
-      : Result.succeed(candidatesOf(feed, items));
+      : Result.succeed(candidatesOf(feed, baseUrl, items));
   });
 };
 
+// フィードの URL は http から https への転送や移転で 3xx を返すことが多いので、転送に従う。上限を超えたら最後の 3xx が残る。
+const maxRedirects = 5;
+
+interface FetchedFeed {
+  readonly baseUrl: string;
+  readonly text: string;
+}
+
 const fetchText = (http: HttpClient.HttpClient, feed: Feed) =>
   Effect.gen(function* () {
-    const response = yield* http
+    const response = yield* HttpClient.followRedirects(http, maxRedirects)
       .execute(HttpClientRequest.get(feed.url))
       .pipe(Effect.mapError((): Failure => ({ reason: "Unreachable" })));
     if (response.status < 200 || response.status >= 300) {
       return yield* Effect.fail<Failure>({ reason: "HttpStatus", status: response.status });
     }
-    return yield* response.text.pipe(Effect.mapError((): Failure => ({ reason: "Unreachable" })));
+    const text = yield* response.text.pipe(
+      Effect.mapError((): Failure => ({ reason: "Unreachable" })),
+    );
+    return { baseUrl: response.request.url, text } satisfies FetchedFeed;
   });
 
 const failedFeed = (feed: Feed, failure: Failure): FailedFeed => ({
@@ -210,7 +228,7 @@ export const readFeed = Effect.fn("feeds.readFeed")(function* (feed: Feed) {
         ? Result.succeed(timed.value)
         : Result.fail<Failure>({ reason: "Timeout" }),
     ),
-    (text) => parseFeed(feed, text),
+    (fetchedFeed) => parseFeed(feed, fetchedFeed),
   );
   return Result.match(parsed, {
     onFailure: (failure): FeedReading => ({ failed: failedFeed(feed, failure) }),
