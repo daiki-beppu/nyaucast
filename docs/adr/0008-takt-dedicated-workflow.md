@@ -10,7 +10,7 @@ accepted (2026-08-22。takt 0.59.0 で廃止された Finding Contract を revie
 
 旧 ADR は「builtin を基礎に、nyaucast 固有の開発ゲート（intake・設計 / 診断ゲート・独自 REQ 採番・spillover 起票・監査 2 本）だけを重ねる」構成を採り、自作 workflow 5 本（計 1,087 行）と `.takt/` の steps / facets / schemas を保守してきた。
 
-map #353 の再検討（#357 の実態調査 + #358 の決定）で前提が変わった。品質装置の本体 — 5 並列レビュー → review-adjudication → 検証付き remediation → final-gate、および test-first — は takt 0.60 の builtin がフル装備しており、nyaucast は既に builtin 呼び出しで使っていた。自作部分に固有なのは「規約の届け方」（facet 注入）だけだが、takt が起動する agent はリポジトリの `AGENTS.md`（= `CLAUDE.md` への symlink）を読むため、規約は facet 注入なしで全 agent に届く。また CLI から builtin の params を指定する手段は無く、facet 注入には最低 1 本の wrapper workflow が要るため「注入だけ残す」は全廃と両立しない。map #353 は「map 直読み intake の廃止・self-contained issue 起票を正とする」も決定しており（#287 vs #294 の実証）、intake ゲートの存在理由も消滅した。
+map #353 の再検討（#357 の実態調査 + #358 の決定）で前提が変わった。品質装置の本体 — 並列レビュー（当時は 5 本固定。takt 0.67 では固定 1 本 + 動的に選ぶ最大 6 本）→ review-adjudication → 検証付き remediation → final-gate、および test-first — は takt 0.60 の builtin がフル装備しており、nyaucast は既に builtin 呼び出しで使っていた。自作部分に固有なのは「規約の届け方」（facet 注入）だけだが、takt が起動する agent はリポジトリの `AGENTS.md` を読むため（当時は `CLAUDE.md` への symlink。現在は `AGENTS.md` が唯一の実体）、規約は facet 注入なしで全 agent に届く。また CLI から builtin の params を指定する手段は無く、facet 注入には最低 1 本の wrapper workflow が要るため「注入だけ残す」は全廃と両立しない。map #353 は「map 直読み intake の廃止・self-contained issue 起票を正とする」も決定しており（#287 vs #294 の実証）、intake ゲートの存在理由も消滅した。
 
 痛みが実測されたら git 履歴から 20 行級 wrapper を再導入すればよい（YAGNI）。
 
@@ -23,8 +23,8 @@ map #353 の再検討（#357 の実態調査 + #358 の決定）で前提が変�
 ### 2. 経路
 
 - **feature**（新機能・機能拡張）: builtin **`default`**。起動形は現行互換 — main から作った detached HEAD の手動 worktree 内で `takt --pipeline --auto-pr -b issue-<N>-<slug> -w default -i <N>`。選定根拠は Requirement Scenarios（`SCN-{contract ID}-P/N` の Given/When/Then）を持つ builtin であること（nrslib/takt#1424 の統合以降、`default` が scenario-based の計画・test-first を持つ）
-- **fix**（バグ修正・回帰修正）: **takt を使わない**。issue-direct（Claude Code 直接: worktree → 実装 → PR 作成 → CI green まで監視）で実装し、品質ゲートは PR レビュー標準の `review-fix-default` が担う（実装とレビューの分担）
-- **PR レビュー**: builtin **`review-fix-default`**（remediation ループ内蔵）。旧 `review-takt-default` は takt 自体の開発用 knowledge を nyaucast コードのレビューに混ぜる誤適合だったため変更する
+- **fix**（バグ修正・回帰修正）: **takt を使わない**。Matt Pocock の `/implement`（Claude Code 直接。worktree とブランチを作り、`/implement` の `/tdd` → `/code-review` → commit の後、PR 作成 → CI green まで監視する）で実装し、品質ゲートは `/implement` に含まれる `/code-review` が担う。旧経路の issue-direct skill は廃止した
+- **PR レビュー**: builtin **`review-fix`**（remediation ループ内蔵。takt 0.61 で `review-fix-default` から改名）。旧 `review-takt-default` は takt 自体の開発用 knowledge を nyaucast コードのレビューに混ぜる誤適合だったため変更する
 
 ### 3. 要求追跡
 
@@ -32,17 +32,17 @@ map #353 の再検討（#357 の実態調査 + #358 の決定）で前提が変�
 
 ### 4. 失うゲートと受け皿
 
-| 失うゲート              | 受け皿                                                                                                                                                   |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| intake（着手可否判定）  | self-contained issue 起票規約（`docs/agents/issue-tracker.md`。#287 vs #294 の実証。map 直読み intake は map #353 で廃止決定）                           |
-| 実装前設計 / 診断ゲート | builtin の plan + 5 並列レビュー + final-gate。fix の red 再現規律も規約として追加しない（builtin の write-tests-first / `review-fix-default` に任せる） |
-| spillover 起票          | CLAUDE.md 既存規約「スコープ外で見つけた問題は、直さず捨てず issue にする」+ 完走後レポートの人間確認                                                    |
-| 独自 `REQ` / `SCN` 採番 | builtin の Completion Contracts ledger + `SCN-{contract ID}-P/N` 構造（決定 3）                                                                          |
-| ADR 専門レビュー観点    | `AGENTS.md` が全 agent に届く事実 + ADR-0001 決定 7（黙って逸脱しない）の維持                                                                            |
+| 失うゲート              | 受け皿                                                                                                                                                                    |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| intake（着手可否判定）  | self-contained issue 起票規約（`docs/agents/issue-tracker.md`。#287 vs #294 の実証。map 直読み intake は map #353 で廃止決定）                                            |
+| 実装前設計 / 診断ゲート | builtin の plan + 並列レビュー + final-gate。fix の red 再現規律も規約として追加しない（feature は builtin の write-tests-first、fix は `/implement` の `/tdd` に任せる） |
+| spillover 起票          | AGENTS.md 既存規約「スコープ外で見つけた問題は、直さず捨てず issue にする」+ 完走後レポートの人間確認                                                                     |
+| 独自 `REQ` / `SCN` 採番 | builtin の Completion Contracts ledger + `SCN-{contract ID}-P/N` 構造（決定 3）                                                                                           |
+| ADR 専門レビュー観点    | `AGENTS.md` が全 agent に届く事実 + ADR-0001 決定 7（黙って逸脱しない）の維持                                                                                             |
 
 ### 5. 監査 workflow の撤去
 
-`tayk-audit-architecture` / `tayk-audit-runs` とも撤去する。必要になれば git 履歴 + `docs/research/takt-builtin-workflows.md` を起点に、その時の形（builtin の進化を含む）で再導入する。builtin `audit-architecture` は完走不能（メタレビュー上書きの悪循環・容量不足の実測）のため置き換え先にはしない。
+`tayk-audit-architecture` / `tayk-audit-runs` とも撤去する。必要になれば git 履歴を起点に、その時の形（builtin の進化を含む）で再導入する。builtin `audit-architecture` は完走不能（メタレビュー上書きの悪循環・容量不足の実測）のため置き換え先にはしない。
 
 ### 6. doctor
 
@@ -65,13 +65,12 @@ pre-push フックの `workflow-doctor` を除去する（自作ゼロでは引�
 - takt は host が供給する開発 orchestration tool のまま、nyaucast の runtime / package 依存には加えない
 - `.takt/` は開発 orchestration であり、ADR-0006 が禁じる製品 lifecycle orchestration には使わない
 - レビュー・裁定・remediation・final-gate・要求シナリオの改善は builtin の進化として自動的に受ける。project 側の追従作業（旧 Update procedure の fragment 差分確認）は消滅する
-- **本改訂は実装に先行する**（スクラップアンドビルド前提）。改訂時点の `.takt/` には自作資産が残っており、後続の実装 issue が撤去する。乖離は意図した過渡状態であって黙認ではない
-- CLAUDE.md 開発フロー節と `docs/agents/issue-tracker.md` の経路記述は本改訂に追随する（#368 で同梱）
+- 改訂時点の `.takt/` に残っていた自作資産は、後続の実装 issue で撤去済み（`.takt/` は `config.yaml` と `.gitignore` のみ）
+- AGENTS.md 開発フロー節と `docs/agents/issue-tracker.md` の経路記述は本改訂に追随する（#368 で同梱）
 
 ## Related
 
 - ADR-0001（thin architecture と ADR 逸脱時の改訂義務）
 - ADR-0006（takt を製品 orchestration に使わない）
 - wayfinder map #353 / #357（takt 0.60 builtin の実態調査）/ #358（本改訂の決定）
-- `docs/research/takt-builtin-workflows.md`（builtin の実態調査 findings）
 - `docs/agents/issue-tracker.md`
