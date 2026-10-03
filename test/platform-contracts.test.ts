@@ -54,6 +54,36 @@ function jobSteps(job: JsonRecord): WorkflowStep[] {
   return steps.map((step, index) => requireRecord(step, `workflow step ${index}`));
 }
 
+const enforcedFallowRules = [
+  "unused-dev-dependencies",
+  "unused-optional-dependencies",
+  "type-only-dependencies",
+  "test-only-dependencies",
+  "dev-dependencies-in-production",
+  "re-export-cycle",
+  "stale-suppressions",
+  "require-suppression-reason",
+  "unused-catalog-entries",
+  "unused-dependency-overrides",
+];
+
+function readFallowConfig(): JsonRecord {
+  return readJson(join(packageRoot, ".fallowrc.json"));
+}
+
+function srcPatterns(patterns: unknown): unknown[] {
+  return (Array.isArray(patterns) ? patterns : []).filter(
+    (pattern) => typeof pattern === "string" && pattern.startsWith("src/"),
+  );
+}
+
+// 対象を書かない抑止コメントは、すべての検査を黙らせる
+function silencingSuppressions(source: string): string[] {
+  return [...source.matchAll(/fallow-ignore-(?:next-line|file)\b(.*)/g)]
+    .filter(([, rest = ""]) => /^\s*$|\b(?:code-duplication|complexity)\b/.test(rest))
+    .map(([comment]) => comment);
+}
+
 function releaseSteps(): WorkflowStep[] {
   return workflowJobs(readWorkflow("release.yml")).flatMap(jobSteps);
 }
@@ -177,6 +207,57 @@ describe("K1 three identical check surfaces", () => {
     }
 
     expect(dependencies.filter((dependency) => ignored.includes(dependency))).toEqual([]);
+  });
+
+  // semantic モードは識別子を同一視するので、Effect の定型（Tool.make・Context.Service・
+  // Schema.TaggedError）どうしが重複に見える。除外で黙らせると完全な複製も見落とすため、
+  // 識別子を区別するモード + near で定型を避け、除外は持たない。threshold は重複率の上限で、
+  // 0 は「上限なし」なので、小さい正の値でないと重複がゲートを落とさない。
+  test("src code cannot be silenced from duplicate detection", () => {
+    const duplicates = requireRecord(readFallowConfig()["duplicates"], "duplicates");
+    const fix = "重複は除外ではなく共通化で直す";
+
+    expect(srcPatterns(duplicates["ignore"]), fix).toEqual([]);
+    expect(duplicates["ignoredClones"] ?? [], fix).toEqual([]);
+    expect(["weak", "mild", "strict"], "semantic は Effect の定型に当たる").toContain(
+      duplicates["mode"],
+    );
+    expect(duplicates["near"], "near が無いと改名した複製を見落とす").toBe(true);
+    expect(duplicates["threshold"], "0 は上限なしで、重複がゲートを落とさない").toBeGreaterThan(0);
+    expect(duplicates["threshold"]).toBeLessThanOrEqual(0.01);
+  });
+
+  test("src code cannot be silenced from complexity checks", () => {
+    const health = requireRecord(readFallowConfig()["health"], "health");
+    const fix = "上限を超えた関数は分けて直す";
+
+    expect(srcPatterns(health["ignore"]), fix).toEqual([]);
+    expect(health["thresholdOverrides"] ?? [], fix).toEqual([]);
+    expect(health["suggestInlineSuppression"], "抑止コメントの案を出さない").toBe(false);
+    expect(health["maxCyclomatic"]).toBeLessThanOrEqual(5);
+    expect(health["maxCognitive"]).toBeLessThanOrEqual(5);
+    expect(health["maxCrap"]).toBeLessThanOrEqual(30);
+  });
+
+  test("dependency and suppression findings fail the gate instead of warning", () => {
+    const rules = requireRecord(readFallowConfig()["rules"], "rules");
+
+    expect(Object.fromEntries(enforcedFallowRules.map((rule) => [rule, rules[rule]]))).toEqual(
+      Object.fromEntries(enforcedFallowRules.map((rule) => [rule, "error"])),
+    );
+  });
+
+  test("src code carries no inline suppression of duplication or complexity", () => {
+    const suppressions = readdirSync(join(packageRoot, "src"), { recursive: true })
+      .map(String)
+      .filter((path) => path.endsWith(".ts"))
+      .flatMap((path) =>
+        silencingSuppressions(readFileSync(join(packageRoot, "src", path), "utf8")).map(
+          (comment) => `src/${path}: ${comment}`,
+        ),
+      );
+
+    expect(suppressions, "重複と複雑度の違反は抑止せずに直す").toEqual([]);
   });
 });
 
