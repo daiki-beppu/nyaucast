@@ -53,6 +53,47 @@ describe("ChannelAccounts", () => {
     }),
   );
 
+  it.effect(
+    "declares Instagram and X accounts too, and lists a channel's accounts in the order youtube, instagram, x",
+    () =>
+      Effect.gen(function* () {
+        const configRoot = yield* temporaryDirectory("nyaucast-accounts-three-platforms-");
+        setup(configRoot, {
+          deepfocus365: {
+            x: { handle: "@deepfocus_x", id: "X_1" },
+            instagram: { handle: "deepfocus_ig", id: "IG_1" },
+            youtube: { handle: "@deepfocus365", id: "UC_A" },
+          },
+        });
+
+        const { instagram, listed } = yield* withAccounts(
+          configRoot,
+          Effect.gen(function* () {
+            const accounts = yield* ChannelAccounts;
+            return {
+              instagram: yield* accounts.declared("deepfocus365", "instagram"),
+              listed: yield* accounts.list("deepfocus365"),
+            };
+          }),
+        );
+
+        assert.deepStrictEqual(instagram, {
+          channel: "deepfocus365",
+          handle: "deepfocus_ig",
+          id: "IG_1",
+          platform: "instagram",
+        });
+        assert.deepStrictEqual(
+          listed.map(({ id, platform }) => [platform, id]),
+          [
+            ["youtube", "UC_A"],
+            ["instagram", "IG_1"],
+            ["x", "X_1"],
+          ],
+        );
+      }),
+  );
+
   describe("lists the declared accounts", () => {
     it.effect(
       "of every registered channel, in registry order, skipping channels that declare none",
