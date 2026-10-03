@@ -5,6 +5,8 @@ import { basename, join, resolve } from "node:path";
 import { describe, expect, test } from "@effect/vitest";
 import { parse } from "yaml";
 
+import { chromeCacheDirectory } from "../src/lib/chrome.ts";
+import { chromeHeadlessShellBuildId } from "../src/lib/chrome-pin.ts";
 import { withTemporaryDirectory } from "./helpers";
 
 const packageRoot = resolve(import.meta.dirname, "..");
@@ -409,5 +411,76 @@ describe("K4 credential and concurrency contracts", () => {
     expect(ciGroup.split("${{")[0]?.toLowerCase()).not.toBe(
       releaseGroup.split("${{")[0]?.toLowerCase(),
     );
+  });
+});
+
+describe("Chrome download cache in CI", () => {
+  const qualitySteps = () => {
+    const quality = workflowJobs(readWorkflow("ci.yml")).find(
+      (job) => job["runs-on"] !== undefined,
+    );
+    if (quality === undefined) {
+      throw new Error("CI quality job must exist");
+    }
+    return jobSteps(quality);
+  };
+  const cacheStep = () => {
+    const step = qualitySteps().find(
+      (candidate) =>
+        typeof candidate.uses === "string" && candidate.uses.startsWith("actions/cache@"),
+    );
+    if (step === undefined) {
+      throw new Error("CI quality job must restore a Chrome cache with actions/cache");
+    }
+    return step;
+  };
+  const pinStep = () => {
+    const step = qualitySteps().find((candidate) => candidate["id"] === "chrome-pin");
+    if (step === undefined || typeof step.run !== "string") {
+      throw new Error("CI quality job must have a run step with id chrome-pin");
+    }
+    return step;
+  };
+
+  test("the cache step runs before the check and is pinned to a commit SHA", () => {
+    const steps = qualitySteps();
+    const check = steps.findIndex((step) => step.run?.trim() === canonicalCheckCommand);
+
+    const cache = steps.findIndex(
+      (step) => typeof step.uses === "string" && step.uses.startsWith("actions/cache@"),
+    );
+
+    expect(cache).toBeGreaterThanOrEqual(0);
+    expect(cache).toBeLessThan(check);
+    expect(cacheStep().uses).toMatch(/^actions\/cache@[0-9a-f]{40}$/);
+  });
+
+  test("the cache directory is the one the runtime downloads Chrome into", () => {
+    expect(cacheStep().with?.["path"]).toBe(chromeCacheDirectory("~"));
+  });
+
+  test("the cache key carries the pinned build id that the pin step extracts from the pin file", () => {
+    const key = cacheStep().with?.["key"];
+    expect(key).toContain("steps.chrome-pin.outputs.build-id");
+
+    const result = withTemporaryDirectory("nyaucast-chrome-pin-", (directory) => {
+      const output = join(directory, "github-output");
+      writeFileSync(output, "");
+      const run = runBash(
+        pinStep().run ?? "",
+        packageRoot,
+        isolatedEnvironment({ GITHUB_OUTPUT: output }),
+      );
+      return { output: readFileSync(output, "utf8"), run };
+    });
+
+    expect(result.run.status).toBe(0);
+    expect(result.output.trim()).toBe(`build-id=${chromeHeadlessShellBuildId}`);
+  });
+
+  test("the runner's preinstalled Chrome is not used", () => {
+    for (const step of qualitySteps()) {
+      expect(JSON.stringify(step)).not.toMatch(/browser-actions|setup-chrome|google-chrome/u);
+    }
   });
 });

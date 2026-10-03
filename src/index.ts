@@ -15,6 +15,7 @@ import { CollectionIds } from "./collections/collection-ids.ts";
 import { CollectionDirectories } from "./collections/directories.ts";
 import { LocalStore } from "./db/local-store.ts";
 import { nyaucastCli, version } from "./cli.ts";
+import { Chrome, chromeCacheDirectory } from "./lib/chrome.ts";
 import { InstagramAuth } from "./instagram/auth.ts";
 import { NyaucastToolHandlers, NyaucastToolkit } from "./mcp.ts";
 import { ThumbnailFiles } from "./thumbnails/thumbnail-files.ts";
@@ -38,6 +39,7 @@ const mcpHandlers = NyaucastToolHandlers.pipe(
   Layer.provide(ChannelSettings.layer(channelRoot)),
   Layer.provide(VideoIds.layer),
   Layer.provide(thumbnailFiles),
+  Layer.provide(Chrome.layer({ cacheDirectory: chromeCacheDirectory(homedir()) })),
   Layer.provide(VideoFiles.layer(channelRoot)),
   Layer.provide(StaticSecrets.layer({ configRoot })),
   Layer.provide(NodeHttpClient.layerUndici),

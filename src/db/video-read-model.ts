@@ -1,13 +1,15 @@
 import { Effect, Schema } from "effect";
 
+import { CutFacts, readCutFacts } from "./explainer-cuts.ts";
 import { ThumbnailFacts, readThumbnailFacts } from "./explainer-thumbnails.ts";
 import { ExplainerPlan, requireLatestPlan } from "./explainer-videos.ts";
 import { Gate, GateRecord, getExplainerGateDecision, listExplainerGateRecords } from "./gates.ts";
 
-/** 解説動画の read model が返す事実。後続の issue がカット・投稿の状態をここへ足す。 */
+/** 解説動画の read model が返す事実。後続の issue が投稿の状態をここへ足す。 */
 export const VideoStatus = Schema.Struct({
   abandoned: Schema.Boolean,
   awaitingApproval: Schema.optionalKey(Gate),
+  cuts: Schema.Array(CutFacts),
   gateRecords: Schema.Array(GateRecord),
   plan: ExplainerPlan,
   thumbnails: ThumbnailFacts,
@@ -46,6 +48,7 @@ export const deriveVideoStatus = (videoId: string) =>
     return {
       abandoned,
       ...(awaiting === undefined ? {} : { awaitingApproval: awaiting }),
+      cuts: yield* readCutFacts(videoId),
       gateRecords: yield* listExplainerGateRecords(videoId),
       plan,
       thumbnails,

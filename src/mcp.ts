@@ -10,6 +10,7 @@ import type { BgmPool } from "./channel/bgm-pool.ts";
 import type { ChannelSettings } from "./channel/channel-settings.ts";
 import type { CollectionIds } from "./collections/collection-ids.ts";
 import type { CollectionDirectories } from "./collections/directories.ts";
+import type { Chrome } from "./lib/chrome.ts";
 import type { ThumbnailFiles } from "./thumbnails/thumbnail-files.ts";
 import { CollectionStatusTool, collectionStatus } from "./tools/collection.status.ts";
 import { PlanCheckTitleTool, planCheckTitle } from "./tools/plan.checkTitle.ts";
@@ -25,6 +26,8 @@ import {
   ExplainerMixAudioTrackTool,
   explainerMixAudioTrack,
 } from "./tools/explainer.mixAudioTrack.ts";
+import { ExplainerPreviewCutTool, explainerPreviewCut } from "./tools/explainer.previewCut.ts";
+import { ExplainerRenderCutTool, explainerRenderCut } from "./tools/explainer.renderCut.ts";
 import {
   ExplainerSynthesizeNarrationTool,
   explainerSynthesizeNarration,
@@ -60,6 +63,8 @@ export const NyaucastToolkit = Toolkit.make(
   ExplainerSynthesizeNarrationTool,
   ExplainerAssembleCompositionTool,
   ExplainerMixAudioTrackTool,
+  ExplainerRenderCutTool,
+  ExplainerPreviewCutTool,
   VideoStatusTool,
   VideoGenerateThumbnailsTool,
   VideoExcludeThumbnailTool,
@@ -71,6 +76,7 @@ export const NyaucastToolHandlers = NyaucastToolkit.toLayer(
     const context = yield* Effect.context<
       | BgmPool
       | ChannelSettings
+      | Chrome
       | ChildProcessSpawner.ChildProcessSpawner
       | CollectionDirectories
       | CollectionIds
@@ -91,6 +97,10 @@ export const NyaucastToolHandlers = NyaucastToolkit.toLayer(
         explainerFetchTopicCandidates(input).pipe(Effect.provideContext(context)),
       explainer_mix_audio_track: (input) =>
         explainerMixAudioTrack(input).pipe(Effect.provideContext(context)),
+      explainer_preview_cut: (input) =>
+        explainerPreviewCut(input).pipe(Effect.provideContext(context)),
+      explainer_render_cut: (input) =>
+        explainerRenderCut(input).pipe(Effect.provideContext(context)),
       explainer_synthesize_narration: (input) =>
         explainerSynthesizeNarration(input).pipe(Effect.provideContext(context)),
       explainer_write_diagram: (input) =>

@@ -22,6 +22,7 @@ import {
 } from "../channel/channel-settings.ts";
 import { VideoNotFound, requireLatestPlan } from "../db/explainer-videos.ts";
 import { outputSampleRate, parseWav } from "../narration/wav.ts";
+import { audioTrackKey } from "../videos/audio-track.ts";
 import { ProduceGateNotApproved, requireProduceApproval } from "../videos/produce-gate.ts";
 import { VideoFiles } from "../videos/video-files.ts";
 
@@ -385,7 +386,6 @@ const chooseSong = (songs: readonly BgmSong[], videoId: string, named: string | 
 // ---- 設定・入力 ----
 
 const narrationKey = (videoId: string, file: string) => `videos/${videoId}/narration/${file}`;
-const trackKeyOf = (videoId: string) => `videos/${videoId}/audio/track.wav`;
 const factsKeyOf = (videoId: string) => `videos/${videoId}/audio/track.json`;
 
 // BGM の宣言。無効のチャンネルは undefined（プールは読まない）。宣言が無い・無効なのに曲を指定した、は失敗。
@@ -480,7 +480,7 @@ const existingTrack = (videoId: string, key: string) =>
     const facts = Option.flatMap(yield* files.read(factsKeyOf(videoId)), (bytes) =>
       decodeFacts(new TextDecoder().decode(bytes)),
     );
-    const wav = yield* files.read(trackKeyOf(videoId));
+    const wav = yield* files.read(audioTrackKey(videoId));
     return Option.filter(
       facts,
       (found) => found.key === key && Option.isSome(wav) && sha256(wav.value) === found.audioSha256,
@@ -609,7 +609,7 @@ const mixAudioTrack = Effect.fn("explainer.mixAudioTrack")(function* ({
   const narration = yield* readNarration(videoId);
   const chosen = yield* loadChosen(bgm, videoId, song);
   const key = freshnessKey(narration, bgm, chosen);
-  const trackKey = trackKeyOf(videoId);
+  const trackKey = audioTrackKey(videoId);
   const existing = force === true ? Option.none() : yield* existingTrack(videoId, key);
   if (Option.isSome(existing)) {
     return { reused: true, song: existing.value.song, trackKey, videoId };

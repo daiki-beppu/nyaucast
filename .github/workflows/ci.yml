@@ -34,6 +34,19 @@ jobs:
           node-version-file: package.json
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      # render と preview のテストは、本物の chrome-headless-shell を使う。ランナーに入っている Chrome は使わず、
+      # src/lib/chrome-pin.ts が pin した版を鍵に cache して、ダウンロードを省く。
+      - name: Read the pinned Chrome version
+        id: chrome-pin
+        run: |
+          build_id="$(sed -n 's/^export const chromeHeadlessShellBuildId = "\([0-9.]*\)";$/\1/p' src/lib/chrome-pin.ts)"
+          test -n "$build_id"
+          echo "build-id=$build_id" >> "$GITHUB_OUTPUT"
+      - name: Cache Chrome
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/nyaucast/chrome
+          key: chrome-headless-shell-${{ runner.os }}-${{ steps.chrome-pin.outputs.build-id }}
       # ゲート集合の定義は package.json の check script にのみ置く。ここで step へ
       # 割り戻すと列挙が複製され、CI とローカルが食い違う経路が再び開く。
       - name: Check

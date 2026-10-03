@@ -79,12 +79,12 @@ export interface CandidateRef {
 }
 
 // 行を schema で decode する。SqlError は想定外の失敗として defect にする。
-const queryRows = <A>(
+export const queryRows = <A>(
   Row: Schema.Decoder<A>,
   statement: Effect.Effect<ReadonlyArray<unknown>, unknown>,
 ) => statement.pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(Row))), Effect.orDie);
 
-const insertRow = (table: string, row: Record<string, number | string>) =>
+export const insertRow = (table: string, row: Record<string, number | string>) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`INSERT INTO ${sql(table)} ${sql.insert(row)}`;
