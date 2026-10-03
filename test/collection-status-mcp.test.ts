@@ -69,8 +69,10 @@ describe("collection status MCP tool", () => {
         });
         expect(toolNames.toSorted()).toEqual([
           "collection_status",
+          "explainer_write_plan",
           "plan_check_title",
           "plan_init",
+          "video_status",
         ]);
 
         writeMessage({

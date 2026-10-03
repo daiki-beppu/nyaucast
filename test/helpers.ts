@@ -75,11 +75,27 @@ export const insertCollection = (collection: { id: string; title: string }) =>
     yield* sql`INSERT INTO collections (id, title) VALUES (${collection.id}, ${collection.title})`;
   });
 
-export const selectAll = (table: "approvals" | "collections" | "rejections" | "thumbnails") =>
+export const selectAll = (
+  table:
+    | "approvals"
+    | "collections"
+    | "explainer_approvals"
+    | "explainer_plans"
+    | "explainer_rejections"
+    | "explainer_videos"
+    | "rejections"
+    | "thumbnails",
+) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     return yield* sql.unsafe<Record<string, unknown>>(`SELECT * FROM ${table}`);
   });
+
+/** チャンネルルートの config/channel/video.json（動画の種類・ジャンル・当たる型の宣言）を書く。 */
+export function writeVideoConfig(channelRoot: string, content: string): void {
+  mkdirSync(join(channelRoot, "config", "channel"), { recursive: true });
+  writeFileSync(join(channelRoot, "config", "channel", "video.json"), content);
+}
 
 /** 契約テスト（プロセスを起動する側）が、DB を作ってマイグレーションを適用するための入口。 */
 export function openLocalStoreOnce(channelRoot: string): Promise<void> {
