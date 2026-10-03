@@ -22,7 +22,7 @@ map #353 の再検討（#357 の実態調査 + #358 の決定）で前提が変�
 
 ### 2. 経路
 
-- **feature**（新機能・機能拡張）: builtin **`default`**。起動形は現行互換 — main から作った detached HEAD の手動 worktree 内で `takt --pipeline --auto-pr -b issue-<N>-<slug> -w default -i <N>`。選定根拠は Requirement Scenarios（`SCN-{contract ID}-P/N` の Given/When/Then）を持つ builtin であること（nrslib/takt#1424 の統合以降、`default` が scenario-based の計画・test-first を持つ）
+- **feature**（新機能・機能拡張）: builtin **`default`**。起動形は現行互換 — origin/main から作った worktree 内で（worktree の作り方は AGENTS.md。改訂 2026-10-04 / #606 で手動の detached HEAD から Orca に変更） `takt --pipeline --auto-pr -b issue-<N>-<slug> -w default -i <N>`。選定根拠は Requirement Scenarios（`SCN-{contract ID}-P/N` の Given/When/Then）を持つ builtin であること（nrslib/takt#1424 の統合以降、`default` が scenario-based の計画・test-first を持つ）
 - **fix**（バグ修正・回帰修正）: **takt を使わない**。Matt Pocock の `/implement`（Claude Code 直接。worktree とブランチを作り、`/implement` の `/tdd` → `/code-review` → commit の後、PR 作成 → CI green まで監視する）で実装し、品質ゲートは `/implement` に含まれる `/code-review` が担う。旧経路の issue-direct skill は廃止した
 - **PR レビュー**: builtin **`review-fix`**（remediation ループ内蔵。takt 0.61 で `review-fix-default` から改名）。旧 `review-takt-default` は takt 自体の開発用 knowledge を nyaucast コードのレビューに混ぜる誤適合だったため変更する
 

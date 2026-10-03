@@ -19,15 +19,15 @@ takt --version
 
 nyaucast 固有の workflow 資産は持たない — `.takt/` は `config.yaml` と、それ以外を無視する `.gitignore` のみで、実装は builtin workflow を直用する（[ADR-0008](../adr/0008-takt-dedicated-workflow.md)）。用途ごとの使い分け:
 
-- **新機能・機能拡張の実装** — builtin **`default`**（ADR-0008）。detached HEAD の手動 worktree 内で `takt --pipeline --auto-pr -b issue-<N>-<slug> -w default -i <N>`。
+- **新機能・機能拡張の実装** — builtin **`default`**（ADR-0008）。Orca の worktree 内で `takt --pipeline --auto-pr -b issue-<N>-<slug> -w default -i <N>`。
   要求追跡は builtin の Completion Contracts ledger + `SCN-{contract ID}-P/N`（Given/When/Then）構造が持つ。品質装置（並列レビュー → review-adjudication → 検証付き remediation → final-gate、test-first）も builtin 側。
 - **バグ修正の実装** — **takt を使わない**。Matt Pocock の **`/implement`**（Claude Code 直接。worktree とブランチを作り、`/implement` の `/tdd` → `/code-review` → commit の後、PR 作成 → CI green まで監視する）で実装し、品質ゲートは `/implement` に含まれる `/code-review` が担う（ADR-0008）。
 - **PR のレビュー** — builtin workflow **`review-fix`**（remediation ループ内蔵）。単体起動専用。
 
 共通の規約:
 
-- worktree 必須。メイン作業ツリーで直接ブランチを切らない。main を最新化した後、`git worktree add --detach .claude/worktrees/<slug> main` で detached HEAD の worktree を作り、依存 install を実行する
-- feature は main から手動で作った detached HEAD の worktree 内で pipeline 実行する。review-adjudication 経路の隔離 clone 実走行が未検証のため、検証完了までは既知の pipeline 経路を維持する
+- worktree 必須。メイン作業ツリーで直接ブランチを切らない。worktree は `git fetch origin` の後に `orca worktree create --repo name:nyaucast --name <slug> --base-branch origin/main` で作る（置き場は Orca の workspace、ブランチは Orca が作る。依存 install は Orca の repo の setup script が自動で実行する）。手動の `git worktree add` は使わない
+- feature は origin/main から作った Orca の worktree 内で pipeline 実行する（pipeline は Orca が作ったブランチの上から `-b` の新しいブランチを切る）。review-adjudication 経路の隔離 clone 実走行が未検証のため、検証完了までは既知の pipeline 経路を維持する
 - `--auto-pr` は `--pipeline` 専用で、pipeline の issue 指定には `-i` が必要である。pipeline が `git checkout -b` するため、`-b` は未作成のブランチ名に限る
 - takt 更新時は、名前指定の builtin × `.takt/config.yaml` 整合検査を手動で実行する: `takt workflow doctor <workflow名>`（引数なし起動は自作 workflow ゼロのため no-op。ADR-0008）
 - 着手前に main を `git pull --ff-only` で最新化する
