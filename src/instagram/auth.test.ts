@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { NodeServices } from "@effect/platform-node";
 import { assert, describe, it, vi } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Option, Queue, Terminal } from "effect";
 import { HttpClientError, HttpClientRequest } from "effect/http";
 import { TestClock } from "effect/testing";
 
@@ -20,6 +20,7 @@ import {
 import { CredentialStore } from "../auth/credential-store.ts";
 import { StaticSecrets } from "../auth/secrets.ts";
 import { InstagramAuth } from "./auth.ts";
+import { receiveCodeByPaste, redirectUri } from "./authorization-code.ts";
 
 const channel = "deepfocus365";
 const platform = "instagram";
@@ -91,6 +92,38 @@ const provideAuth = (options: {
       ),
     ),
   );
+
+// 運営者の操作の代わりに、ブラウザで開こうとした認可 URL を記録し、
+// そこから組み立てた文字列を貼り付けて Enter まで流し込む Terminal。
+const pastingOperator = (paste: (authorizationUrl: URL) => string) => {
+  const displayed: string[] = [];
+  const opened: string[] = [];
+  const key = (name: string) => ({ ctrl: false, meta: false, name, shift: false });
+  const terminal = Layer.succeed(
+    Terminal.Terminal,
+    Terminal.make({
+      columns: Effect.succeed(80),
+      display: (text) => Effect.sync(() => void displayed.push(text)),
+      readInput: Effect.gen(function* () {
+        const queue = yield* Queue.unbounded<Terminal.UserInput, never>();
+        yield* Queue.offerAll(queue, [
+          { input: Option.some(paste(new URL(opened.at(-1) ?? ""))), key: key("") },
+          { input: Option.none(), key: key("enter") },
+        ]);
+        return queue;
+      }),
+      readLine: Effect.die("unused"),
+      rows: Effect.succeed(24),
+    }),
+  );
+  const receiveCode: Receive = (authorizationUrl) =>
+    receiveCodeByPaste(authorizationUrl, (url) => Promise.resolve(void opened.push(url))).pipe(
+      // NodeServices も Terminal を持つので、偽の Terminal を内側で先に渡す。
+      Effect.provide(terminal),
+      Effect.provide(NodeServices.layer),
+    );
+  return { displayed, receiveCode };
+};
 
 describe("Instagram authentication", () => {
   describe("authorize", () => {
@@ -221,6 +254,66 @@ describe("Instagram authentication", () => {
             });
             assert.deepStrictEqual(http.requests, []);
             assert.isFalse(JSON.stringify(failure).includes(instagram.clientSecret));
+          }),
+      );
+    });
+
+    describe("when the operator pastes the redirected URL", () => {
+      const redirected = (query: Record<string, string>) =>
+        `${redirectUri}?${new URLSearchParams(query)}`;
+      const stateOf = (authorizationUrl: URL) => authorizationUrl.searchParams.get("state") ?? "";
+
+      it.effect("trades the code taken from the pasted URL", () =>
+        Effect.gen(function* () {
+          const root = yield* temporaryDirectory("nyaucast-instagram-paste-");
+          const http = fakeHttp(instagramRoutes());
+          const operator = pastingOperator((url) =>
+            redirected({ code: instagram.authorizationCode, state: stateOf(url) }),
+          );
+
+          const authorized = yield* Effect.gen(function* () {
+            return yield* (yield* InstagramAuth).authorize(channel);
+          }).pipe(provideAuth({ credentialRoot: root, http, receiveCode: operator.receiveCode }));
+
+          assert.strictEqual(authorized.accountId, instagram.accountId);
+          assert.strictEqual(http.requests[0]?.form["code"], instagram.authorizationCode);
+        }),
+      );
+
+      it.effect.each([
+        { name: "text that is not a URL", paste: () => instagram.authorizationCode },
+        {
+          name: "a URL without a code",
+          paste: (url: URL) => redirected({ state: stateOf(url) }),
+        },
+        {
+          name: "a URL without a state",
+          paste: () => redirected({ code: instagram.authorizationCode }),
+        },
+        {
+          name: "a URL with another state",
+          paste: () => redirected({ code: instagram.authorizationCode, state: "OTHER" }),
+        },
+      ])(
+        "fails with AuthorizationFailed, asking Instagram nothing and not echoing the paste, for $name",
+        ({ paste }) =>
+          Effect.gen(function* () {
+            const root = yield* temporaryDirectory("nyaucast-instagram-paste-");
+            const http = fakeHttp(instagramRoutes());
+            const operator = pastingOperator(paste);
+
+            const failure = yield* Effect.gen(function* () {
+              return yield* Effect.flip((yield* InstagramAuth).authorize(channel));
+            }).pipe(provideAuth({ credentialRoot: root, http, receiveCode: operator.receiveCode }));
+
+            assert.deepStrictEqual(failureFacts(failure), {
+              _tag: "AuthorizationFailed",
+              channel,
+              platform,
+            });
+            assert.deepStrictEqual(http.requests, []);
+            assert.isFalse(JSON.stringify(failure).includes(instagram.authorizationCode));
+            assert.isFalse(operator.displayed.join("").includes(instagram.authorizationCode));
           }),
       );
     });
