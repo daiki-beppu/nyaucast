@@ -12,7 +12,12 @@ import type { CollectionDirectories } from "./collections/directories.ts";
 import type { ThumbnailFiles } from "./thumbnails/thumbnail-files.ts";
 import { CollectionStatusTool, collectionStatus } from "./tools/collection.status.ts";
 import { PlanCheckTitleTool, planCheckTitle } from "./tools/plan.checkTitle.ts";
+import {
+  ExplainerSynthesizeNarrationTool,
+  explainerSynthesizeNarration,
+} from "./tools/explainer.synthesizeNarration.ts";
 import { ExplainerWritePlanTool, explainerWritePlan } from "./tools/explainer.writePlan.ts";
+import { ExplainerWriteScriptTool, explainerWriteScript } from "./tools/explainer.writeScript.ts";
 import { PlanInitTool, planInit } from "./tools/plan.init.ts";
 import {
   VideoExcludeThumbnailTool,
@@ -23,6 +28,7 @@ import {
   videoGenerateThumbnails,
 } from "./tools/video.generateThumbnails.ts";
 import { VideoStatusTool, videoStatus } from "./tools/video.status.ts";
+import type { VideoFiles } from "./videos/video-files.ts";
 import type { VideoIds } from "./videos/video-ids.ts";
 
 // registry は置かない。tool 一覧は、ここで import した tool を並べるだけ。
@@ -31,6 +37,8 @@ export const NyaucastToolkit = Toolkit.make(
   PlanCheckTitleTool,
   CollectionStatusTool,
   ExplainerWritePlanTool,
+  ExplainerWriteScriptTool,
+  ExplainerSynthesizeNarrationTool,
   VideoStatusTool,
   VideoGenerateThumbnailsTool,
   VideoExcludeThumbnailTool,
@@ -50,12 +58,17 @@ export const NyaucastToolHandlers = NyaucastToolkit.toLayer(
       | SqlClient.SqlClient
       | StaticSecrets
       | ThumbnailFiles
+      | VideoFiles
       | VideoIds
     >();
     return NyaucastToolkit.of({
       collection_status: (input) => collectionStatus(input).pipe(Effect.provideContext(context)),
+      explainer_synthesize_narration: (input) =>
+        explainerSynthesizeNarration(input).pipe(Effect.provideContext(context)),
       explainer_write_plan: (input) =>
         explainerWritePlan(input).pipe(Effect.provideContext(context)),
+      explainer_write_script: (input) =>
+        explainerWriteScript(input).pipe(Effect.provideContext(context)),
       plan_check_title: (input) => planCheckTitle(input).pipe(Effect.provideContext(context)),
       plan_init: (input) => planInit(input).pipe(Effect.provideContext(context)),
       video_exclude_thumbnail: (input) =>

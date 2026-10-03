@@ -17,6 +17,7 @@ import { nyaucastCli, version } from "./cli.ts";
 import { InstagramAuth } from "./instagram/auth.ts";
 import { NyaucastToolHandlers, NyaucastToolkit } from "./mcp.ts";
 import { ThumbnailFiles } from "./thumbnails/thumbnail-files.ts";
+import { VideoFiles } from "./videos/video-files.ts";
 import { VideoIds } from "./videos/video-ids.ts";
 import { XAuth } from "./x/auth.ts";
 import { YouTubeAuth } from "./youtube/auth.ts";
@@ -35,6 +36,7 @@ const mcpHandlers = NyaucastToolHandlers.pipe(
   Layer.provide(ChannelSettings.layer(channelRoot)),
   Layer.provide(VideoIds.layer),
   Layer.provide(thumbnailFiles),
+  Layer.provide(VideoFiles.layer(channelRoot)),
   Layer.provide(StaticSecrets.layer({ configRoot })),
   Layer.provide(NodeHttpClient.layerUndici),
   Layer.provide(localStore),

@@ -6,6 +6,7 @@ import { CollectionIds } from "../src/collections/collection-ids.ts";
 import { CollectionDirectories } from "../src/collections/directories.ts";
 import { NyaucastToolHandlers, NyaucastToolkit } from "../src/mcp.ts";
 import { ThumbnailFiles } from "../src/thumbnails/thumbnail-files.ts";
+import { VideoFiles } from "../src/videos/video-files.ts";
 import type { VideoIds } from "../src/videos/video-ids.ts";
 import { fakeCodex, type FakeCodex } from "./codex-helpers.ts";
 import { withVideoChannel } from "./explainer-helpers.ts";
@@ -91,6 +92,7 @@ export const withToolChannel = <A, E, R>(
             CollectionDirectories.layer(channelRoot),
             options.collectionIds ?? CollectionIds.layer,
             ThumbnailFiles.layer(channelRoot),
+            VideoFiles.layer(channelRoot),
             gemini.http,
             gemini.secrets,
             codex.layer,

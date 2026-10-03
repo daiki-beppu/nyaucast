@@ -4,6 +4,7 @@ import { Effect, Layer } from "effect";
 
 import { explainerConfig } from "../../test/explainer-helpers.ts";
 import { temporaryDirectory, writeVideoConfig } from "../../test/helpers.ts";
+import { explainerConfigWithVoice, voiceDeclaration } from "../../test/narration-helpers.ts";
 import { explainerConfigWith, thumbnailType } from "../../test/thumbnail-config.ts";
 import { ChannelSettings } from "./channel-settings.ts";
 
@@ -98,5 +99,83 @@ describe("ChannelSettings: the thumbnail type", () => {
 
         assert.strictEqual(failure._tag, "InvalidChannelConfig");
       }),
+  );
+});
+
+describe("ChannelSettings: the voice", () => {
+  it.effect("reads the declared voice as it is", () =>
+    Effect.gen(function* () {
+      const declared = voiceDeclaration({
+        charactersPerSecond: 4.5,
+        directorNotes: "Warm and slow.",
+        name: "Puck",
+      });
+
+      const settings = yield* settingsOf(explainerConfigWithVoice(declared));
+
+      assert.deepStrictEqual<unknown>(settings.voice, declared);
+    }),
+  );
+
+  it.effect("keeps a channel that does not declare a voice working (there is no default)", () =>
+    Effect.gen(function* () {
+      const settings = yield* settingsOf(explainerConfig);
+
+      assert.strictEqual(settings.kind, "explainer");
+      assert.isUndefined(settings.voice);
+    }),
+  );
+
+  it.effect.each(["adapter", "charactersPerSecond", "directorNotes", "model", "name"] as const)(
+    "fails with InvalidChannelConfig when %s is missing (there is no default)",
+    (field) =>
+      Effect.gen(function* () {
+        const without = Object.fromEntries(
+          Object.entries(voiceDeclaration()).filter(([key]) => key !== field),
+        );
+
+        const failure = yield* Effect.flip(settingsOf(explainerConfigWithVoice(without)));
+
+        assert.strictEqual(failure._tag, "InvalidChannelConfig");
+      }),
+  );
+
+  it.effect.each(["openai", ""] as const)(
+    "fails with InvalidChannelConfig for the adapter %j, which this release does not implement",
+    (adapter) =>
+      Effect.gen(function* () {
+        const failure = yield* Effect.flip(
+          settingsOf(explainerConfigWithVoice(voiceDeclaration({ adapter }))),
+        );
+
+        assert.strictEqual(failure._tag, "InvalidChannelConfig");
+      }),
+  );
+
+  it.effect.each([0, -1, "5", null] as const)(
+    "fails with InvalidChannelConfig when the characters per second is %j",
+    (charactersPerSecond) =>
+      Effect.gen(function* () {
+        const failure = yield* Effect.flip(
+          settingsOf(explainerConfigWithVoice(voiceDeclaration({ charactersPerSecond }))),
+        );
+
+        assert.strictEqual(failure._tag, "InvalidChannelConfig");
+      }),
+  );
+
+  it.effect("keeps the thumbnail type and the voice side by side", () =>
+    Effect.gen(function* () {
+      const settings = yield* settingsOf(
+        JSON.stringify({
+          ...(JSON.parse(explainerConfig) as Record<string, unknown>),
+          thumbnail: thumbnailType(),
+          voice: voiceDeclaration(),
+        }),
+      );
+
+      assert.strictEqual(settings.thumbnail?.provider, "gemini");
+      assert.strictEqual(settings.voice?.adapter, "gemini");
+    }),
   );
 });

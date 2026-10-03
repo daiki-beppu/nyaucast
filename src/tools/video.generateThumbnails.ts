@@ -23,9 +23,9 @@ import { VideoNotFound, requireLatestPlan } from "../db/explainer-videos.ts";
 import {
   GeminiHttpBoundaryFailed,
   GeminiHttpFailure,
-  GeminiImageGenerator,
   GeminiResponseInvalid,
-} from "../thumbnails/gemini.ts";
+} from "../gemini/generate-content.ts";
+import { GeminiImageGenerator } from "../thumbnails/gemini.ts";
 import {
   CodexExecFailed,
   CodexImageMissing,

@@ -9,7 +9,9 @@ describe("K3 package smoke", () => {
 
     expect(toolNames.toSorted()).toEqual([
       "collection_status",
+      "explainer_synthesize_narration",
       "explainer_write_plan",
+      "explainer_write_script",
       "plan_check_title",
       "plan_init",
       "video_exclude_thumbnail",

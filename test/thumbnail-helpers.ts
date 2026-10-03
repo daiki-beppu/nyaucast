@@ -20,7 +20,13 @@ interface GeminiRequestBody {
       readonly text?: string;
     }>;
   }>;
-  readonly generationConfig?: { readonly imageConfig?: { readonly aspectRatio?: string } };
+  readonly generationConfig?: {
+    readonly imageConfig?: { readonly aspectRatio?: string };
+    readonly responseModalities?: readonly string[];
+    readonly speechConfig?: {
+      readonly voiceConfig?: { readonly prebuiltVoiceConfig?: { readonly voiceName?: string } };
+    };
+  };
 }
 
 interface GeminiCall {
@@ -36,6 +42,8 @@ interface GeminiCall {
 
 export type FakeReply =
   | { readonly image: Uint8Array; readonly mimeType?: string }
+  /** 音声の応答。mimeType の既定は Gemini TTS の REST と同じ `audio/L16;rate=24000`（生の PCM）。 */
+  | { readonly audio: Uint8Array; readonly mimeType?: string }
   | { readonly status: number }
   | { readonly body: unknown }
   | { readonly transportFailure: true };
@@ -57,22 +65,22 @@ function recordCall(request: HttpClientRequest.HttpClientRequest, url: URL): Gem
   };
 }
 
-const imageResponse = (reply: { image: Uint8Array; mimeType?: string }) => ({
+const inlineDataResponse = (bytes: Uint8Array, mimeType: string) => ({
   candidates: [
     {
       content: {
-        parts: [
-          {
-            inlineData: {
-              data: Buffer.from(reply.image).toString("base64"),
-              mimeType: reply.mimeType ?? "image/png",
-            },
-          },
-        ],
+        parts: [{ inlineData: { data: Buffer.from(bytes).toString("base64"), mimeType } }],
       },
     },
   ],
 });
+
+const mediaResponse = (
+  reply: { image: Uint8Array; mimeType?: string } | { audio: Uint8Array; mimeType?: string },
+) =>
+  "image" in reply
+    ? inlineDataResponse(reply.image, reply.mimeType ?? "image/png")
+    : inlineDataResponse(reply.audio, reply.mimeType ?? "audio/L16;rate=24000");
 
 /**
  * 偽の Gemini（HttpClient の偽装）。呼ばれた順に記録し、用意した応答を順に返す。
@@ -103,7 +111,7 @@ export function fakeGemini(replies: readonly FakeReply[]) {
           ),
         );
       }
-      const body = "image" in reply ? imageResponse(reply) : reply.body;
+      const body = "body" in reply ? reply.body : mediaResponse(reply);
       return HttpClientResponse.fromWeb(request, Response.json(body));
     }),
   );
