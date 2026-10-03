@@ -20,7 +20,14 @@ describe("K3 package smoke", () => {
     expect(packedPaths).not.toContainEqual(expect.stringMatching(/\.test\.ts$/));
     expect(packedPaths).not.toContainEqual(expect.stringMatching(/^src\//));
     expect(packedPaths).toEqual(
-      expect.arrayContaining(["package.json", "bin/nyaucast.js", "dist/index.js"]),
+      expect.arrayContaining([
+        "package.json",
+        "bin/nyaucast.js",
+        "dist/index.js",
+        "LICENSE",
+        "NOTICE",
+        "README.md",
+      ]),
     );
     // マイグレーションは手書きの TypeScript モジュールとして dist に入る。drizzle/*.sql は同梱しない
     expect(packedPaths).toContainEqual(

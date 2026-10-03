@@ -363,6 +363,18 @@ describe("K2 release guard", () => {
       url: trustedRepositoryUrl,
     });
   });
+
+  test("package metadata declares Apache-2.0 as the only license", () => {
+    const manifest = readJson(join(packageRoot, "package.json"));
+    expect(manifest["license"]).toBe("Apache-2.0");
+  });
+
+  test("LICENSE carries the Apache-2.0 text and NOTICE carries the copyright", () => {
+    const license = readFileSync(join(packageRoot, "LICENSE"), "utf8");
+    const notice = readFileSync(join(packageRoot, "NOTICE"), "utf8");
+    expect(license).toMatch(/Apache License\s+Version 2\.0, January 2004/);
+    expect(notice).toContain("Copyright 2026 daiki-beppu");
+  });
 });
 
 describe("K4 credential and concurrency contracts", () => {
