@@ -1,5 +1,7 @@
 import { Clock, Effect, Schema } from "effect";
-import { SqlClient } from "effect/sql";
+import { SqlClient, SqlSchema } from "effect/sql";
+
+import { afterLatestFact } from "./fact-time.ts";
 
 export const Gate = Schema.Literals(["produce", "publish"]);
 export type Gate = typeof Gate.Type;
@@ -102,27 +104,78 @@ export const getGateDecision = (collectionId: string, gate: Gate) =>
   getGateState(collectionId, gate).pipe(Effect.map((state) => state.decision));
 
 // 時刻は既定で Clock から取る。直前の事実より後に積むための時刻だけ、呼び出し側が渡せる。
+const insertGateFact = (
+  tables: GateTables,
+  decision: "approval" | "rejection",
+  subjectId: string,
+  gate: Gate,
+  atMilliseconds: number | undefined,
+) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const timestamp = new Date(atMilliseconds ?? (yield* Clock.currentTimeMillis)).toISOString();
+    const table = decision === "approval" ? tables.approvals : tables.rejections;
+    const timeColumn = decision === "approval" ? "approved_at" : "rejected_at";
+    yield* sql`INSERT INTO ${sql(table)} (${sql(tables.subjectColumn)}, gate, ${sql(timeColumn)}) VALUES (${subjectId}, ${gate}, ${timestamp})`;
+  }).pipe(Effect.orDie);
+
 const recordGateFact =
   (decision: "approval" | "rejection") => (fact: GateFact, atMilliseconds?: number) =>
-    Effect.gen(function* () {
-      const gate = yield* decodeGate(fact.gate);
-      const sql = yield* SqlClient.SqlClient;
-      const timestamp = new Date(atMilliseconds ?? (yield* Clock.currentTimeMillis)).toISOString();
-      if (decision === "approval") {
-        yield* sql`INSERT INTO approvals (collection_id, gate, approved_at) VALUES (${fact.collectionId}, ${gate}, ${timestamp})`;
-        return;
-      }
-      yield* sql`INSERT INTO rejections (collection_id, gate, rejected_at) VALUES (${fact.collectionId}, ${gate}, ${timestamp})`;
-    }).pipe(Effect.orDie);
+    decodeGate(fact.gate).pipe(
+      Effect.flatMap((gate) =>
+        insertGateFact(collectionTables, decision, fact.collectionId, gate, atMilliseconds),
+      ),
+      Effect.orDie,
+    );
 
 export const recordApproval = recordGateFact("approval");
 export const recordRejection = recordGateFact("rejection");
 
-/** 企画ゲート（produce）の承認が 1 件でもあるか。承認は取り消せない事実なので、NO-GO の有無は見ない。 */
-export const hasExplainerPlanApproval = (videoId: string) =>
+/**
+ * 解説動画のゲートの判定が望む判定と違うときだけ、直前の事実より後の時刻で積む。積んだら true。
+ * 承認を NO-GO より後に積むことで、やめた動画を再開できる。
+ */
+export const recordExplainerDecision = (
+  videoId: string,
+  gate: Gate,
+  decision: "approved" | "rejected",
+) =>
+  Effect.gen(function* () {
+    const state = yield* gateStateIn(explainerTables)(videoId, gate);
+    if (state.decision === decision) {
+      return false;
+    }
+    const at = afterLatestFact(yield* Clock.currentTimeMillis, state.latestTimestamp);
+    const kind = decision === "approved" ? "approval" : "rejection";
+    yield* insertGateFact(explainerTables, kind, videoId, gate, at);
+    return true;
+  });
+
+/** 指定したゲートの承認が 1 件でもあるか。承認は取り消せない事実なので、NO-GO の有無は見ない。 */
+export const hasExplainerApproval = (videoId: string, gate: Gate) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const rows =
-      yield* sql`SELECT video_id FROM explainer_approvals WHERE video_id = ${videoId} AND gate = 'produce' LIMIT 1`;
+      yield* sql`SELECT video_id FROM explainer_approvals WHERE video_id = ${videoId} AND gate = ${gate} LIMIT 1`;
     return rows.length > 0;
+  }).pipe(Effect.orDie);
+
+/** ゲート記録（承認・NO-GO の表の 1 行）。 */
+export const GateRecord = Schema.Struct({
+  gate: Gate,
+  kind: Schema.Literals(["approval", "rejection"]),
+  recordedAt: Schema.String,
+});
+
+/** 動画のゲート記録を、時刻の昇順で返す。同時刻は gate、kind の順で決定的に並べる。 */
+export const listExplainerGateRecords = (videoId: string) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const find = SqlSchema.findAll({
+      Request: Schema.String,
+      Result: GateRecord,
+      execute: (requested) =>
+        sql`SELECT gate, 'approval' AS kind, approved_at AS recordedAt FROM explainer_approvals WHERE video_id = ${requested} UNION ALL SELECT gate, 'rejection' AS kind, rejected_at AS recordedAt FROM explainer_rejections WHERE video_id = ${requested} ORDER BY recordedAt, gate, kind`,
+    });
+    return yield* find(videoId);
   }).pipe(Effect.orDie);

@@ -58,6 +58,7 @@ describe("video.status: parameters and result", () => {
         title: "T",
         updatedAt: noon,
       },
+      gateRecords: [],
       thumbnails: { candidates: [], exclusions: [] },
       videoId: "V1",
     };
@@ -88,6 +89,7 @@ describe("video.status: parameters and result", () => {
     const selection = { key: candidate.key, number: 1, round: 1, selectedAt: at };
     const status = {
       abandoned: false,
+      gateRecords: [],
       plan: { hitPattern: "shock", points: [], sources: [], title: "T", updatedAt: at },
       thumbnails: { candidates: [candidate], exclusions: [exclusion], selection },
       videoId: "V1",
@@ -105,6 +107,36 @@ describe("video.status: parameters and result", () => {
   });
 });
 
+describe("video.status: gate records in the result schema", () => {
+  const base = {
+    abandoned: false,
+    gateRecords: [{ gate: "produce", kind: "approval", recordedAt: noon }],
+    plan: { hitPattern: "shock", points: [], sources: [], title: "T", updatedAt: noon },
+    thumbnails: { candidates: [], exclusions: [] },
+    videoId: "V1",
+  };
+
+  it("accepts gate records and an awaiting gate, and rejects action fields in them", () => {
+    assert.isTrue(accepts(VideoStatusTool.successSchema, base));
+    assert.isTrue(accepts(VideoStatusTool.successSchema, { ...base, awaitingApproval: "produce" }));
+    assert.isFalse(
+      accepts(VideoStatusTool.successSchema, {
+        ...base,
+        gateRecords: [{ ...base.gateRecords[0], next: "publish" }],
+      }),
+    );
+    assert.isFalse(
+      accepts(VideoStatusTool.successSchema, { ...base, awaitingApproval: "approve" }),
+    );
+    assert.isFalse(
+      accepts(VideoStatusTool.successSchema, {
+        ...base,
+        gateRecords: [{ gate: "produce", kind: "maybe", recordedAt: noon }],
+      }),
+    );
+  });
+});
+
 describe("video.status: reading a video", () => {
   it.effect("returns the plan as recorded and abandoned: false for a fresh video", () =>
     withVideoChannel("nyaucast-video-status-fresh-", explainerConfig, () =>
@@ -118,6 +150,7 @@ describe("video.status: reading a video", () => {
 
         assert.deepStrictEqual(status, {
           abandoned: false,
+          gateRecords: [],
           plan: written.plan,
           thumbnails: { candidates: [], exclusions: [] },
           videoId: written.videoId,
@@ -447,6 +480,138 @@ describe("video.status: thumbnails", () => {
         const status = yield* videoStatus({ videoId: first.videoId });
 
         assert.deepStrictEqual(status.thumbnails, { candidates: [], exclusions: [] });
+      }),
+    ),
+  );
+});
+
+describe("video.status: gate records and the awaiting gate", () => {
+  const at = (hour: number) => `2026-10-03T${String(hour).padStart(2, "0")}:00:00.000Z`;
+
+  // 企画（noon）の後の 13 時に、候補 1-1 が選ばれた動画。
+  const seedSelected = Effect.gen(function* () {
+    yield* setClock(noon);
+    const written = yield* explainerWritePlan(planInput());
+    yield* insertCandidate({ number: 1, round: 1, videoId: written.videoId });
+    yield* insertSelection({ number: 1, round: 1, selectedAt: at(13), videoId: written.videoId });
+    return written;
+  });
+
+  it.effect("returns the approvals and NO-GOs as facts in ascending time order", () =>
+    withVideoChannel("nyaucast-video-status-records-", explainerConfig, () =>
+      Effect.gen(function* () {
+        yield* setClock(noon);
+        const written = yield* explainerWritePlan(planInput());
+        yield* insertGateFact("approval", written.videoId, "produce", at(15));
+        yield* insertGateFact("rejection", written.videoId, "produce", at(13));
+        yield* insertGateFact("approval", written.videoId, "publish", at(16));
+
+        const status = yield* videoStatus({ videoId: written.videoId });
+
+        assert.deepStrictEqual(status.gateRecords, [
+          { gate: "produce", kind: "rejection", recordedAt: at(13) },
+          { gate: "produce", kind: "approval", recordedAt: at(15) },
+          { gate: "publish", kind: "approval", recordedAt: at(16) },
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("does not return another video's gate records", () =>
+    withVideoChannel("nyaucast-video-status-records-other-", explainerConfig, () =>
+      Effect.gen(function* () {
+        yield* setClock(noon);
+        const first = yield* explainerWritePlan(planInput({ title: "First" }));
+        const other = yield* explainerWritePlan(planInput({ title: "Other" }));
+        yield* insertGateFact("approval", other.videoId, "produce", at(15));
+
+        const status = yield* videoStatus({ videoId: first.videoId });
+
+        assert.deepStrictEqual(status.gateRecords, []);
+      }),
+    ),
+  );
+
+  it.effect("awaits the produce gate when the last selection is newer than the plan", () =>
+    withVideoChannel("nyaucast-video-status-awaiting-", explainerConfig, () =>
+      Effect.gen(function* () {
+        const written = yield* seedSelected;
+
+        const status = yield* videoStatus({ videoId: written.videoId });
+
+        assert.strictEqual(status.awaitingApproval, "produce");
+      }),
+    ),
+  );
+
+  it.effect("does not await when there is no selection", () =>
+    withVideoChannel("nyaucast-video-status-awaiting-none-", explainerConfig, () =>
+      Effect.gen(function* () {
+        yield* setClock(noon);
+        const written = yield* explainerWritePlan(planInput());
+
+        const status = yield* videoStatus({ videoId: written.videoId });
+
+        assert.isUndefined(status.awaitingApproval);
+      }),
+    ),
+  );
+
+  it.effect.each([
+    ["before the plan's update", at(11)],
+    ["at the plan's update", noon],
+  ] as const)("does not await when the last selection is %s", ([, selectedAt]) =>
+    withVideoChannel("nyaucast-video-status-awaiting-stale-", explainerConfig, () =>
+      Effect.gen(function* () {
+        yield* setClock(noon);
+        const written = yield* explainerWritePlan(planInput());
+        yield* insertCandidate({ number: 1, round: 1, videoId: written.videoId });
+        yield* insertSelection({ number: 1, round: 1, selectedAt, videoId: written.videoId });
+
+        const status = yield* videoStatus({ videoId: written.videoId });
+
+        assert.isUndefined(status.awaitingApproval);
+      }),
+    ),
+  );
+
+  it.effect("stops awaiting once the plan is overwritten after the selection", () =>
+    withVideoChannel("nyaucast-video-status-awaiting-overwritten-", explainerConfig, () =>
+      Effect.gen(function* () {
+        const written = yield* seedSelected;
+        yield* setClock(at(14));
+        yield* explainerWritePlan(planInput({ title: "Revised", videoId: written.videoId }));
+
+        const status = yield* videoStatus({ videoId: written.videoId });
+
+        assert.isUndefined(status.awaitingApproval);
+      }),
+    ),
+  );
+
+  it.effect("does not await once the produce gate is approved", () =>
+    withVideoChannel("nyaucast-video-status-awaiting-approved-", explainerConfig, () =>
+      Effect.gen(function* () {
+        const written = yield* seedSelected;
+        yield* insertGateFact("approval", written.videoId, "produce", at(14));
+
+        const status = yield* videoStatus({ videoId: written.videoId });
+
+        assert.isUndefined(status.awaitingApproval);
+      }),
+    ),
+  );
+
+  it.effect("does not await an abandoned video", () =>
+    withVideoChannel("nyaucast-video-status-awaiting-abandoned-", explainerConfig, () =>
+      Effect.gen(function* () {
+        const written = yield* seedSelected;
+        yield* insertGateFact("rejection", written.videoId, "produce", at(14));
+
+        const abandoned = yield* videoStatus({ videoId: written.videoId });
+
+        assert.isTrue(abandoned.abandoned);
+        assert.isUndefined(abandoned.awaitingApproval);
       }),
     ),
   );

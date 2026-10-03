@@ -4,13 +4,19 @@ import { NodeServices } from "@effect/platform-node";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import { Command } from "effect/cli";
+import { SqlClient } from "effect/sql";
 import { TestConsole } from "effect/testing";
 
 import { explainerWritePlan } from "../src/tools/explainer.writePlan.ts";
 import { videoStatus } from "../src/tools/video.status.ts";
 import { ThumbnailFiles } from "../src/thumbnails/thumbnail-files.ts";
 import { videoCommand } from "../src/videos/cli.ts";
-import { explainerConfig, planInput, withVideoChannel } from "./explainer-helpers.ts";
+import {
+  collectionConfig,
+  explainerConfig,
+  planInput,
+  withVideoChannel,
+} from "./explainer-helpers.ts";
 import { failureFacts, selectAll, setClock } from "./helpers.ts";
 import {
   insertCandidate,
@@ -24,12 +30,17 @@ import { jpegSize, maxThumbnailBytes, noisePng, solidPng } from "./thumbnail-ima
 const noon = "2026-10-03T12:00:00.000Z";
 
 // CLI は effect/cli を in-process で実行する。DB・設定・成果物の置き場は一時チャンネルの本物。
-const inChannel = <A, E, R>(prefix: string, use: (channelRoot: string) => Effect.Effect<A, E, R>) =>
-  withVideoChannel(prefix, explainerConfig, (channelRoot) =>
-    use(channelRoot).pipe(
-      Effect.provide(ThumbnailFiles.layer(channelRoot).pipe(Layer.provide(NodeServices.layer))),
-    ),
-  );
+const inChannelOf =
+  (config: string) =>
+  <A, E, R>(prefix: string, use: (channelRoot: string) => Effect.Effect<A, E, R>) =>
+    withVideoChannel(prefix, config, (channelRoot) =>
+      use(channelRoot).pipe(
+        Effect.provide(ThumbnailFiles.layer(channelRoot).pipe(Layer.provide(NodeServices.layer))),
+      ),
+    );
+
+const inChannel = inChannelOf(explainerConfig);
+const inCollectionChannel = inChannelOf(collectionConfig);
 
 const runVideo = (args: string[]) =>
   Effect.gen(function* () {
@@ -413,6 +424,299 @@ describe("nyaucast video thumbnail <id> --file <path>", () => {
 
         assert.strictEqual(failureOf(outcome)._tag, "VideoNotFound");
         assert.isFalse(channelFileExists(channelRoot, "videos/nope/thumbnails/1-1.jpg"));
+      }),
+    ),
+  );
+});
+
+const planUpdatedAt = noon;
+const selectedAfterPlan = "2026-10-03T13:00:00.000Z";
+const later = "2026-10-03T14:00:00.000Z";
+
+const gateRows = (table: "explainer_approvals" | "explainer_rejections") =>
+  selectAll(table).pipe(
+    Effect.map((rows) =>
+      rows.map((row) => ({
+        at: String(row["approved_at"] ?? row["rejected_at"]),
+        gate: String(row["gate"]),
+        videoId: String(row["video_id"]),
+      })),
+    ),
+  );
+
+const insertApproval = (videoId: string, gate: "produce" | "publish", at: string) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`INSERT INTO explainer_approvals (video_id, gate, approved_at) VALUES (${videoId}, ${gate}, ${at})`;
+  });
+
+// 企画（noon）の後に選択を積んだ、企画ゲートの承認待ちの動画 V1。
+const seedAwaitingVideo = Effect.gen(function* () {
+  yield* seedVideo;
+  yield* insertSelection({ number: 1, round: 1, selectedAt: selectedAfterPlan, videoId: "V1" });
+});
+
+describe("nyaucast video produce <id>", () => {
+  it.effect("appends one produce approval when the last selection is newer than the plan", () =>
+    inChannel("nyaucast-video-cli-produce-", () =>
+      Effect.gen(function* () {
+        yield* seedAwaitingVideo;
+
+        const { logs, outcome } = yield* runVideo(["produce", "V1"]);
+
+        assert.strictEqual(outcome._tag, "Success");
+        const approvals = yield* gateRows("explainer_approvals");
+        assert.deepStrictEqual(
+          approvals.map((row) => [row.videoId, row.gate]),
+          [["V1", "produce"]],
+        );
+        assert.strictEqual((yield* gateRows("explainer_rejections")).length, 0);
+        assert.strictEqual(logs.length, 1);
+        assert.include(logs[0], "V1");
+        assert.include(logs[0], "produce");
+        assert.notInclude(logs[0], "してください");
+      }),
+    ),
+  );
+
+  it.effect(
+    "fails with ThumbnailSelectionRequired and writes nothing when no thumbnail is selected",
+    () =>
+      inChannel("nyaucast-video-cli-produce-noselection-", () =>
+        Effect.gen(function* () {
+          yield* seedVideo;
+
+          const { outcome } = yield* runVideo(["produce", "V1"]);
+
+          const failure = failureOf(outcome);
+          assert.strictEqual(failure._tag, "ThumbnailSelectionRequired");
+          assert.strictEqual(failureFacts(failure)["videoId"], "V1");
+          assert.strictEqual(failureFacts(failure)["planUpdatedAt"], planUpdatedAt);
+          assert.strictEqual((yield* gateRows("explainer_approvals")).length, 0);
+        }),
+      ),
+  );
+
+  it.effect.each([
+    ["before the plan's last update", "2026-10-03T11:00:00.000Z"],
+    ["at the same time as the plan's last update", planUpdatedAt],
+  ] as const)(
+    "fails with ThumbnailSelectionRequired when the last selection is %s",
+    ([, selectedAt]) =>
+      inChannel("nyaucast-video-cli-produce-stale-", () =>
+        Effect.gen(function* () {
+          yield* seedVideo;
+          yield* insertSelection({ number: 1, round: 1, selectedAt, videoId: "V1" });
+
+          const { outcome } = yield* runVideo(["produce", "V1"]);
+
+          assert.strictEqual(failureOf(outcome)._tag, "ThumbnailSelectionRequired");
+          assert.strictEqual((yield* gateRows("explainer_approvals")).length, 0);
+        }),
+      ),
+  );
+
+  it.effect(
+    "fails once the plan is overwritten after the selection, and passes after reselecting",
+    () =>
+      inChannel("nyaucast-video-cli-produce-overwritten-", () =>
+        Effect.gen(function* () {
+          yield* seedAwaitingVideo;
+          yield* setClock(later);
+          yield* explainerWritePlan(planInput({ title: "Revised", videoId: "V1" }));
+
+          const stale = yield* runVideo(["produce", "V1"]);
+
+          assert.strictEqual(failureOf(stale.outcome)._tag, "ThumbnailSelectionRequired");
+          assert.strictEqual((yield* gateRows("explainer_approvals")).length, 0);
+
+          yield* insertSelection({
+            number: 2,
+            round: 1,
+            selectedAt: "2026-10-03T15:00:00.000Z",
+            videoId: "V1",
+          });
+          const fresh = yield* runVideo(["produce", "V1"]);
+
+          assert.strictEqual(fresh.outcome._tag, "Success");
+          assert.strictEqual((yield* gateRows("explainer_approvals")).length, 1);
+        }),
+      ),
+  );
+
+  it.effect("does not append a second approval when run twice", () =>
+    inChannel("nyaucast-video-cli-produce-twice-", () =>
+      Effect.gen(function* () {
+        yield* seedAwaitingVideo;
+
+        const first = yield* runVideo(["produce", "V1"]);
+        const second = yield* runVideo(["produce", "V1"]);
+
+        assert.strictEqual(first.outcome._tag, "Success");
+        assert.strictEqual(second.outcome._tag, "Success");
+        assert.strictEqual((yield* gateRows("explainer_approvals")).length, 1);
+        assert.notStrictEqual(second.logs.at(-1), first.logs[0]);
+      }),
+    ),
+  );
+
+  it.effect("fails with VideoNotFound for an unknown video", () =>
+    inChannel("nyaucast-video-cli-produce-unknown-", () =>
+      Effect.gen(function* () {
+        const { outcome } = yield* runVideo(["produce", "nope"]);
+
+        assert.strictEqual(failureOf(outcome)._tag, "VideoNotFound");
+        assert.strictEqual((yield* gateRows("explainer_approvals")).length, 0);
+      }),
+    ),
+  );
+
+  it.effect("fails with NotExplainerChannel on a collection channel", () =>
+    inCollectionChannel("nyaucast-video-cli-produce-collection-", () =>
+      Effect.gen(function* () {
+        const { outcome } = yield* runVideo(["produce", "V1"]);
+
+        assert.strictEqual(failureOf(outcome)._tag, "NotExplainerChannel");
+        assert.strictEqual((yield* gateRows("explainer_approvals")).length, 0);
+      }),
+    ),
+  );
+});
+
+describe("nyaucast video abandon <id>", () => {
+  it.effect(
+    "appends a produce NO-GO to a video awaiting approval, and the status says abandoned",
+    () =>
+      inChannel("nyaucast-video-cli-abandon-", () =>
+        Effect.gen(function* () {
+          yield* seedAwaitingVideo;
+
+          const { logs, outcome } = yield* runVideo(["abandon", "V1"]);
+
+          assert.strictEqual(outcome._tag, "Success");
+          const rejections = yield* gateRows("explainer_rejections");
+          assert.deepStrictEqual(
+            rejections.map((row) => [row.videoId, row.gate]),
+            [["V1", "produce"]],
+          );
+          assert.strictEqual((yield* gateRows("explainer_approvals")).length, 0);
+          assert.strictEqual(logs.length, 1);
+          assert.notInclude(logs[0], "してください");
+          const status = yield* videoStatus({ videoId: "V1" });
+          assert.isTrue(status.abandoned);
+          assert.isUndefined(status.awaitingApproval);
+          assert.deepStrictEqual(
+            status.gateRecords.map((record) => [record.gate, record.kind]),
+            [["produce", "rejection"]],
+          );
+        }),
+      ),
+  );
+
+  it.effect("can abandon a video that has no selection yet", () =>
+    inChannel("nyaucast-video-cli-abandon-early-", () =>
+      Effect.gen(function* () {
+        yield* seedVideo;
+
+        const { outcome } = yield* runVideo(["abandon", "V1"]);
+
+        assert.strictEqual(outcome._tag, "Success");
+        assert.isTrue((yield* videoStatus({ videoId: "V1" })).abandoned);
+      }),
+    ),
+  );
+
+  it.effect("does not append a second NO-GO when run twice", () =>
+    inChannel("nyaucast-video-cli-abandon-twice-", () =>
+      Effect.gen(function* () {
+        yield* seedAwaitingVideo;
+
+        const first = yield* runVideo(["abandon", "V1"]);
+        const second = yield* runVideo(["abandon", "V1"]);
+
+        assert.strictEqual(first.outcome._tag, "Success");
+        assert.strictEqual(second.outcome._tag, "Success");
+        assert.strictEqual((yield* gateRows("explainer_rejections")).length, 1);
+      }),
+    ),
+  );
+
+  it.effect("resumes with a later produce: the approval is newer than the NO-GO", () =>
+    inChannel("nyaucast-video-cli-abandon-resume-", () =>
+      Effect.gen(function* () {
+        yield* seedAwaitingVideo;
+        yield* runVideo(["abandon", "V1"]);
+        assert.isTrue((yield* videoStatus({ videoId: "V1" })).abandoned);
+
+        const resumed = yield* runVideo(["produce", "V1"]);
+
+        assert.strictEqual(resumed.outcome._tag, "Success");
+        const rejectedAt = (yield* gateRows("explainer_rejections")).map((row) => row.at);
+        const approvedAt = (yield* gateRows("explainer_approvals")).map((row) => row.at);
+        assert.strictEqual(rejectedAt.length, 1);
+        assert.strictEqual(approvedAt.length, 1);
+        assert.isTrue(approvedAt[0]! > rejectedAt[0]!);
+        const status = yield* videoStatus({ videoId: "V1" });
+        assert.isFalse(status.abandoned);
+        assert.isUndefined(status.awaitingApproval);
+      }),
+    ),
+  );
+
+  it.effect("puts the NO-GO on the publish gate once produce is approved", () =>
+    inChannel("nyaucast-video-cli-abandon-publish-", () =>
+      Effect.gen(function* () {
+        yield* seedAwaitingVideo;
+        yield* runVideo(["produce", "V1"]);
+
+        const { outcome } = yield* runVideo(["abandon", "V1"]);
+
+        assert.strictEqual(outcome._tag, "Success");
+        const rejections = yield* gateRows("explainer_rejections");
+        assert.deepStrictEqual(
+          rejections.map((row) => row.gate),
+          ["publish"],
+        );
+        assert.isTrue((yield* videoStatus({ videoId: "V1" })).abandoned);
+      }),
+    ),
+  );
+
+  it.effect("is refused with VideoPublishApproved when the publish gate has an approval", () =>
+    inChannel("nyaucast-video-cli-abandon-refused-", () =>
+      Effect.gen(function* () {
+        yield* seedAwaitingVideo;
+        yield* insertApproval("V1", "publish", later);
+
+        const { outcome } = yield* runVideo(["abandon", "V1"]);
+
+        const failure = failureOf(outcome);
+        assert.strictEqual(failure._tag, "VideoPublishApproved");
+        assert.strictEqual(failureFacts(failure)["videoId"], "V1");
+        assert.strictEqual((yield* gateRows("explainer_rejections")).length, 0);
+        assert.isFalse((yield* videoStatus({ videoId: "V1" })).abandoned);
+      }),
+    ),
+  );
+
+  it.effect("fails with VideoNotFound for an unknown video", () =>
+    inChannel("nyaucast-video-cli-abandon-unknown-", () =>
+      Effect.gen(function* () {
+        const { outcome } = yield* runVideo(["abandon", "nope"]);
+
+        assert.strictEqual(failureOf(outcome)._tag, "VideoNotFound");
+        assert.strictEqual((yield* gateRows("explainer_rejections")).length, 0);
+      }),
+    ),
+  );
+
+  it.effect("fails with NotExplainerChannel on a collection channel", () =>
+    inCollectionChannel("nyaucast-video-cli-abandon-collection-", () =>
+      Effect.gen(function* () {
+        const { outcome } = yield* runVideo(["abandon", "V1"]);
+
+        assert.strictEqual(failureOf(outcome)._tag, "NotExplainerChannel");
+        assert.strictEqual((yield* gateRows("explainer_rejections")).length, 0);
       }),
     ),
   );
