@@ -147,18 +147,16 @@ function runPublishWithFakePnpm(overrides: NodeJS.ProcessEnv) {
   });
 }
 
-describe("K1 three identical check surfaces", () => {
-  test("local, pre-push, and CI cannot silently diverge from the canonical check", () => {
+describe("K1 identical check surfaces", () => {
+  test("local and CI cannot silently diverge from the canonical check", () => {
     const manifest = readJson(join(packageRoot, "package.json"));
     const scripts = requireRecord(manifest["scripts"], "package scripts");
-    const prePush = readFileSync(join(packageRoot, ".vite-hooks/pre-push"), "utf8").trim();
     const ciRuns = workflowJobs(readWorkflow("ci.yml"))
       .flatMap(jobSteps)
       .flatMap((step) => (typeof step.run === "string" ? [step.run.trim()] : []))
       .filter((command) => command.includes("check"));
 
     expect(typeof scripts["check"]).toBe("string");
-    expect(prePush).toBe(canonicalCheckCommand);
     expect(ciRuns).toEqual([canonicalCheckCommand]);
   });
 

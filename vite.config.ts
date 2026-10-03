@@ -34,9 +34,6 @@ export default defineConfig({
       },
     ],
   },
-  staged: {
-    "*.{js,jsx,ts,tsx,json,jsonc,md,yml,yaml}": "vp fmt --write",
-  },
   test: {
     passWithNoTests: true,
     projects: [
