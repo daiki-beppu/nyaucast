@@ -172,6 +172,8 @@ describe("full migration to Effect 4.0", () => {
         "explainer.assembleComposition.ts",
         "explainer.fetchTopicCandidates.ts",
         "explainer.mixAudioTrack.ts",
+        "explainer.previewCut.ts",
+        "explainer.renderCut.ts",
         "explainer.synthesizeNarration.ts",
         "explainer.writeDiagram.ts",
         "explainer.writePlan.ts",

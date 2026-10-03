@@ -10,6 +10,7 @@ import {
   NotExplainerChannel,
   type Theme,
 } from "../channel/channel-settings.ts";
+import { compositionFileKey } from "../compositions/composition.ts";
 import { VideoNotFound, requireLatestPlan } from "../db/explainer-videos.ts";
 import {
   InvalidDiagrams,
@@ -46,7 +47,6 @@ class FontUnsupported extends Schema.TaggedError<FontUnsupported>()("FontUnsuppo
   path: Schema.String,
 }) {}
 
-const compositionKey = (videoId: string) => `videos/${videoId}/compositions/long.html`;
 const hashMetaPattern = /<meta name="nyaucast-composition-hash" content="([0-9a-f]{64})">/u;
 
 export const ExplainerAssembleCompositionTool = Tool.make("explainer_assemble_composition", {
@@ -513,7 +513,7 @@ const readDiagramSources = (videoId: string, inputs: readonly SceneInput[]) =>
 
 const existingHash = (videoId: string) =>
   Effect.gen(function* () {
-    const bytes = yield* (yield* VideoFiles).read(compositionKey(videoId));
+    const bytes = yield* (yield* VideoFiles).read(compositionFileKey(videoId));
     return Option.flatMap(bytes, (value) =>
       Option.fromNullishOr(hashMetaPattern.exec(new TextDecoder().decode(value))?.[1]),
     );
@@ -554,7 +554,7 @@ export const explainerAssembleComposition = Effect.fn("explainer.assembleComposi
     timingBytes,
     sources.map(({ bytes }) => (bytes === undefined ? undefined : decoder.decode(bytes))),
   );
-  const key = compositionKey(videoId);
+  const key = compositionFileKey(videoId);
   const existing = yield* existingHash(videoId);
   if (force !== true && Option.contains(existing, hash)) {
     return { assembled: false, hash, key, videoId };

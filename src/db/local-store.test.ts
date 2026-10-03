@@ -101,7 +101,7 @@ describe("local store", () => {
     }),
   );
 
-  it.effect("records the hand-written 0001 to 0004 migrations in the migrator's table", () =>
+  it.effect("records the hand-written 0001 to 0005 migrations in the migrator's table", () =>
     Effect.gen(function* () {
       const channelRoot = yield* temporaryDirectory("nyaucast-local-store-migrator-");
       yield* openAndClose(channelRoot);
@@ -109,10 +109,55 @@ describe("local store", () => {
       const rows = migrationRows(localDatabasePath(channelRoot));
       assert.deepStrictEqual(
         rows.map((row) => row["migration_id"]),
-        [1, 2, 3, 4],
+        [1, 2, 3, 4, 5],
       );
       for (const row of rows) {
         expect(String(row["name"])).toMatch(/\S/u);
+      }
+    }),
+  );
+
+  it.effect("creates the cut export and preview tables with the columns the read model needs", () =>
+    Effect.gen(function* () {
+      const channelRoot = yield* temporaryDirectory("nyaucast-local-store-cut-tables-");
+      yield* openAndClose(channelRoot);
+      const databasePath = localDatabasePath(channelRoot);
+
+      assert.deepStrictEqual(tableColumns(databasePath, "explainer_cut_exports"), [
+        "video_id",
+        "cut",
+        "key",
+        "composition_hash",
+        "render_hash",
+        "created_at",
+      ]);
+      assert.deepStrictEqual(tableColumns(databasePath, "explainer_cut_previews"), [
+        "video_id",
+        "cut",
+        "composition_hash",
+        "created_at",
+      ]);
+    }),
+  );
+
+  it.effect("rejects a cut fact for a video that does not exist", () =>
+    Effect.gen(function* () {
+      const channelRoot = yield* temporaryDirectory("nyaucast-local-store-cut-fk-");
+
+      const outcomes = yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        return yield* Effect.all([
+          Effect.exit(
+            sql`INSERT INTO explainer_cut_exports (video_id, cut, key, composition_hash, render_hash, created_at) VALUES ('nope', 'long', 'k', 'c', 'r', '2026-10-03T00:00:00.000Z')`,
+          ),
+          Effect.exit(
+            sql`INSERT INTO explainer_cut_previews (video_id, cut, composition_hash, created_at) VALUES ('nope', 'long', 'c', '2026-10-03T00:00:00.000Z')`,
+          ),
+        ]);
+      }).pipe(Effect.provide(channelLayer(channelRoot)));
+
+      for (const outcome of outcomes) {
+        assert.isTrue(Exit.isFailure(outcome));
       }
     }),
   );
@@ -205,8 +250,8 @@ describe("local store", () => {
 
           yield* openAndClose(channelRoot);
 
-          assert.deepStrictEqual(backupNames(channelRoot), ["local.db.bak-4"]);
-          const backupPath = join(dataDirectory, "local.db.bak-4");
+          assert.deepStrictEqual(backupNames(channelRoot), ["local.db.bak-5"]);
+          const backupPath = join(dataDirectory, "local.db.bak-5");
           assert.deepStrictEqual(query(backupPath, "SELECT value FROM sentinel"), [
             { value: "before migration" },
           ]);
@@ -236,7 +281,7 @@ describe("local store", () => {
         yield* openAndClose(channelRoot);
 
         assert.deepStrictEqual(backupNames(channelRoot), []);
-        assert.strictEqual(migrationRows(localDatabasePath(channelRoot)).length, 4);
+        assert.strictEqual(migrationRows(localDatabasePath(channelRoot)).length, 5);
       }),
     );
   });
@@ -254,12 +299,12 @@ describe("local store", () => {
 
         // 0001 の DDL を再実行して "table already exists" で落ちない
         assert.isTrue(Exit.isSuccess(exit));
-        assert.deepStrictEqual(backupNames(channelRoot), ["local.db.bak-4"]);
-        assert.isTrue(readFileSync(join(channelRoot, "data", "local.db.bak-4")).equals(original));
+        assert.deepStrictEqual(backupNames(channelRoot), ["local.db.bak-5"]);
+        assert.isTrue(readFileSync(join(channelRoot, "data", "local.db.bak-5")).equals(original));
         const rows = migrationRows(databasePath);
         assert.deepStrictEqual(
           rows.map((row) => row["migration_id"]),
-          [1, 2, 3, 4],
+          [1, 2, 3, 4, 5],
         );
         assert.deepStrictEqual(query(databasePath, "SELECT id, title FROM collections"), [
           drizzleCollection,
@@ -306,9 +351,9 @@ describe("local store", () => {
         assert.isTrue(Exit.isSuccess(exit));
         assert.deepStrictEqual(
           migrationRows(databasePath).map((row) => row["migration_id"]),
-          [1, 2, 3, 4],
+          [1, 2, 3, 4, 5],
         );
-        assert.deepStrictEqual(backupNames(channelRoot), ["local.db.bak-4"]);
+        assert.deepStrictEqual(backupNames(channelRoot), ["local.db.bak-5"]);
       }),
     );
 
@@ -330,7 +375,7 @@ describe("local store", () => {
         );
         assert.deepStrictEqual(backupNames(channelRoot), [
           "local.db.bak-1787771653213",
-          "local.db.bak-4",
+          "local.db.bak-5",
         ]);
       }),
     );
@@ -388,7 +433,7 @@ describe("local store", () => {
   );
 
   describe("0002 on a database that only has 0001", () => {
-    it.effect("backs it up as local.db.bak-4, keeps its rows, and adds the explainer tables", () =>
+    it.effect("backs it up as local.db.bak-5, keeps its rows, and adds the explainer tables", () =>
       Effect.gen(function* () {
         const channelRoot = yield* temporaryDirectory("nyaucast-local-store-0002-");
         const databasePath = localDatabasePath(channelRoot);
@@ -397,6 +442,8 @@ describe("local store", () => {
         const database = new DatabaseSync(databasePath);
         try {
           for (const table of [
+            "explainer_cut_previews",
+            "explainer_cut_exports",
             "explainer_thumbnail_rejections",
             "explainer_thumbnail_selections",
             "explainer_thumbnail_exclusions",
@@ -417,9 +464,9 @@ describe("local store", () => {
 
         yield* openAndClose(channelRoot);
 
-        assert.deepStrictEqual(backupNames(channelRoot), ["local.db.bak-4"]);
+        assert.deepStrictEqual(backupNames(channelRoot), ["local.db.bak-5"]);
         assert.deepStrictEqual(
-          tableColumns(join(channelRoot, "data", "local.db.bak-4"), "explainer_videos"),
+          tableColumns(join(channelRoot, "data", "local.db.bak-5"), "explainer_videos"),
           [],
         );
         assert.deepStrictEqual(query(databasePath, "SELECT id, title FROM collections"), [
@@ -431,7 +478,7 @@ describe("local store", () => {
         ]);
         assert.deepStrictEqual(
           migrationRows(databasePath).map((row) => row["migration_id"]),
-          [1, 2, 3, 4],
+          [1, 2, 3, 4, 5],
         );
       }),
     );
@@ -442,6 +489,8 @@ describe("local store", () => {
     ["explainer_plans", "title"],
     ["explainer_approvals", "gate"],
     ["explainer_rejections", "gate"],
+    ["explainer_cut_exports", "key"],
+    ["explainer_cut_previews", "composition_hash"],
   ] as const)("enforces %s as append-only on a freshly migrated database", ([table, column]) =>
     Effect.gen(function* () {
       const channelRoot = yield* temporaryDirectory("nyaucast-local-store-explainer-append-only-");
@@ -452,6 +501,8 @@ describe("local store", () => {
         yield* sql`INSERT INTO explainer_plans (video_id, plan_key, title, points, sources, hit_pattern, recorded_at) VALUES ('v1', 'title:T', 'T', '[]', '[]', 'p', '2026-10-03T00:00:00.000Z')`;
         yield* sql`INSERT INTO explainer_approvals (video_id, gate, approved_at) VALUES ('v1', 'produce', '2026-10-03T00:00:00.000Z')`;
         yield* sql`INSERT INTO explainer_rejections (video_id, gate, rejected_at) VALUES ('v1', 'publish', '2026-10-03T00:00:00.000Z')`;
+        yield* sql`INSERT INTO explainer_cut_exports (video_id, cut, key, composition_hash, render_hash, created_at) VALUES ('v1', 'long', 'videos/v1/cuts/long/long.mp4', 'c', 'r', '2026-10-03T00:00:00.000Z')`;
+        yield* sql`INSERT INTO explainer_cut_previews (video_id, cut, composition_hash, created_at) VALUES ('v1', 'long', 'c', '2026-10-03T00:00:00.000Z')`;
         return yield* Effect.all([
           Effect.exit(sql.unsafe(`DELETE FROM ${table}`)),
           Effect.exit(sql.unsafe(`UPDATE ${table} SET ${column} = 'changed'`)),

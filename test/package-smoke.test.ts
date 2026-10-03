@@ -12,6 +12,8 @@ describe("K3 package smoke", () => {
       "explainer_assemble_composition",
       "explainer_fetch_topic_candidates",
       "explainer_mix_audio_track",
+      "explainer_preview_cut",
+      "explainer_render_cut",
       "explainer_synthesize_narration",
       "explainer_write_diagram",
       "explainer_write_plan",

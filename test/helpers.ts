@@ -126,6 +126,8 @@ export const selectAll = (
     | "approvals"
     | "collections"
     | "explainer_approvals"
+    | "explainer_cut_exports"
+    | "explainer_cut_previews"
     | "explainer_plans"
     | "explainer_rejections"
     | "explainer_thumbnail_candidates"

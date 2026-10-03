@@ -41,6 +41,7 @@
     "@effect/platform-node": "4.0.0",
     "@effect/sql-libsql": "4.0.0",
     "@mediabunny/server": "1.61.0",
+    "@puppeteer/browsers": "3.2.3",
     "effect": "4.0.0",
     "fast-xml-parser": "5.11.2",
     "google-auth-library": "11.0.2",

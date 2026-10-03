@@ -1,10 +1,14 @@
-import { Effect, Layer, Stream } from "effect";
+import { homedir } from "node:os";
+
+import { NodeServices } from "@effect/platform-node";
+import { Effect, type FileSystem, Layer, type Path, Stream } from "effect";
 import type { Toolkit } from "effect/ai";
 import { AiError, Tool } from "effect/ai";
 
 import { BgmPool } from "../src/channel/bgm-pool.ts";
 import { CollectionIds } from "../src/collections/collection-ids.ts";
 import { CollectionDirectories } from "../src/collections/directories.ts";
+import { Chrome, chromeCacheDirectory } from "../src/lib/chrome.ts";
 import { NyaucastToolHandlers, NyaucastToolkit } from "../src/mcp.ts";
 import { ThumbnailFiles } from "../src/thumbnails/thumbnail-files.ts";
 import { VideoFiles } from "../src/videos/video-files.ts";
@@ -69,6 +73,10 @@ export interface ToolChannelOptions {
   readonly gemini?: FakeGemini;
   /** 偽の codex。省略は応答を持たない偽物（`exec` は defect）。 */
   readonly codex?: FakeCodex;
+  /** 動画のファイルの置き場。省略は実ファイルの `VideoFiles.layer`。実物を包んで、処理の途中で状態を変えるテストに使う。 */
+  readonly videoFiles?:
+    | ((channelRoot: string) => Layer.Layer<VideoFiles, never, FileSystem.FileSystem | Path.Path>)
+    | undefined;
 }
 
 /**
@@ -94,10 +102,14 @@ export const withToolChannel = <A, E, R>(
             CollectionDirectories.layer(channelRoot),
             options.collectionIds ?? CollectionIds.layer,
             ThumbnailFiles.layer(channelRoot),
-            VideoFiles.layer(channelRoot),
+            (options.videoFiles ?? VideoFiles.layer)(channelRoot),
             gemini.http,
             gemini.secrets,
             codex.layer,
+            // 本物の Chrome。偽の子プロセス（codex）とは別の spawner で動く。
+            Chrome.layer({ cacheDirectory: chromeCacheDirectory(homedir()) }).pipe(
+              Layer.provide(NodeServices.layer),
+            ),
           ),
         ),
       );
