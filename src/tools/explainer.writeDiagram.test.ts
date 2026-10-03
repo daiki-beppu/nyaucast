@@ -189,6 +189,14 @@ describe("explainer.writeDiagram: writing a valid diagram", () => {
       "a transition that only appears in a CSS comment",
       '<div style="color: red; /* transition: opacity 1s */"></div>',
     ],
+    [
+      "an image-set() of inline images only",
+      `<div style="background-image: image-set('data:image/png;base64,AAAA' 1x, url(#a) 2x)"></div>`,
+    ],
+    [
+      "image-set( written as text inside a string",
+      `<div style="content: 'image-set(&quot;https://example.com/a.png&quot; 1x)'"></div>`,
+    ],
     ["a slide with a direction", '<div data-beat="1" data-enter="slide" data-from="top"></div>'],
   ] as const)("accepts %s (it is not what the rules look at)", ([, html]) =>
     inChannel("nyaucast-diagram-benign-", {}, (channelRoot) =>
@@ -254,6 +262,21 @@ const oneViolation: readonly (readonly [string, string, readonly string[]])[] = 
   [
     "an external url() in a presentation attribute",
     '<svg><rect fill="url(https://example.com/p)"/></svg>',
+    ["external-reference"],
+  ],
+  [
+    "an external bare string in image-set()",
+    `<div style='background-image: image-set("https://example.com/a.png" 1x)'></div>`,
+    ["external-reference"],
+  ],
+  [
+    "an external bare string in -webkit-image-set() after an inline one",
+    `<div style="background-image: -webkit-image-set('data:image/png;base64,AAAA' 1x, '//cdn.example.com/a.png' 2x)"></div>`,
+    ["external-reference"],
+  ],
+  [
+    "an external bare string in image-set() whose name is written with an escape",
+    `<div style='background-image: \\69mage-set("https://example.com/a.png" 1x)'></div>`,
     ["external-reference"],
   ],
   ["a CSS animation", '<div style="animation: spin 1s infinite"></div>', ["wall-clock-animation"]],

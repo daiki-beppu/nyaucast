@@ -40,7 +40,7 @@
 
 - `script`・`style`・`iframe`・`object`・`embed`・`frame`・`frameset`・`link`・`meta`・`base`・`html`・`head`・`body`・`title`・`audio`・`video`・`animate`・`animateMotion`・`animateTransform`・`set` と処理命令は書けない。名前は大文字小文字と名前空間の接頭辞を除いて照合する（`<Script>`・`<svg:script>` も同じ）
 - `on` で始まる属性（イベントハンドラ）は書けない
-- `src`・`srcset`・`poster`・`href`（`xlink:href` を含む）の値は、`#` で始まる文書内の参照か `data:image/` だけ。`srcset` は候補（記述子 `1x`・`100w` を除く各 URL）ごとに検査する。属性の値の `url(...)` も同じ
+- `src`・`srcset`・`poster`・`href`（`xlink:href` を含む）の値は、`#` で始まる文書内の参照か `data:image/` だけ。`srcset` は候補（記述子 `1x`・`100w` を除く各 URL）ごとに検査する。属性の値の `url(...)` と、`image-set(...)`（`-webkit-image-set(...)` を含む）の引数の文字列も同じ（`image-set()` は `url()` で包まない文字列も URL として読む）
 - `style` 属性に `animation` / `transition`（ベンダー接頭辞付きを含む）は書けない。CSS のコメントとエスケープ（`\61nimation` など）は、ブラウザと同じく解釈してから判定する。動きは `data-*` だけで宣言する
 - `id` と `class` は、tool が生成する `nc-` で始まる名前を使えない。`data-nc-motion` などの生成する属性も書けない
 - `id` は、図解の中でも、composition 全体（シーンをまたぐ）でも重複しない
@@ -71,7 +71,7 @@
 | `missing`               | 組み立て時に、そのシーンの図解が無い                                                                    |
 | `forbidden-element`     | 禁止された要素・処理命令                                                                                |
 | `event-handler`         | `on*` 属性                                                                                              |
-| `external-reference`    | `#` や `data:image/` 以外を指す参照・`url(...)`                                                         |
+| `external-reference`    | `#` や `data:image/` 以外を指す参照・`url(...)`・`image-set(...)` の文字列                              |
 | `wall-clock-animation`  | `style` 属性の `animation*` / `transition*`                                                             |
 | `unknown-attribute`     | 語彙にない `data-*` 属性                                                                                |
 | `invalid-position`      | 位置の構文が誤っている                                                                                  |
