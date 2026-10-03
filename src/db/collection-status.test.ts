@@ -1,81 +1,66 @@
-import { describe, expect, test } from "vite-plus/test";
+import { assert, describe, it } from "@effect/vitest";
+import { Effect } from "effect";
 
-import { withTemporaryDirectoryAsync } from "../../test/helpers";
-import { approveCollectionGate, rejectCollectionGate } from "../collections/gate-operations";
-import { createCollectionStore } from "./collections";
-import { openLocalStore } from "./local-store";
-import { deriveCollectionStatus } from "./read-model";
+import { approveCollectionGate, rejectCollectionGate } from "../collections/gate-operations.ts";
+import { insertCollection, setClock, withChannel } from "../../test/helpers.ts";
+import { deriveCollectionStatus } from "./read-model.ts";
 
 const collectionId = "01JCOLLECTION00000000000000";
+const seeded = <A, E, R>(prefix: string, use: Effect.Effect<A, E, R>) =>
+  withChannel(prefix, () =>
+    Effect.gen(function* () {
+      yield* insertCollection({ id: collectionId, title: "Night Drive" });
+      return yield* use;
+    }),
+  );
 
 describe("collection status read model", () => {
-  test("derives pending gate facts for a new collection", async () => {
-    await withTemporaryDirectoryAsync("nyaucast-fresh-status-", async (channelRoot) => {
-      const store = await openLocalStore(channelRoot);
-      try {
-        await createCollectionStore(store).create({ id: collectionId, title: "Night Drive" });
-
-        await expect(deriveCollectionStatus(store, collectionId)).resolves.toEqual({
+  it.effect("derives pending gate facts for a new collection", () =>
+    seeded(
+      "nyaucast-fresh-status-",
+      Effect.gen(function* () {
+        assert.deepStrictEqual(yield* deriveCollectionStatus(collectionId), {
           collectionId,
           gates: { produce: "pending", publish: "pending" },
           progress: { awaitingApproval: "produce", terminated: false },
         });
-      } finally {
-        await store.close();
-      }
-    });
-  });
+      }),
+    ),
+  );
 
-  test("uses the current rejection for both the gate fact and terminal progress", async () => {
-    await withTemporaryDirectoryAsync("nyaucast-rejected-status-", async (channelRoot) => {
-      const store = await openLocalStore(channelRoot);
-      try {
-        await createCollectionStore(store).create({ id: collectionId, title: "Night Drive" });
-        await rejectCollectionGate(
-          store,
-          { collectionId, gate: "produce" },
-          { now: () => new Date("2026-09-02T00:00:00.000Z") },
-        );
+  it.effect("uses the current rejection for both the gate fact and terminal progress", () =>
+    seeded(
+      "nyaucast-rejected-status-",
+      Effect.gen(function* () {
+        yield* setClock("2026-09-02T00:00:00.000Z");
+        yield* rejectCollectionGate({ collectionId, gate: "produce" });
 
-        await expect(deriveCollectionStatus(store, collectionId)).resolves.toEqual({
+        assert.deepStrictEqual(yield* deriveCollectionStatus(collectionId), {
           collectionId,
           gates: { produce: "rejected", publish: "pending" },
           progress: { terminated: true },
         });
-      } finally {
-        await store.close();
-      }
-    });
-  });
+      }),
+    ),
+  );
 
-  test("a later approval replaces rejection as the current fact without deleting history", async () => {
-    await withTemporaryDirectoryAsync("nyaucast-approved-status-", async (channelRoot) => {
-      const store = await openLocalStore(channelRoot);
-      try {
-        await createCollectionStore(store).create({ id: collectionId, title: "Night Drive" });
-        await rejectCollectionGate(
-          store,
-          { collectionId, gate: "produce" },
-          {
-            now: () => new Date("2026-09-02T00:00:00.000Z"),
-          },
-        );
-        await approveCollectionGate(
-          store,
-          { collectionId, gate: "produce" },
-          {
-            now: () => new Date("2026-09-02T01:00:00.000Z"),
-          },
-        );
+  it.effect(
+    "a later approval replaces rejection as the current fact without deleting history",
+    () =>
+      seeded(
+        "nyaucast-approved-status-",
+        Effect.gen(function* () {
+          yield* setClock("2026-09-02T00:00:00.000Z");
+          yield* rejectCollectionGate({ collectionId, gate: "produce" });
+          yield* setClock("2026-09-02T01:00:00.000Z");
+          yield* approveCollectionGate({ collectionId, gate: "produce" });
 
-        await expect(deriveCollectionStatus(store, collectionId)).resolves.toEqual({
-          collectionId,
-          gates: { produce: "approved", publish: "pending" },
-          progress: { terminated: false },
-        });
-      } finally {
-        await store.close();
-      }
-    });
-  });
+          assert.deepStrictEqual(yield* deriveCollectionStatus(collectionId), {
+            collectionId,
+            gates: { produce: "approved", publish: "pending" },
+            progress: { terminated: false },
+          });
+        }),
+      ),
+  );
 });

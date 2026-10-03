@@ -1,14 +1,18 @@
-import { z, ZodError } from "zod";
+import { assert, describe, expect, it, vi } from "@effect/vitest";
+import { Clock, Effect, Fiber, Layer, Schema } from "effect";
+import { HttpBody, HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
+import { TestClock } from "effect/testing";
 
-import { describe, expect, test, vi } from "vite-plus/test";
+import { YouTubeAuth } from "./auth.ts";
+import { YouTubeClient } from "./client.ts";
 
-import { createYouTubeClient } from "./client";
-
-const responseSchema = z.object({ id: z.string(), title: z.string() }).strict();
+const responseSchema = Schema.Struct({ id: Schema.String, title: Schema.String });
 const accessToken = "ACCESS_TOKEN_SENTINEL";
 const uploadStartUrl = "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable";
 const uploadSessionUrl =
   "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&upload_id=session-1";
+const videoUrl = "https://youtube.googleapis.com/youtube/v3/videos";
+const night = { id: "video-1", title: "Night Drive" };
 
 function jsonResponse(body: unknown, status = 200): Response {
   return Response.json(body, { status });
@@ -27,59 +31,98 @@ function googleError(status: number, reasons: string[]): Response {
   );
 }
 
-function createFixture(
-  responses: Response[],
-  inspectRequest?: (init?: RequestInit) => Promise<void>,
-) {
-  const pending = [...responses];
-  const auth = {
-    getAccessToken: vi.fn().mockResolvedValue(accessToken),
-    refreshAccessToken: vi.fn().mockResolvedValue("REFRESHED_ACCESS_TOKEN"),
-  };
-  const fetch = vi.fn(async (_input: string, init?: RequestInit) => {
-    await inspectRequest?.(init);
-    const response = pending.shift();
-    if (response === undefined) {
-      throw new Error("test response queue is empty");
-    }
-    return response;
-  });
-  const sleep = vi.fn().mockResolvedValue(undefined);
-  const client = createYouTubeClient({ auth, fetch, random: () => 0, sleep });
-  return { auth, client, fetch, sleep };
+interface RecordedCall {
+  readonly authorization: string | undefined;
+  readonly body: unknown;
+  readonly bodyText: string | undefined;
+  readonly headers: Record<string, string | undefined>;
+  readonly method: string;
+  readonly at: number;
+  readonly url: string;
 }
 
-function oneShotBody(contents: string): ReadableStream<Uint8Array> {
-  return new ReadableStream({
-    start(controller) {
-      controller.enqueue(new TextEncoder().encode(contents));
-      controller.close();
-    },
+// 偽の YouTube: 呼ばれた順に記録し（時刻は Clock から。TestClock が進めた仮想時刻）、用意した応答を順に返す。
+function createFixture(responses: readonly Response[]) {
+  const pending = [...responses];
+  const calls: RecordedCall[] = [];
+  const getAccessToken = vi.fn(() => Effect.succeed(accessToken));
+  const refreshAccessToken = vi.fn(() => Effect.succeed("REFRESHED_ACCESS_TOKEN"));
+  const auth = YouTubeAuth.of({
+    authenticate: () => Effect.void,
+    getAccessToken,
+    refreshAccessToken,
   });
+  const http = HttpClient.make((request, url) =>
+    Effect.gen(function* () {
+      calls.push({
+        at: yield* Clock.currentTimeMillis,
+        authorization: request.headers["authorization"],
+        body: request.body,
+        bodyText:
+          request.body._tag === "Uint8Array"
+            ? new TextDecoder().decode(request.body.body)
+            : undefined,
+        headers: { ...request.headers },
+        method: request.method,
+        url: url.toString(),
+      });
+      const response = pending.shift();
+      if (response === undefined) {
+        return yield* Effect.die("test response queue is empty");
+      }
+      return HttpClientResponse.fromWeb(request, response);
+    }),
+  );
+  const layer = YouTubeClient.layer.pipe(
+    Layer.provide(Layer.succeed(YouTubeAuth, auth)),
+    Layer.provide(Layer.succeed(HttpClient.HttpClient, http)),
+  );
+  return { calls, getAccessToken, layer, refreshAccessToken };
 }
+
+type Fixture = ReturnType<typeof createFixture>;
+type Request = Parameters<YouTubeClient["Service"]["request"]>[0];
+
+// 再試行の待ちは Effect.sleep なので、request を別 fiber で走らせ TestClock を進めて完了させる。
+const requestWith = (fixture: Fixture, request: Request) =>
+  Effect.gen(function* () {
+    const client = yield* YouTubeClient;
+    const fiber = yield* Effect.forkChild(Effect.result(client.request(request)));
+    yield* TestClock.adjust("1 hour");
+    return yield* Fiber.join(fiber);
+  }).pipe(Effect.provide(fixture.layer));
+
+const succeeded = <A>(result: { _tag: string; success?: A }): A => {
+  assert.strictEqual(result._tag, "Success");
+  return result.success as A;
+};
+const failed = (result: { _tag: string; failure?: unknown }) => {
+  assert.strictEqual(result._tag, "Failure");
+  return result.failure as { _tag: string; reason?: string; status?: number };
+};
 
 describe("YouTube REST client", () => {
-  test("sends a REST request with the channel access token and parses a valid response", async () => {
-    const fixture = createFixture([jsonResponse({ id: "video-1", title: "Night Drive" })]);
+  it.effect("sends a REST request with the channel access token and parses a valid response", () =>
+    Effect.gen(function* () {
+      const fixture = createFixture([jsonResponse(night)]);
 
-    await expect(
-      fixture.client.request({
+      const result = yield* requestWith(fixture, {
         channel: "deepfocus365",
-        init: { method: "GET" },
+        method: "GET",
         schema: responseSchema,
-        url: "https://youtube.googleapis.com/youtube/v3/videos?id=video-1",
-      }),
-    ).resolves.toEqual({ id: "video-1", title: "Night Drive" });
+        url: `${videoUrl}?id=video-1`,
+      });
 
-    expect(fixture.fetch).toHaveBeenCalledOnce();
-    const [url, init] = fixture.fetch.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe("https://youtube.googleapis.com/youtube/v3/videos?id=video-1");
-    expect(init.method).toBe("GET");
-    expect(new Headers(init.headers).get("authorization")).toBe(`Bearer ${accessToken}`);
-    expect(fixture.auth.getAccessToken).toHaveBeenCalledWith("deepfocus365");
-  });
+      assert.deepStrictEqual(succeeded(result), night);
+      assert.strictEqual(fixture.calls.length, 1);
+      assert.strictEqual(fixture.calls[0]?.url, `${videoUrl}?id=video-1`);
+      assert.strictEqual(fixture.calls[0]?.method, "GET");
+      assert.strictEqual(fixture.calls[0]?.authorization, `Bearer ${accessToken}`);
+      expect(fixture.getAccessToken).toHaveBeenCalledWith("deepfocus365");
+    }),
+  );
 
-  test.each([
+  it.effect.each([
     "https://youtube.googleapis.com.attacker.example/collect",
     "http://youtube.googleapis.com/youtube/v3/videos",
     "https://www.googleapis.com.attacker.example/upload/youtube/v3/videos",
@@ -87,309 +130,350 @@ describe("YouTube REST client", () => {
     "https://www.googleapis.com:444/upload/youtube/v3/videos?uploadType=resumable",
     "https://www.googleapis.com/drive/v3/files",
     "https://www.googleapis.com/upload/youtube/v3/videos/extra",
-  ])("rejects untrusted URL %s before accessing credentials", async (url) => {
-    const fixture = createFixture([]);
+    "not a url",
+  ])("fails for untrusted URL %s before accessing credentials", (url) =>
+    Effect.gen(function* () {
+      const fixture = createFixture([]);
 
-    await expect(
-      fixture.client.request({
+      const result = yield* requestWith(fixture, {
         channel: "deepfocus365",
         schema: responseSchema,
         url,
-      }),
-    ).rejects.toThrow("https://youtube.googleapis.com");
+      });
 
-    expect(fixture.auth.getAccessToken).not.toHaveBeenCalled();
-    expect(fixture.auth.refreshAccessToken).not.toHaveBeenCalled();
-    expect(fixture.fetch).not.toHaveBeenCalled();
-    expect(fixture.sleep).not.toHaveBeenCalled();
-  });
-
-  test.each([uploadStartUrl, uploadSessionUrl])(
-    "sends an authenticated request to the YouTube upload URL %s",
-    async (url) => {
-      const fixture = createFixture([jsonResponse({ id: "video-1", title: "Night Drive" })]);
-
-      await expect(
-        fixture.client.request({
-          channel: "deepfocus365",
-          init: { method: "POST" },
-          schema: responseSchema,
-          url,
-        }),
-      ).resolves.toEqual({ id: "video-1", title: "Night Drive" });
-
-      expect(fixture.auth.getAccessToken).toHaveBeenCalledWith("deepfocus365");
-      expect(fixture.fetch).toHaveBeenCalledOnce();
-      const [sentUrl, init] = fixture.fetch.mock.calls[0] as unknown as [string, RequestInit];
-      expect(sentUrl).toBe(url);
-      expect(new Headers(init.headers).get("authorization")).toBe(`Bearer ${accessToken}`);
-    },
+      assert.strictEqual(failed(result)._tag, "UntrustedYouTubeUrl");
+      expect(fixture.getAccessToken).not.toHaveBeenCalled();
+      expect(fixture.refreshAccessToken).not.toHaveBeenCalled();
+      assert.deepStrictEqual(fixture.calls, []);
+    }),
   );
 
-  test("reuses the validated upload session URL after refreshing an unauthorized token", async () => {
-    const fixture = createFixture([
-      googleError(401, ["authError"]),
-      jsonResponse({ id: "video-1", title: "Night Drive" }),
-    ]);
+  it.effect.each([uploadStartUrl, uploadSessionUrl])(
+    "sends an authenticated request to the YouTube upload URL %s",
+    (url) =>
+      Effect.gen(function* () {
+        const fixture = createFixture([jsonResponse(night)]);
 
-    await expect(
-      fixture.client.request({
+        const result = yield* requestWith(fixture, {
+          channel: "deepfocus365",
+          method: "POST",
+          schema: responseSchema,
+          url,
+        });
+
+        assert.deepStrictEqual(succeeded(result), night);
+        expect(fixture.getAccessToken).toHaveBeenCalledWith("deepfocus365");
+        assert.strictEqual(fixture.calls.length, 1);
+        assert.strictEqual(fixture.calls[0]?.url, url);
+        assert.strictEqual(fixture.calls[0]?.authorization, `Bearer ${accessToken}`);
+      }),
+  );
+
+  it.effect("reuses the validated upload session URL after refreshing an unauthorized token", () =>
+    Effect.gen(function* () {
+      const fixture = createFixture([googleError(401, ["authError"]), jsonResponse(night)]);
+
+      const result = yield* requestWith(fixture, {
         channel: "deepfocus365",
         schema: responseSchema,
         url: uploadSessionUrl,
-      }),
-    ).resolves.toEqual({ id: "video-1", title: "Night Drive" });
+      });
 
-    expect(fixture.auth.refreshAccessToken).toHaveBeenCalledOnce();
-    expect(fixture.fetch.mock.calls.map(([url]) => url)).toEqual([
-      uploadSessionUrl,
-      uploadSessionUrl,
-    ]);
-    const [, retryInit] = fixture.fetch.mock.calls[1] as unknown as [string, RequestInit];
-    expect(new Headers(retryInit.headers).get("authorization")).toBe(
-      "Bearer REFRESHED_ACCESS_TOKEN",
-    );
-  });
+      assert.deepStrictEqual(succeeded(result), night);
+      expect(fixture.refreshAccessToken).toHaveBeenCalledOnce();
+      assert.deepStrictEqual(
+        fixture.calls.map((call) => call.url),
+        [uploadSessionUrl, uploadSessionUrl],
+      );
+      assert.strictEqual(fixture.calls[1]?.authorization, "Bearer REFRESHED_ACCESS_TOKEN");
+    }),
+  );
 
-  test("reuses the validated upload session URL for a backoff retry", async () => {
-    const fixture = createFixture([
-      googleError(503, ["backendError"]),
-      jsonResponse({ id: "video-1", title: "Night Drive" }),
-    ]);
+  it.effect("reuses the validated upload session URL for a backoff retry", () =>
+    Effect.gen(function* () {
+      const fixture = createFixture([googleError(503, ["backendError"]), jsonResponse(night)]);
 
-    await expect(
-      fixture.client.request({
+      const result = yield* requestWith(fixture, {
         channel: "deepfocus365",
         schema: responseSchema,
         url: uploadSessionUrl,
+      });
+
+      assert.deepStrictEqual(succeeded(result), night);
+      assert.deepStrictEqual(
+        fixture.calls.map((call) => call.url),
+        [uploadSessionUrl, uploadSessionUrl],
+      );
+      assert.isAbove(fixture.calls[1]!.at - fixture.calls[0]!.at, 0);
+    }),
+  );
+
+  it.effect(
+    "fails with a tagged failure, without retrying, when an upload response violates the caller schema",
+    () =>
+      Effect.gen(function* () {
+        const fixture = createFixture([jsonResponse({ id: "video-1" })]);
+
+        const result = yield* requestWith(fixture, {
+          channel: "deepfocus365",
+          schema: responseSchema,
+          url: uploadStartUrl,
+        });
+
+        assert.strictEqual(failed(result)._tag, "YouTubeResponseInvalid");
+        assert.strictEqual(fixture.calls.length, 1);
       }),
-    ).resolves.toEqual({ id: "video-1", title: "Night Drive" });
+  );
 
-    expect(fixture.sleep).toHaveBeenCalledOnce();
-    expect(fixture.fetch.mock.calls.map(([url]) => url)).toEqual([
-      uploadSessionUrl,
-      uploadSessionUrl,
-    ]);
-  });
+  it.effect(
+    "fails with a tagged failure, without retrying, when a successful response violates the caller schema",
+    () =>
+      Effect.gen(function* () {
+        const fixture = createFixture([jsonResponse({ id: "video-1" })]);
 
-  test("fails loudly when an upload response violates the caller schema", async () => {
-    const fixture = createFixture([jsonResponse({ id: "video-1" })]);
+        const result = yield* requestWith(fixture, {
+          channel: "deepfocus365",
+          schema: responseSchema,
+          url: `${videoUrl}?id=video-1`,
+        });
 
-    await expect(
-      fixture.client.request({
+        assert.strictEqual(failed(result)._tag, "YouTubeResponseInvalid");
+        assert.strictEqual(fixture.calls.length, 1);
+        assert.strictEqual(fixture.calls[0]?.at, 0);
+      }),
+  );
+
+  it.effect("keeps the validated URL for retries when the caller mutates the request", () =>
+    Effect.gen(function* () {
+      const fixture = createFixture([googleError(503, ["backendError"]), jsonResponse(night)]);
+      const request = { channel: "deepfocus365", schema: responseSchema, url: videoUrl };
+      fixture.getAccessToken.mockImplementation(() =>
+        Effect.sync(() => {
+          request.url = "https://youtube.googleapis.com.attacker.example/collect";
+          return accessToken;
+        }),
+      );
+
+      const result = yield* requestWith(fixture, request);
+
+      assert.deepStrictEqual(succeeded(result), night);
+      assert.deepStrictEqual(
+        fixture.calls.map((call) => call.url),
+        [videoUrl, videoUrl],
+      );
+    }),
+  );
+
+  it.effect(
+    "refreshes once after an unauthorized response and retries with the refreshed token, building a fresh body each attempt",
+    () =>
+      Effect.gen(function* () {
+        const fixture = createFixture([googleError(401, ["authError"]), jsonResponse(night)]);
+        const body = vi.fn(() => HttpBody.text("request-payload"));
+
+        const result = yield* requestWith(fixture, {
+          body,
+          channel: "deepfocus365",
+          method: "POST",
+          schema: responseSchema,
+          url: `${videoUrl}?id=video-1`,
+        });
+
+        assert.deepStrictEqual(succeeded(result), night);
+        expect(fixture.refreshAccessToken).toHaveBeenCalledOnce();
+        expect(fixture.refreshAccessToken).toHaveBeenCalledWith("deepfocus365");
+        assert.strictEqual(fixture.calls.length, 2);
+        assert.strictEqual(fixture.calls[1]?.authorization, "Bearer REFRESHED_ACCESS_TOKEN");
+        expect(body).toHaveBeenCalledTimes(2);
+        assert.notStrictEqual(fixture.calls[0]?.body, fixture.calls[1]?.body);
+        assert.deepStrictEqual(
+          fixture.calls.map((call) => call.bodyText),
+          ["request-payload", "request-payload"],
+        );
+      }),
+  );
+
+  it.effect("refreshes only once: a second unauthorized response fails", () =>
+    Effect.gen(function* () {
+      const fixture = createFixture([
+        googleError(401, ["authError"]),
+        googleError(401, ["authError"]),
+        jsonResponse(night),
+      ]);
+
+      const result = yield* requestWith(fixture, {
         channel: "deepfocus365",
         schema: responseSchema,
-        url: uploadStartUrl,
+        url: videoUrl,
+      });
+
+      assert.strictEqual(failed(result)._tag, "YouTubeHttpFailure");
+      assert.strictEqual(failed(result).status, 401);
+      expect(fixture.refreshAccessToken).toHaveBeenCalledOnce();
+      assert.strictEqual(fixture.calls.length, 2);
+    }),
+  );
+
+  it.effect(
+    "sends the caller's headers on every attempt, and never lets them replace authorization",
+    () =>
+      Effect.gen(function* () {
+        const fixture = createFixture([googleError(503, ["backendError"]), jsonResponse(night)]);
+
+        const result = yield* requestWith(fixture, {
+          channel: "deepfocus365",
+          headers: { authorization: "Bearer caller-supplied", "content-range": "bytes 0-9/10" },
+          method: "PUT",
+          schema: responseSchema,
+          url: uploadSessionUrl,
+        });
+
+        assert.deepStrictEqual(succeeded(result), night);
+        for (const call of fixture.calls) {
+          assert.strictEqual(call.headers["content-range"], "bytes 0-9/10");
+          assert.strictEqual(call.authorization, `Bearer ${accessToken}`);
+        }
       }),
-    ).rejects.toBeInstanceOf(ZodError);
+  );
 
-    expect(fixture.fetch).toHaveBeenCalledOnce();
-    expect(fixture.sleep).not.toHaveBeenCalled();
-  });
-
-  test("keeps the validated URL for retries when the caller mutates the request", async () => {
-    const allowedUrl = "https://youtube.googleapis.com/youtube/v3/videos";
-    const request = {
-      channel: "deepfocus365",
-      schema: responseSchema,
-      url: allowedUrl,
-    };
-    const pending = [
-      googleError(503, ["backendError"]),
-      jsonResponse({ id: "video-1", title: "Night Drive" }),
-    ];
-    const auth = {
-      getAccessToken: vi.fn(async () => {
-        request.url = "https://youtube.googleapis.com.attacker.example/collect";
-        return accessToken;
-      }),
-      refreshAccessToken: vi.fn(),
-    };
-    const fetch = vi.fn(async (_input: string) => {
-      const response = pending.shift();
-      if (response === undefined) throw new Error("test response queue is empty");
-      return response;
-    });
-    const sleep = vi.fn(async () => {
-      request.url = "http://youtube.googleapis.com/youtube/v3/videos";
-    });
-    const client = createYouTubeClient({ auth, fetch, random: () => 0, sleep });
-
-    await expect(client.request(request)).resolves.toEqual({
-      id: "video-1",
-      title: "Night Drive",
-    });
-
-    expect(fetch).toHaveBeenCalledTimes(2);
-    expect(fetch.mock.calls.map(([url]) => url)).toEqual([allowedUrl, allowedUrl]);
-  });
-
-  test("fails loudly without retrying when a successful response violates the caller schema", async () => {
-    const fixture = createFixture([jsonResponse({ id: "video-1" })]);
-
-    const request = fixture.client.request({
-      channel: "deepfocus365",
-      schema: responseSchema,
-      url: "https://youtube.googleapis.com/youtube/v3/videos?id=video-1",
-    });
-
-    await expect(request).rejects.toBeInstanceOf(ZodError);
-    expect(fixture.fetch).toHaveBeenCalledOnce();
-    expect(fixture.sleep).not.toHaveBeenCalled();
-  });
-
-  test("refreshes once after an unauthorized response and retries with the refreshed token", async () => {
-    const requestBodies: BodyInit[] = [];
-    const requestContents: string[] = [];
-    const fixture = createFixture(
-      [googleError(401, ["authError"]), jsonResponse({ id: "video-1", title: "Night Drive" })],
-      async (init) => {
-        if (init?.body === undefined || init.body === null) throw new Error("missing request body");
-        requestBodies.push(init.body);
-        requestContents.push(await new Response(init.body).text());
-      },
-    );
-    const body = vi.fn(() => oneShotBody("request-payload"));
-
-    await expect(
-      fixture.client.request({
-        body,
-        channel: "deepfocus365",
-        init: { method: "POST" },
-        schema: responseSchema,
-        url: "https://youtube.googleapis.com/youtube/v3/videos?id=video-1",
-      }),
-    ).resolves.toEqual({ id: "video-1", title: "Night Drive" });
-
-    expect(fixture.auth.refreshAccessToken).toHaveBeenCalledOnce();
-    expect(fixture.auth.refreshAccessToken).toHaveBeenCalledWith("deepfocus365");
-    expect(fixture.fetch).toHaveBeenCalledTimes(2);
-    const [, secondInit] = fixture.fetch.mock.calls[1] as unknown as [string, RequestInit];
-    expect(new Headers(secondInit.headers).get("authorization")).toBe(
-      "Bearer REFRESHED_ACCESS_TOKEN",
-    );
-    expect(body).toHaveBeenCalledTimes(2);
-    expect(requestBodies[0]).not.toBe(requestBodies[1]);
-    expect(requestContents).toEqual(["request-payload", "request-payload"]);
-  });
-
-  test.each([
+  const retryable = [
     { response: () => googleError(503, ["backendError"]), status: 503 },
     { response: () => googleError(429, ["rateLimitExceeded"]), status: 429 },
     { response: () => googleError(403, ["quotaExceeded"]), status: 403 },
-  ])("retries HTTP $status at exponentially increasing delays", async ({ response }) => {
-    const requestBodies: BodyInit[] = [];
-    const requestContents: string[] = [];
-    const fixture = createFixture(
-      [response(), response(), jsonResponse({ id: "video-1", title: "Night Drive" })],
-      async (init) => {
-        if (init?.body === undefined || init.body === null) throw new Error("missing request body");
-        requestBodies.push(init.body);
-        requestContents.push(await new Response(init.body).text());
-      },
-    );
-    const body = vi.fn(() => oneShotBody("request-payload"));
+  ];
 
-    await expect(
-      fixture.client.request({
-        body,
-        channel: "deepfocus365",
-        init: { method: "POST" },
-        schema: responseSchema,
-        url: "https://youtube.googleapis.com/youtube/v3/videos",
+  it.effect.each(retryable)(
+    "retries HTTP $status at exponentially increasing delays",
+    ({ response }) =>
+      Effect.gen(function* () {
+        const fixture = createFixture([response(), response(), jsonResponse(night)]);
+        const body = vi.fn(() => HttpBody.text("request-payload"));
+
+        const result = yield* requestWith(fixture, {
+          body,
+          channel: "deepfocus365",
+          method: "POST",
+          schema: responseSchema,
+          url: videoUrl,
+        });
+
+        assert.deepStrictEqual(succeeded(result), night);
+        assert.strictEqual(fixture.calls.length, 3);
+        expect(body).toHaveBeenCalledTimes(3);
+        assert.strictEqual(new Set(fixture.calls.map((call) => call.body)).size, 3);
+        assert.deepStrictEqual(
+          fixture.calls.map((call) => call.bodyText),
+          ["request-payload", "request-payload", "request-payload"],
+        );
+        const [first, second, third] = fixture.calls.map((call) => call.at) as [
+          number,
+          number,
+          number,
+        ];
+        // 遅延は 1000ms × 2^attempt × (1 + 乱数 [0,1))
+        assert.isAtLeast(second - first, 1000);
+        assert.isBelow(second - first, 2000);
+        assert.isAtLeast(third - second, 2000);
+        assert.isBelow(third - second, 4000);
       }),
-    ).resolves.toEqual({ id: "video-1", title: "Night Drive" });
+  );
 
-    expect(fixture.fetch).toHaveBeenCalledTimes(3);
-    expect(fixture.sleep).toHaveBeenCalledTimes(2);
-    const firstDelay = fixture.sleep.mock.calls[0]?.[0] as number;
-    const secondDelay = fixture.sleep.mock.calls[1]?.[0] as number;
-    expect(firstDelay).toBeGreaterThan(0);
-    expect(secondDelay).toBe(firstDelay * 2);
-    expect(body).toHaveBeenCalledTimes(3);
-    expect(new Set(requestBodies).size).toBe(3);
-    expect(requestContents).toEqual(["request-payload", "request-payload", "request-payload"]);
-  });
+  it.effect("stops after three retryable HTTP responses", () =>
+    Effect.gen(function* () {
+      const fixture = createFixture([
+        googleError(503, ["backendError"]),
+        googleError(503, ["backendError"]),
+        googleError(503, ["backendError"]),
+        jsonResponse({ id: "video-1", title: "must not be reached" }),
+      ]);
 
-  test("stops after three retryable HTTP responses", async () => {
-    const fixture = createFixture([
-      googleError(503, ["backendError"]),
-      googleError(503, ["backendError"]),
-      googleError(503, ["backendError"]),
-      jsonResponse({ id: "video-1", title: "must not be reached" }),
-    ]);
-
-    await expect(
-      fixture.client.request({
+      const result = yield* requestWith(fixture, {
         channel: "deepfocus365",
         schema: responseSchema,
-        url: "https://youtube.googleapis.com/youtube/v3/videos",
+        url: videoUrl,
+      });
+
+      const failure = failed(result);
+      assert.strictEqual(failure._tag, "YouTubeHttpFailure");
+      assert.strictEqual(failure.status, 503);
+      assert.strictEqual(fixture.calls.length, 3);
+    }),
+  );
+
+  it.effect(
+    "fails a non-quota forbidden response immediately, carrying the status and reason",
+    () =>
+      Effect.gen(function* () {
+        const fixture = createFixture([googleError(403, ["commentsDisabled"])]);
+
+        const result = yield* requestWith(fixture, {
+          channel: "deepfocus365",
+          schema: responseSchema,
+          url: "https://youtube.googleapis.com/youtube/v3/commentThreads",
+        });
+
+        const failure = failed(result);
+        assert.strictEqual(failure._tag, "YouTubeHttpFailure");
+        assert.strictEqual(failure.status, 403);
+        assert.strictEqual(failure.reason, "commentsDisabled");
+        assert.strictEqual(fixture.calls.length, 1);
       }),
-    ).rejects.toThrow();
-    expect(fixture.fetch).toHaveBeenCalledTimes(3);
-    expect(fixture.sleep).toHaveBeenCalledTimes(2);
-  });
+  );
 
-  test("fails a non-quota forbidden response immediately", async () => {
-    const fixture = createFixture([googleError(403, ["commentsDisabled"])]);
+  it.effect("uses the first Google error reason for both retry and the terminal failure", () =>
+    Effect.gen(function* () {
+      const fixture = createFixture([
+        googleError(403, ["quotaExceeded", "commentsDisabled"]),
+        googleError(403, ["commentsDisabled", "quotaExceeded"]),
+      ]);
 
-    const error = await fixture.client
-      .request({
+      const result = yield* requestWith(fixture, {
         channel: "deepfocus365",
         schema: responseSchema,
         url: "https://youtube.googleapis.com/youtube/v3/commentThreads",
-      })
-      .catch((reason: unknown) => reason);
+      });
 
-    expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toContain("403");
-    expect((error as Error).message).toContain("commentsDisabled");
-    expect(fixture.fetch).toHaveBeenCalledOnce();
-    expect(fixture.sleep).not.toHaveBeenCalled();
-  });
+      const failure = failed(result);
+      assert.strictEqual(fixture.calls.length, 2);
+      assert.strictEqual(failure._tag, "YouTubeHttpFailure");
+      assert.strictEqual(failure.reason, "commentsDisabled");
+    }),
+  );
 
-  test("uses the first Google error reason for both retry and the terminal error", async () => {
-    const fixture = createFixture([
-      googleError(403, ["quotaExceeded", "commentsDisabled"]),
-      googleError(403, ["commentsDisabled", "quotaExceeded"]),
-    ]);
+  it.effect(
+    "fails with a tagged failure that does not expose the access token when the HTTP boundary fails",
+    () =>
+      Effect.gen(function* () {
+        const auth = YouTubeAuth.of({
+          authenticate: () => Effect.void,
+          getAccessToken: () => Effect.succeed(accessToken),
+          refreshAccessToken: () => Effect.succeed("unused"),
+        });
+        const http = HttpClient.make((request) =>
+          Effect.fail(
+            new HttpClientError.HttpClientError({
+              reason: new HttpClientError.TransportError({
+                cause: new Error(`network error for Bearer ${accessToken}`),
+                request,
+              }),
+            }),
+          ),
+        );
+        const layer = YouTubeClient.layer.pipe(
+          Layer.provide(Layer.succeed(YouTubeAuth, auth)),
+          Layer.provide(Layer.succeed(HttpClient.HttpClient, http)),
+        );
 
-    const error = await fixture.client
-      .request({
-        channel: "deepfocus365",
-        schema: responseSchema,
-        url: "https://youtube.googleapis.com/youtube/v3/commentThreads",
-      })
-      .catch((reason: unknown) => reason);
+        const failure = yield* Effect.gen(function* () {
+          const client = yield* YouTubeClient;
+          return yield* Effect.flip(
+            client.request({ channel: "deepfocus365", schema: responseSchema, url: videoUrl }),
+          );
+        }).pipe(Effect.provide(layer));
 
-    expect(fixture.fetch).toHaveBeenCalledTimes(2);
-    expect(fixture.sleep).toHaveBeenCalledOnce();
-    expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toContain("commentsDisabled");
-    expect((error as Error).message).not.toContain("quotaExceeded");
-  });
-
-  test("does not expose the access token when the HTTP boundary fails", async () => {
-    const auth = {
-      getAccessToken: vi.fn().mockResolvedValue(accessToken),
-      refreshAccessToken: vi.fn(),
-    };
-    const client = createYouTubeClient({
-      auth,
-      fetch: vi.fn().mockRejectedValue(new Error(`network error for Bearer ${accessToken}`)),
-      random: () => 0,
-      sleep: vi.fn(),
-    });
-
-    const error = await client
-      .request({
-        channel: "deepfocus365",
-        schema: responseSchema,
-        url: "https://youtube.googleapis.com/youtube/v3/videos",
-      })
-      .catch((reason: unknown) => reason);
-
-    expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).not.toContain(accessToken);
-  });
+        assert.strictEqual(failure._tag, "YouTubeHttpBoundaryFailed");
+        assert.isFalse(JSON.stringify(failure).includes(accessToken));
+        assert.isFalse(failure.message.includes(accessToken));
+      }),
+  );
 });

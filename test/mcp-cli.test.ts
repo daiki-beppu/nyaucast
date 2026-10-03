@@ -3,7 +3,7 @@ import { once } from "node:events";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-import { describe, expect, test } from "vite-plus/test";
+import { describe, expect, test } from "@effect/vitest";
 
 import { withTemporaryDirectoryAsync } from "./helpers";
 import { createJsonRpcClient, requireRecord, stopChildProcess } from "./mcp-stdio-helpers";
@@ -115,6 +115,62 @@ describe("nyaucast mcp", () => {
         );
         expect(existsSync(join(channelRoot, String(structuredContent["dir"])))).toBe(true);
         expect(existsSync(join(channelRoot, "data", "local.db"))).toBe(true);
+      } finally {
+        await stopChildProcess(server);
+      }
+    });
+  });
+
+  test("publishes strict tool schemas and rejects an unknown parameter as invalid params", async () => {
+    await withTemporaryDirectoryAsync("nyaucast-mcp-strict-", async (channelRoot) => {
+      const server = spawn(
+        process.execPath,
+        [
+          "--conditions=nyaucast-source",
+          "--experimental-strip-types",
+          join(packageRoot, "bin", "nyaucast.js"),
+          "mcp",
+        ],
+        { cwd: channelRoot, env: process.env, stdio: "pipe" },
+      );
+      const { responseFor, writeMessage } = createJsonRpcClient(server);
+      try {
+        writeMessage({
+          id: 1,
+          jsonrpc: "2.0",
+          method: "initialize",
+          params: {
+            capabilities: {},
+            clientInfo: { name: "nyaucast-contract-test", version: "1.0.0" },
+            protocolVersion: "2025-06-18",
+          },
+        });
+        await responseFor(1);
+        writeMessage({ jsonrpc: "2.0", method: "notifications/initialized", params: {} });
+        writeMessage({ id: 2, jsonrpc: "2.0", method: "tools/list", params: {} });
+        const tools = requireRecord((await responseFor(2)).result, "tools/list result")["tools"];
+        if (!Array.isArray(tools)) {
+          throw new TypeError("tools/list result must contain tools");
+        }
+        for (const tool of tools) {
+          const inputSchema = requireRecord(
+            requireRecord(tool, "tool")["inputSchema"],
+            "inputSchema",
+          );
+          expect(inputSchema["additionalProperties"]).toBe(false);
+        }
+
+        writeMessage({
+          id: 3,
+          jsonrpc: "2.0",
+          method: "tools/call",
+          params: {
+            arguments: { channelDir: "/channels/deepfocus365", title: "Night Drive" },
+            name: "plan_check_title",
+          },
+        });
+        const rejected = await responseFor(3);
+        expect(requireRecord(rejected.error, "error")["code"]).toBe(-32_602);
       } finally {
         await stopChildProcess(server);
       }

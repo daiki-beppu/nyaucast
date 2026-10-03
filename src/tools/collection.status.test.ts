@@ -1,52 +1,73 @@
-import { describe, expect, test, vi } from "vite-plus/test";
+import { assert, describe, it } from "@effect/vitest";
+import { Effect } from "effect";
 
-import { createCollectionStatusTool } from "./collection.status";
+import {
+  accepts,
+  publishedAdditionalProperties,
+  insertCollection,
+  setClock,
+  withChannel,
+} from "../../test/helpers.ts";
+import { rejectCollectionGate } from "../collections/gate-operations.ts";
+import { CollectionStatusTool, collectionStatus } from "./collection.status.ts";
 
 const collectionId = "01JCOLLECTION00000000000000";
 
 describe("collection.status", () => {
-  test("accepts only a collection id", () => {
-    const tool = createCollectionStatusTool({
-      getCollectionStatus: vi.fn(),
-    });
-
-    expect(tool.inputSchema.safeParse({ collectionId }).success).toBe(true);
-    expect(tool.inputSchema.safeParse({ collectionId, next: "publish" }).success).toBe(false);
+  it("is named with its wire name", () => {
+    assert.strictEqual(CollectionStatusTool.name, "collection_status");
   });
 
-  test("returns derived progress and both gate decisions as facts", async () => {
-    const getCollectionStatus = vi.fn().mockResolvedValue({
-      collectionId,
-      gates: { produce: "rejected", publish: "pending" },
-      progress: { terminated: true },
-    });
-    const tool = createCollectionStatusTool({ getCollectionStatus });
-
-    await expect(tool.handler({ collectionId })).resolves.toEqual({
-      collectionId,
-      gates: { produce: "rejected", publish: "pending" },
-      progress: { terminated: true },
-    });
-    expect(getCollectionStatus).toHaveBeenCalledWith(collectionId);
+  it("accepts only a collection id", () => {
+    assert.isTrue(accepts(CollectionStatusTool.parametersSchema, { collectionId }));
+    assert.isFalse(
+      accepts(CollectionStatusTool.parametersSchema, { collectionId, next: "publish" }),
+    );
+    assert.strictEqual(publishedAdditionalProperties(CollectionStatusTool), false);
   });
 
-  test("accepts factual status and rejects action fields at every output level", () => {
-    const tool = createCollectionStatusTool({
-      getCollectionStatus: vi.fn(),
-    });
+  it.effect("returns derived progress and both gate decisions as facts", () =>
+    withChannel("nyaucast-status-tool-", () =>
+      Effect.gen(function* () {
+        yield* insertCollection({ id: collectionId, title: "Night Drive" });
+        yield* setClock("2026-09-02T00:00:00.000Z");
+        yield* rejectCollectionGate({ collectionId, gate: "produce" });
+
+        assert.deepStrictEqual(yield* collectionStatus({ collectionId }), {
+          collectionId,
+          gates: { produce: "rejected", publish: "pending" },
+          progress: { terminated: true },
+        });
+      }),
+    ),
+  );
+
+  it.effect("fails with a declared CollectionNotFound when the collection does not exist", () =>
+    withChannel("nyaucast-status-tool-missing-", () =>
+      Effect.gen(function* () {
+        const failure = yield* Effect.flip(
+          collectionStatus({ collectionId: "01JMISSING0000000000000000" }),
+        );
+
+        assert.strictEqual(failure._tag, "CollectionNotFound");
+      }),
+    ),
+  );
+
+  it("accepts factual status and rejects action fields at every output level", () => {
     const status = {
       collectionId,
       gates: { produce: "rejected", publish: "pending" },
       progress: { terminated: true },
     } as const;
 
-    expect(tool.outputSchema.safeParse(status).success).toBe(true);
+    assert.isTrue(accepts(CollectionStatusTool.successSchema, status));
     for (const outputWithAction of [
       { ...status, recommendation: "publish" },
       { ...status, gates: { ...status.gates, command: "produce" } },
       { ...status, progress: { ...status.progress, next: "publish" } },
     ]) {
-      expect(tool.outputSchema.safeParse(outputWithAction).success).toBe(false);
+      assert.isFalse(accepts(CollectionStatusTool.successSchema, outputWithAction));
     }
   });
 });

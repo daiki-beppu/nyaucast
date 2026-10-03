@@ -1,8 +1,8 @@
-import { z } from "zod";
+import { Context, Effect, Layer, Random, Result, Schema } from "effect";
+import { HttpClient, type HttpBody, HttpClientRequest, type HttpClientResponse } from "effect/http";
 
-import type { YouTubeAuth } from "./auth.ts";
+import { YouTubeAuth, type YouTubeAuthFailure } from "./auth.ts";
 
-// fallow-ignore-next-line code-duplication -- Retry limits are unrelated to process timeout constants.
 const maximumAttempts = 3;
 const initialRetryDelayMilliseconds = 1_000;
 const retryableStatuses = new Set([429, 503]);
@@ -10,163 +10,174 @@ const youtubeApiOrigin = "https://youtube.googleapis.com";
 const youtubeUploadApiOrigin = "https://www.googleapis.com";
 const youtubeUploadApiPath = "/upload/youtube/v3/videos";
 
-// fallow-ignore-next-line code-duplication -- Google API error validation is unrelated to tool input schemas.
-const googleErrorSchema = z.object({
-  error: z.object({
-    errors: z.array(z.object({ reason: z.string() })),
+// 失敗は、タグと事実（URL・HTTP status・Google の reason）だけを持つ。認証情報は持たない。
+class UntrustedYouTubeUrl extends Schema.TaggedError<UntrustedYouTubeUrl>()("UntrustedYouTubeUrl", {
+  url: Schema.String,
+}) {}
+class YouTubeHttpFailure extends Schema.TaggedError<YouTubeHttpFailure>()("YouTubeHttpFailure", {
+  reason: Schema.optionalKey(Schema.String),
+  status: Schema.Finite,
+}) {}
+class YouTubeResponseInvalid extends Schema.TaggedError<YouTubeResponseInvalid>()(
+  "YouTubeResponseInvalid",
+  {},
+) {}
+class YouTubeHttpBoundaryFailed extends Schema.TaggedError<YouTubeHttpBoundaryFailed>()(
+  "YouTubeHttpBoundaryFailed",
+  {},
+) {}
+
+type YouTubeClientFailure =
+  | UntrustedYouTubeUrl
+  | YouTubeAuthFailure
+  | YouTubeHttpBoundaryFailed
+  | YouTubeHttpFailure
+  | YouTubeResponseInvalid;
+
+const GoogleError = Schema.Struct({
+  error: Schema.Struct({
+    errors: Schema.Array(Schema.Struct({ reason: Schema.String })),
   }),
 });
 
-type YouTubeClientDependencies = {
-  auth: Pick<YouTubeAuth, "getAccessToken" | "refreshAccessToken">;
-  // fallow-ignore-next-line code-duplication -- HTTP dependencies and process waiters only share method-signature syntax.
-  fetch(input: string, init?: RequestInit): Promise<Response>;
-  random(): number;
-  sleep(milliseconds: number): Promise<void>;
-};
-
 type YouTubeRequest<Output> = {
-  body?: () => BodyInit;
+  /** 試行ごとに新しい本文を作る。1 回しか読めない本文を使い回さない。 */
+  body?: () => HttpBody.HttpBody;
   channel: string;
-  init?: Omit<RequestInit, "body">;
-  schema: z.ZodType<Output>;
+  /** 追加のヘッダー（Content-Type・Content-Range など）。authorization は常にこの client が付ける。 */
+  headers?: Readonly<Record<string, string>>;
+  method?: "DELETE" | "GET" | "PATCH" | "POST" | "PUT";
+  schema: Schema.Decoder<Output>;
   url: string;
 };
 
-export type YouTubeClient = {
-  request<Output>(request: YouTubeRequest<Output>): Promise<Output>;
-};
-
-type HttpFailure = {
-  reason: string | undefined;
-  status: number;
-};
-
 type RequestState = {
-  // fallow-ignore-next-line code-duplication -- Retry state and credential types only share short property declarations.
   accessToken: string;
   refreshedAfterUnauthorized: boolean;
   retryAttempt: number;
 };
 
+type HttpFailure = { reason: string | undefined; status: number };
 type Recovery = { kind: "fail" } | { kind: "refresh" } | { delay: number; kind: "retry" };
 
-const classifyHttpFailure = async (response: Response) => {
-  // fallow-ignore-next-line code-duplication -- Google error decoding is unrelated to generic JSON-RPC routing.
-  let body: unknown;
-  try {
-    body = await response.json();
-  } catch {
-    body = undefined;
-  }
-  const parsed = googleErrorSchema.safeParse(body);
-  return {
-    reason: parsed.success ? parsed.data.error.errors[0]?.reason : undefined,
-    status: response.status,
-  };
-};
+const classifyHttpFailure = (response: HttpClientResponse.HttpClientResponse) =>
+  response.json.pipe(
+    Effect.map((body) => Schema.decodeUnknownResult(GoogleError)(body)),
+    Effect.orElseSucceed(() => undefined),
+    Effect.map((parsed): HttpFailure => ({
+      reason:
+        parsed !== undefined && Result.isSuccess(parsed)
+          ? parsed.success.error.errors[0]?.reason
+          : undefined,
+      status: response.status,
+    })),
+  );
 
-const httpError = (failure: HttpFailure): Error => {
-  const reason = failure.reason === undefined ? "" : ` (${failure.reason})`;
-  return new Error(`YouTube API request failed: HTTP ${failure.status}${reason}`);
-};
+const toFailure = ({ reason, status }: HttpFailure) =>
+  new YouTubeHttpFailure(reason === undefined ? { status } : { reason, status });
 
 const isRetryableFailure = (failure: HttpFailure) =>
   retryableStatuses.has(failure.status) ||
   (failure.status === 403 && failure.reason === "quotaExceeded");
 
 const selectRecovery = (failure: HttpFailure, state: RequestState, random: number): Recovery => {
-  // fallow-ignore-next-line code-duplication -- HTTP recovery selection is unrelated to collection-store waiter routing.
   if (failure.status === 401 && !state.refreshedAfterUnauthorized) return { kind: "refresh" };
   if (!isRetryableFailure(failure)) return { kind: "fail" };
   if (state.retryAttempt >= maximumAttempts - 1) return { kind: "fail" };
-  const delay = initialRetryDelayMilliseconds * 2 ** state.retryAttempt * (1 + random);
-  // fallow-ignore-next-line code-duplication -- Returning retry recovery is unrelated to returning a classified HTTP failure.
-  return { delay, kind: "retry" };
+  return {
+    delay: initialRetryDelayMilliseconds * 2 ** state.retryAttempt * (1 + random),
+    kind: "retry",
+  };
 };
 
-// fallow-ignore-next-line code-duplication -- URL trust validation is unrelated to HTTP failure projection.
-const resolveYouTubeApiUrl = (input: string): string => {
-  let url: URL;
-  try {
-    url = new URL(input);
-  } catch {
-    throw new Error(
-      `YouTube API request URL must use ${youtubeApiOrigin} or ${youtubeUploadApiOrigin}${youtubeUploadApiPath}`,
-    );
-  }
-  // fallow-ignore-next-line code-duplication -- Origin validation and JSON-RPC object validation have different trust boundaries.
-  const isYouTubeApi = url.origin === youtubeApiOrigin;
-  const isYouTubeUploadApi =
-    url.origin === youtubeUploadApiOrigin && url.pathname === youtubeUploadApiPath;
-  if (!isYouTubeApi && !isYouTubeUploadApi) {
-    throw new Error(
-      `YouTube API request URL must use ${youtubeApiOrigin} or ${youtubeUploadApiOrigin}${youtubeUploadApiPath}`,
-    );
-  }
-  return url.toString();
-};
-
-class RestYouTubeClient implements YouTubeClient {
-  readonly #dependencies: YouTubeClientDependencies;
-
-  constructor(dependencies: YouTubeClientDependencies) {
-    // fallow-ignore-next-line code-duplication -- The client and auth services only share constructor syntax, not a domain abstraction.
-    this.#dependencies = dependencies;
-  }
-
-  async request<Output>(request: YouTubeRequest<Output>): Promise<Output> {
-    const url = resolveYouTubeApiUrl(request.url);
-    const accessToken = await this.#dependencies.auth.getAccessToken(request.channel);
-    return this.#execute(request, url, {
-      accessToken,
-      refreshedAfterUnauthorized: false,
-      retryAttempt: 0,
+// 検証した URL だけを使う。呼び出し側が後から request.url を書き換えても、再試行は検証済みの URL に送る。
+const resolveYouTubeApiUrl = (input: string) =>
+  Effect.gen(function* () {
+    const url = yield* Effect.try({
+      catch: () => new UntrustedYouTubeUrl({ url: input }),
+      try: () => new URL(input),
     });
-  }
-
-  // fallow-ignore-next-line code-duplication -- Retry execution and repository queries only share an async method signature.
-  async #execute<Output>(
-    request: YouTubeRequest<Output>,
-    url: string,
-    state: RequestState,
-  ): Promise<Output> {
-    const response = await this.#fetch(request, url, state.accessToken);
-    if (response.ok) return request.schema.parse(await response.json());
-
-    const failure = await classifyHttpFailure(response);
-    const recovery = selectRecovery(failure, state, this.#dependencies.random());
-    if (recovery.kind === "fail") throw httpError(failure);
-    if (recovery.kind === "refresh") {
-      // fallow-ignore-next-line code-duplication -- Unauthorized recovery and backoff update distinct state fields.
-      const accessToken = await this.#dependencies.auth.refreshAccessToken(request.channel);
-      return this.#execute(request, url, {
-        ...state,
-        accessToken,
-        refreshedAfterUnauthorized: true,
-      });
+    const isYouTubeApi = url.origin === youtubeApiOrigin;
+    const isYouTubeUploadApi =
+      url.origin === youtubeUploadApiOrigin && url.pathname === youtubeUploadApiPath;
+    if (!isYouTubeApi && !isYouTubeUploadApi) {
+      return yield* new UntrustedYouTubeUrl({ url: input });
     }
-    await this.#dependencies.sleep(recovery.delay);
-    return this.#execute(request, url, { ...state, retryAttempt: state.retryAttempt + 1 });
-  }
+    return url.toString();
+  });
 
-  async #fetch<Output>(
-    request: YouTubeRequest<Output>,
-    url: string,
-    accessToken: string,
-  ): Promise<Response> {
-    // fallow-ignore-next-line code-duplication -- Authorization header assembly is specific to the REST boundary.
-    const headers = new Headers(request.init?.headers);
-    headers.set("authorization", `Bearer ${accessToken}`);
-    const init: RequestInit = { ...request.init, headers };
-    if (request.body !== undefined) init.body = request.body();
-    try {
-      return await this.#dependencies.fetch(url, init);
-    } catch {
-      throw new Error("YouTube API request failed at the HTTP boundary");
-    }
+export class YouTubeClient extends Context.Service<
+  YouTubeClient,
+  {
+    request<Output>(request: YouTubeRequest<Output>): Effect.Effect<Output, YouTubeClientFailure>;
   }
+>()("nyaucast/YouTubeClient") {
+  static readonly layer = Layer.effect(YouTubeClient, makeYouTubeClient());
 }
 
-export const createYouTubeClient = (dependencies: YouTubeClientDependencies): YouTubeClient =>
-  new RestYouTubeClient(dependencies);
+function makeYouTubeClient() {
+  return Effect.gen(function* () {
+    const auth = yield* YouTubeAuth;
+    const http = yield* HttpClient.HttpClient;
+
+    const send = <Output>(request: YouTubeRequest<Output>, url: string, accessToken: string) => {
+      const base = HttpClientRequest.make(request.method ?? "GET")(url, {
+        headers: request.headers ?? {},
+      }).pipe(HttpClientRequest.setHeader("authorization", `Bearer ${accessToken}`));
+      return http
+        .execute(
+          request.body === undefined ? base : HttpClientRequest.setBody(base, request.body()),
+        )
+        .pipe(Effect.mapError(() => new YouTubeHttpBoundaryFailed()));
+    };
+
+    const decodeBody = <Output>(
+      request: YouTubeRequest<Output>,
+      response: HttpClientResponse.HttpClientResponse,
+    ) =>
+      response.json.pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(request.schema)),
+        Effect.mapError(() => new YouTubeResponseInvalid()),
+      );
+
+    const execute = <Output>(
+      request: YouTubeRequest<Output>,
+      url: string,
+      state: RequestState,
+    ): Effect.Effect<Output, YouTubeClientFailure> =>
+      Effect.gen(function* () {
+        const response = yield* send(request, url, state.accessToken);
+        if (response.status >= 200 && response.status < 300) {
+          return yield* decodeBody(request, response);
+        }
+        const failure = yield* classifyHttpFailure(response);
+        const recovery = selectRecovery(failure, state, yield* Random.next);
+        if (recovery.kind === "fail") {
+          return yield* toFailure(failure);
+        }
+        if (recovery.kind === "refresh") {
+          const accessToken = yield* auth.refreshAccessToken(request.channel);
+          return yield* execute(request, url, {
+            ...state,
+            accessToken,
+            refreshedAfterUnauthorized: true,
+          });
+        }
+        yield* Effect.sleep(recovery.delay);
+        return yield* execute(request, url, { ...state, retryAttempt: state.retryAttempt + 1 });
+      });
+
+    const requestOnce = <Output>(request: YouTubeRequest<Output>) =>
+      Effect.gen(function* () {
+        const url = yield* resolveYouTubeApiUrl(request.url);
+        const accessToken = yield* auth.getAccessToken(request.channel);
+        return yield* execute(request, url, {
+          accessToken,
+          refreshedAfterUnauthorized: false,
+          retryAttempt: 0,
+        });
+      });
+
+    return YouTubeClient.of({ request: requestOnce });
+  });
+}

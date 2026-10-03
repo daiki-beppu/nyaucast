@@ -1,58 +1,80 @@
-import { eq, type SQL } from "drizzle-orm";
+import { Effect, Option, Schema } from "effect";
+import { SqlClient, SqlSchema } from "effect/sql";
 
-import type { LocalStore } from "./local-store.ts";
-import { approvals, collections, rejections, thumbnails } from "./schema.ts";
+export class CollectionNotFound extends Schema.TaggedError<CollectionNotFound>()(
+  "CollectionNotFound",
+  { collectionId: Schema.String },
+) {}
 
-interface CollectionRecord {
-  id: string;
-  title: string;
-}
+const Collection = Schema.Struct({ id: Schema.String, title: Schema.String });
+export type CollectionRecord = typeof Collection.Type;
 
-async function findCollection(
-  store: LocalStore,
-  condition: SQL<unknown>,
-): Promise<CollectionRecord | undefined> {
-  const rows = await store.db.select().from(collections).where(condition).limit(1);
-  return rows[0];
-}
+const present = (rows: ReadonlyArray<unknown>) => rows.length > 0;
 
-export async function hasThumbnail(store: LocalStore, collectionId: string): Promise<boolean> {
-  const rows = await store.db
-    .select({ present: thumbnails.collectionId })
-    .from(thumbnails)
-    .where(eq(thumbnails.collectionId, collectionId))
-    .limit(1);
-  return rows.length > 0;
-}
+export const createCollection = (collection: CollectionRecord) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`INSERT INTO collections (id, title) VALUES (${collection.id}, ${collection.title})`;
+  }).pipe(Effect.orDie);
 
-export function createCollectionStore(store: LocalStore) {
-  return {
-    create: async (collection: CollectionRecord) => {
-      await store.db.insert(collections).values(collection);
-    },
-    findById: (id: string) => findCollection(store, eq(collections.id, id)),
-    findByTitle: (title: string) => findCollection(store, eq(collections.title, title)),
-    hasDownstreamRecords: async (id: string) => {
-      const [thumbnail, approval, rejection] = await Promise.all([
-        hasThumbnail(store, id),
-        store.db
-          .select({ present: approvals.collectionId })
-          .from(approvals)
-          .where(eq(approvals.collectionId, id))
-          .limit(1),
-        store.db
-          .select({ present: rejections.collectionId })
-          .from(rejections)
-          .where(eq(rejections.collectionId, id))
-          .limit(1),
-      ]);
-      return thumbnail || approval.length > 0 || rejection.length > 0;
-    },
-    recreate: async (collection: { id: string; title: string }) => {
-      await store.db.transaction(async (transaction) => {
-        await transaction.delete(collections).where(eq(collections.id, collection.id));
-        await transaction.insert(collections).values(collection);
-      });
-    },
-  };
-}
+const findOne = (column: "id" | "title", value: string) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const find = SqlSchema.findOneOption({
+      Request: Schema.String,
+      Result: Collection,
+      execute: (requested) =>
+        sql`SELECT id, title FROM collections WHERE ${sql(column)} = ${requested} LIMIT 1`,
+    });
+    return Option.getOrUndefined(yield* find(value));
+  }).pipe(Effect.orDie);
+
+export const findCollectionById = (id: string) => findOne("id", id);
+
+export const findCollectionByTitle = (title: string) => findOne("title", title);
+
+export const requireCollection = (collectionId: string) =>
+  Effect.gen(function* () {
+    const found = yield* findCollectionById(collectionId);
+    if (found === undefined) {
+      return yield* new CollectionNotFound({ collectionId });
+    }
+    return found;
+  });
+
+export const hasThumbnail = (collectionId: string) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    return present(
+      yield* sql`SELECT collection_id FROM thumbnails WHERE collection_id = ${collectionId} LIMIT 1`,
+    );
+  }).pipe(Effect.orDie);
+
+const hasFact = (table: "approvals" | "rejections", collectionId: string) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    return present(
+      yield* sql`SELECT collection_id FROM ${sql(table)} WHERE collection_id = ${collectionId} LIMIT 1`,
+    );
+  }).pipe(Effect.orDie);
+
+export const hasDownstreamRecords = (collectionId: string) =>
+  Effect.all(
+    [
+      hasThumbnail(collectionId),
+      hasFact("approvals", collectionId),
+      hasFact("rejections", collectionId),
+    ],
+    { concurrency: "unbounded" },
+  ).pipe(Effect.map((found) => found.includes(true)));
+
+export const recreateCollection = (collection: CollectionRecord) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`DELETE FROM collections WHERE id = ${collection.id}`;
+        yield* sql`INSERT INTO collections (id, title) VALUES (${collection.id}, ${collection.title})`;
+      }),
+    );
+  }).pipe(Effect.orDie);

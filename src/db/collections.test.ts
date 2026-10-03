@@ -1,69 +1,95 @@
-import { describe, expect, test } from "vite-plus/test";
+import { assert, describe, it } from "@effect/vitest";
+import { Effect } from "effect";
+import { SqlClient } from "effect/sql";
 
-import { withTemporaryDirectoryAsync } from "../../test/helpers";
-import { createCollectionStore } from "./collections";
-import { recordApproval, recordRejection } from "./gates";
-import { openLocalStore, type LocalStore } from "./local-store";
-import { thumbnails } from "./schema";
+import { setClock, withChannel } from "../../test/helpers.ts";
+import {
+  createCollection,
+  findCollectionById,
+  findCollectionByTitle,
+  hasDownstreamRecords,
+  recreateCollection,
+} from "./collections.ts";
+import { recordApproval, recordRejection } from "./gates.ts";
 
 const collection = { id: "01JCOLLECTION00000000000000", title: "Night Drive" };
-const clock = { now: () => new Date("2026-08-27T00:00:00.000Z") };
 
-async function withCollection(
-  prefix: string,
-  inspect: (store: LocalStore) => Promise<void>,
-): Promise<void> {
-  await withTemporaryDirectoryAsync(prefix, async (channelRoot) => {
-    const store = await openLocalStore(channelRoot);
-    try {
-      await createCollectionStore(store).create(collection);
-      await inspect(store);
-    } finally {
-      await store.close();
-    }
-  });
-}
+const withCollection = <A, E, R>(prefix: string, inspect: Effect.Effect<A, E, R>) =>
+  withChannel(prefix, () =>
+    Effect.gen(function* () {
+      yield* createCollection(collection);
+      return yield* inspect;
+    }),
+  );
 
 describe("collection store", () => {
-  test("reports no downstream records for a collection by itself", async () => {
-    await withCollection("nyaucast-collection-empty-", async (store) => {
-      await expect(createCollectionStore(store).hasDownstreamRecords(collection.id)).resolves.toBe(
-        false,
-      );
-    });
-  });
+  it.effect("finds a collection by ID and by title, and reports a miss as undefined", () =>
+    withCollection(
+      "nyaucast-collection-find-",
+      Effect.gen(function* () {
+        assert.deepStrictEqual(yield* findCollectionById(collection.id), collection);
+        assert.deepStrictEqual(yield* findCollectionByTitle(collection.title), collection);
+        assert.isUndefined(yield* findCollectionById("01JMISSING0000000000000000"));
+        assert.isUndefined(yield* findCollectionByTitle("Other"));
+      }),
+    ),
+  );
 
-  test("detects a thumbnail as a downstream record", async () => {
-    await withCollection("nyaucast-collection-thumbnail-", async (store) => {
-      await store.db.insert(thumbnails).values({
-        collectionId: collection.id,
-        createdAt: "2026-08-27T00:00:00.000Z",
-        path: `collections/${collection.id}/thumbnail.png`,
-      });
+  it.effect("reports no downstream records for a collection by itself", () =>
+    withCollection(
+      "nyaucast-collection-empty-",
+      Effect.gen(function* () {
+        assert.isFalse(yield* hasDownstreamRecords(collection.id));
+      }),
+    ),
+  );
 
-      await expect(createCollectionStore(store).hasDownstreamRecords(collection.id)).resolves.toBe(
-        true,
-      );
-    });
-  });
+  it.effect("detects a thumbnail as a downstream record", () =>
+    withCollection(
+      "nyaucast-collection-thumbnail-",
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`INSERT INTO thumbnails (collection_id, path, created_at) VALUES (${collection.id}, ${`collections/${collection.id}/thumbnail.png`}, '2026-08-27T00:00:00.000Z')`;
 
-  test("detects an approval as a downstream record", async () => {
-    await withCollection("nyaucast-collection-approval-", async (store) => {
-      await recordApproval(store, { collectionId: collection.id, gate: "produce" }, clock);
+        assert.isTrue(yield* hasDownstreamRecords(collection.id));
+      }),
+    ),
+  );
 
-      await expect(createCollectionStore(store).hasDownstreamRecords(collection.id)).resolves.toBe(
-        true,
-      );
-    });
-  });
+  it.effect("detects an approval as a downstream record", () =>
+    withCollection(
+      "nyaucast-collection-approval-",
+      Effect.gen(function* () {
+        yield* setClock("2026-08-27T00:00:00.000Z");
+        yield* recordApproval({ collectionId: collection.id, gate: "produce" });
 
-  test("detects a rejection as a downstream record", async () => {
-    await withCollection("nyaucast-collection-rejection-", async (store) => {
-      await recordRejection(store, { collectionId: collection.id, gate: "produce" }, clock);
+        assert.isTrue(yield* hasDownstreamRecords(collection.id));
+      }),
+    ),
+  );
 
-      await expect(createCollectionStore(store).hasDownstreamRecords(collection.id)).resolves.toBe(
-        true,
-      );
-    });
-  });
+  it.effect("detects a rejection as a downstream record", () =>
+    withCollection(
+      "nyaucast-collection-rejection-",
+      Effect.gen(function* () {
+        yield* setClock("2026-08-27T00:00:00.000Z");
+        yield* recordRejection({ collectionId: collection.id, gate: "produce" });
+
+        assert.isTrue(yield* hasDownstreamRecords(collection.id));
+      }),
+    ),
+  );
+
+  it.effect("recreating keeps the ID and title as one record", () =>
+    withCollection(
+      "nyaucast-collection-recreate-",
+      Effect.gen(function* () {
+        yield* recreateCollection(collection);
+
+        const sql = yield* SqlClient.SqlClient;
+        const rows = yield* sql`SELECT id, title FROM collections`;
+        assert.deepStrictEqual(rows, [collection]);
+      }),
+    ),
+  );
 });

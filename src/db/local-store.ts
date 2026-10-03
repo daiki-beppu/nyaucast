@@ -1,61 +1,63 @@
-import { copyFileSync, existsSync, mkdirSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
-import { createClient, type Client } from "@libsql/client";
-import { drizzle, type LibSQLDatabase } from "drizzle-orm/libsql";
-import { migrate } from "drizzle-orm/libsql/migrator";
-import { readMigrationFiles } from "drizzle-orm/migrator";
+import { LibsqlClient, LibsqlMigrator } from "@effect/sql-libsql";
+import { Effect, FileSystem, Layer, Path } from "effect";
+import { SqlClient } from "effect/sql";
 
-import * as schema from "./schema.ts";
+import initial from "./migrations/0001_initial.ts";
 
-const migrationsFolder = resolve(import.meta.dirname, "../../drizzle");
+// <id>_<name> をキーにした手書きのマイグレーション。新しいものは id を増やして足す。
+const migrations = { "0001_initial": initial };
 
-export interface LocalStore {
-  close(): Promise<void>;
-  client: Client;
-  db: LibSQLDatabase<typeof schema>;
-}
+const latestMigrationId = Math.max(
+  ...Object.keys(migrations).map((name) => Number.parseInt(name, 10)),
+);
 
-async function hasPendingMigrations(client: Client): Promise<boolean> {
-  const migrations = readMigrationFiles({ migrationsFolder });
-  const latestMigration = migrations.at(-1);
-  if (latestMigration === undefined) {
-    return false;
-  }
-  const table = await client.execute(
-    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = '__drizzle_migrations'",
-  );
-  if (table.rows.length === 0) {
+const isFileUrl = (url: string) => url.startsWith("file:");
+
+const hasPendingMigrations = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const tables =
+    yield* sql`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'`;
+  if (tables.length === 0) {
     return true;
   }
-  const applied = await client.execute(
-    "SELECT created_at FROM __drizzle_migrations ORDER BY created_at DESC LIMIT 1",
-  );
-  const latestApplied = applied.rows[0]?.["created_at"];
-  return typeof latestApplied !== "number" || latestApplied < latestMigration.folderMillis;
-}
+  const rows = yield* sql`SELECT max(migration_id) AS latest FROM effect_sql_migrations`;
+  return Number(rows[0]?.["latest"] ?? 0) < latestMigrationId;
+});
 
-export async function openLocalStore(channelRoot: string): Promise<LocalStore> {
-  const dataDirectory = join(channelRoot, "data");
-  const databasePath = join(dataDirectory, "local.db");
-  mkdirSync(dataDirectory, { recursive: true });
-  const existed = existsSync(databasePath);
-  const client = createClient({ url: pathToFileURL(databasePath).href });
-  const db = drizzle(client, { schema });
-
-  if (existed && (await hasPendingMigrations(client))) {
-    const latestVersion = readMigrationFiles({ migrationsFolder }).at(-1)?.folderMillis;
-    if (latestVersion === undefined) {
-      throw new Error("pending migration has no version");
+// 適用前に、既存のファイル DB を local.db.bak-<最新 id> へコピーする（ADR-0004）。
+const backupBeforeMigrating = (databasePath: string) =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    if (yield* hasPendingMigrations) {
+      yield* fileSystem.copyFile(databasePath, `${databasePath}.bak-${latestMigrationId}`);
     }
-    copyFileSync(databasePath, `${databasePath}.bak-${latestVersion}`);
-  }
-  await migrate(db, { migrationsFolder });
+  }).pipe(Effect.orDie);
 
-  return {
-    client,
-    close: async () => client.close(),
-    db,
-  };
-}
+const migrate = LibsqlMigrator.layer({ loader: LibsqlMigrator.fromRecord(migrations) });
+
+/**
+ * local store を開く唯一の口。接続先は URL で差し替えられる。
+ * `file:` の URL なら、データディレクトリを作り、既存のファイルは適用前にバックアップする。
+ */
+export const LocalStore = {
+  layer: (url: string) =>
+    Layer.unwrap(
+      Effect.gen(function* () {
+        const client = LibsqlClient.layer({ url });
+        if (!isFileUrl(url)) {
+          return migrate.pipe(Layer.provideMerge(client));
+        }
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const databasePath = fileURLToPath(url);
+        yield* fileSystem.makeDirectory(path.dirname(databasePath), { recursive: true });
+        const existed = yield* fileSystem.exists(databasePath);
+        const backup = existed
+          ? Layer.effectDiscard(backupBeforeMigrating(databasePath))
+          : Layer.empty;
+        return migrate.pipe(Layer.provide(backup), Layer.provideMerge(client));
+      }).pipe(Effect.orDie),
+    ),
+};
