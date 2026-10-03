@@ -14,8 +14,10 @@ import { CollectionIds } from "./collections/collection-ids.ts";
 import { CollectionDirectories } from "./collections/directories.ts";
 import { LocalStore } from "./db/local-store.ts";
 import { nyaucastCli, version } from "./cli.ts";
+import { InstagramAuth } from "./instagram/auth.ts";
 import { NyaucastToolHandlers, NyaucastToolkit } from "./mcp.ts";
 import { VideoIds } from "./videos/video-ids.ts";
+import { XAuth } from "./x/auth.ts";
 import { YouTubeAuth } from "./youtube/auth.ts";
 
 const channelRoot = process.cwd();
@@ -45,18 +47,19 @@ const mcpServer = McpServer.toolkit(NyaucastToolkit).pipe(
 // ホームディレクトリは、ここで 1 回だけ解決して各 Layer に渡す。
 const configRoot = join(homedir(), ".config", "nyaucast");
 const credentialStore = CredentialStore.layer({ credentialRoot: join(configRoot, "credentials") });
+const authDependencies = Layer.mergeAll(
+  credentialStore,
+  StaticSecrets.layer({ configRoot }),
+  NodeHttpClient.layerUndici,
+);
 const authServices = Layer.mergeAll(
   ChannelAccounts.layer({ configRoot }),
   credentialStore,
-  YouTubeAuth.layerProduction.pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        credentialStore,
-        StaticSecrets.layer({ configRoot }),
-        NodeHttpClient.layerUndici,
-      ),
-    ),
-  ),
+  Layer.mergeAll(
+    YouTubeAuth.layerProduction,
+    InstagramAuth.layerProduction,
+    XAuth.layerProduction,
+  ).pipe(Layer.provide(authDependencies)),
 );
 
 Stdio.Stdio.use(({ args }) =>

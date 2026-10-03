@@ -8,6 +8,8 @@ import type { CredentialStore } from "./auth/credential-store.ts";
 import { approveCollectionGate, rejectCollectionGate } from "./collections/gate-operations.ts";
 import type { Gate } from "./db/gates.ts";
 import { describeFailure } from "./failure-report.ts";
+import type { InstagramAuth } from "./instagram/auth.ts";
+import type { XAuth } from "./x/auth.ts";
 import type { YouTubeAuth } from "./youtube/auth.ts";
 
 export const version = "0.0.2";
@@ -17,7 +19,11 @@ export const version = "0.0.2";
  * チャンネルのルートや資格情報の置き場は、これを渡す側（entry point またはテスト）が決める。
  */
 interface CliEnvironment<E1, R1, E2, R2, E3, R3> {
-  readonly auth: Layer.Layer<ChannelAccounts | CredentialStore | YouTubeAuth, E2, R2>;
+  readonly auth: Layer.Layer<
+    ChannelAccounts | CredentialStore | InstagramAuth | XAuth | YouTubeAuth,
+    E2,
+    R2
+  >;
   readonly localStore: Layer.Layer<SqlClient.SqlClient, E1, R1>;
   readonly mcpServer: Layer.Layer<never, E3, R3>;
 }

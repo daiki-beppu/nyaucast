@@ -12,6 +12,8 @@ import { TestClock, TestConsole } from "effect/testing";
 import { ChannelAccounts } from "../src/auth/accounts.ts";
 import { CredentialStore } from "../src/auth/credential-store.ts";
 import { LocalStore } from "../src/db/local-store.ts";
+import { InstagramAuth } from "../src/instagram/auth.ts";
+import { XAuth } from "../src/x/auth.ts";
 import { YouTubeAuth } from "../src/youtube/auth.ts";
 
 export function withTemporaryDirectory<T>(prefix: string, execute: (directory: string) => T): T {
@@ -68,6 +70,8 @@ const notUsed = Effect.die("このテストでは使わないサブコマンド�
 export const unusedAuthLayer = Layer.mergeAll(
   Layer.effect(ChannelAccounts, notUsed),
   Layer.effect(CredentialStore, notUsed),
+  Layer.effect(InstagramAuth, notUsed),
+  Layer.effect(XAuth, notUsed),
   Layer.effect(YouTubeAuth, notUsed),
 );
 

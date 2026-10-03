@@ -45,7 +45,11 @@ type Account = {
 const NonEmpty = Schema.String.check(Schema.isMinLength(1));
 const AccountDeclaration = Schema.Struct({ handle: NonEmpty, id: NonEmpty });
 // 宣言は SNS ごとに任意。知らない SNS のキーは設定の誤りとして拒否する。
-const AccountsFile = Schema.Struct({ youtube: Schema.optionalKey(AccountDeclaration) });
+const AccountsFile = Schema.Struct({
+  instagram: Schema.optionalKey(AccountDeclaration),
+  x: Schema.optionalKey(AccountDeclaration),
+  youtube: Schema.optionalKey(AccountDeclaration),
+});
 
 const registryFile = "channels.json";
 const accountsFile = ["config", "channel", "accounts.json"] as const;
