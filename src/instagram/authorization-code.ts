@@ -8,10 +8,16 @@ import open from "open";
  */
 export const redirectUri = "https://localhost:53682/oauth2callback";
 
-/** 認可 URL をブラウザで開き、貼り付けられた遷移先の URL から code と state を取り出す。 */
-export const receiveCodeByPaste = (authorizationUrl: string) =>
+/**
+ * 認可 URL をブラウザで開き、貼り付けられた遷移先の URL から code と state を取り出す。
+ * ブラウザを開く処理は、テストで差し替えられるように引数で受ける。
+ */
+export const receiveCodeByPaste = (
+  authorizationUrl: string,
+  launch: (url: string) => Promise<unknown> = open,
+) =>
   Effect.gen(function* () {
-    yield* Effect.tryPromise(() => open(authorizationUrl));
+    yield* Effect.tryPromise(() => launch(authorizationUrl));
     const pasted = yield* Prompt.Hidden({
       message: "承認後に遷移した先の URL（?code=…&state=… を含む）を貼り付けてください",
     });

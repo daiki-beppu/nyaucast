@@ -7,17 +7,16 @@ import {
   explainerConfig,
   planInput,
   source,
-  withVideoChannel,
 } from "../../test/explainer-helpers.ts";
 import { accepts, publishedAdditionalProperties, setClock } from "../../test/helpers.ts";
+import { callTool, rejectionReason, withToolChannel } from "../../test/tool-helpers.ts";
 import {
   insertCandidate,
   insertExclusion,
   insertSelection,
   smallKeyOf,
 } from "../../test/thumbnail-facts.ts";
-import { explainerWritePlan } from "./explainer.writePlan.ts";
-import { VideoStatusTool, videoStatus } from "./video.status.ts";
+import { VideoStatusTool } from "./video.status.ts";
 
 const noon = "2026-10-03T12:00:00.000Z";
 
@@ -139,14 +138,15 @@ describe("video.status: gate records in the result schema", () => {
 
 describe("video.status: reading a video", () => {
   it.effect("returns the plan as recorded and abandoned: false for a fresh video", () =>
-    withVideoChannel("nyaucast-video-status-fresh-", explainerConfig, () =>
+    withToolChannel("nyaucast-video-status-fresh-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
-        const written = yield* explainerWritePlan(
+        const written = yield* callTool(
+          "explainer_write_plan",
           planInput({ sources: [source("https://ex.com/a")] }),
         );
 
-        const status = yield* videoStatus({ videoId: written.videoId });
+        const status = yield* callTool("video_status", { videoId: written.videoId });
 
         assert.deepStrictEqual(status, {
           abandoned: false,
@@ -160,16 +160,17 @@ describe("video.status: reading a video", () => {
   );
 
   it.effect("returns the latest version of an overwritten plan", () =>
-    withVideoChannel("nyaucast-video-status-latest-", explainerConfig, () =>
+    withToolChannel("nyaucast-video-status-latest-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
-        const first = yield* explainerWritePlan(planInput());
+        const first = yield* callTool("explainer_write_plan", planInput());
         yield* setClock("2026-10-04T08:30:00.000Z");
-        const second = yield* explainerWritePlan(
+        const second = yield* callTool(
+          "explainer_write_plan",
           planInput({ title: "Revised", videoId: first.videoId }),
         );
 
-        const status = yield* videoStatus({ videoId: first.videoId });
+        const status = yield* callTool("video_status", { videoId: first.videoId });
 
         assert.deepStrictEqual(status.plan, second.plan);
         assert.strictEqual(status.plan.title, "Revised");
@@ -178,16 +179,20 @@ describe("video.status: reading a video", () => {
   );
 
   it.effect("returns the latest version even when two versions share one clock reading", () =>
-    withVideoChannel("nyaucast-video-status-sameclock-", explainerConfig, () =>
+    withToolChannel("nyaucast-video-status-sameclock-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
-        const first = yield* explainerWritePlan(planInput());
-        yield* explainerWritePlan(planInput({ title: "Second", videoId: first.videoId }));
-        const third = yield* explainerWritePlan(
+        const first = yield* callTool("explainer_write_plan", planInput());
+        yield* callTool(
+          "explainer_write_plan",
+          planInput({ title: "Second", videoId: first.videoId }),
+        );
+        const third = yield* callTool(
+          "explainer_write_plan",
           planInput({ title: "Third", videoId: first.videoId }),
         );
 
-        const status = yield* videoStatus({ videoId: first.videoId });
+        const status = yield* callTool("video_status", { videoId: first.videoId });
 
         assert.deepStrictEqual(status.plan, third.plan);
       }),
@@ -197,13 +202,13 @@ describe("video.status: reading a video", () => {
   it.effect.each(["produce", "publish"] as const)(
     "returns abandoned: true once the %s gate has a NO-GO",
     (gate) =>
-      withVideoChannel("nyaucast-video-status-abandoned-", explainerConfig, () =>
+      withToolChannel("nyaucast-video-status-abandoned-", { config: explainerConfig }, () =>
         Effect.gen(function* () {
           yield* setClock(noon);
-          const written = yield* explainerWritePlan(planInput());
+          const written = yield* callTool("explainer_write_plan", planInput());
           yield* insertGateFact("rejection", written.videoId, gate, "2026-10-03T13:00:00.000Z");
 
-          const status = yield* videoStatus({ videoId: written.videoId });
+          const status = yield* callTool("video_status", { videoId: written.videoId });
 
           assert.isTrue(status.abandoned);
           assert.deepStrictEqual(status.plan, written.plan);
@@ -212,14 +217,14 @@ describe("video.status: reading a video", () => {
   );
 
   it.effect("returns abandoned: false when an approval was recorded after the NO-GO", () =>
-    withVideoChannel("nyaucast-video-status-resumed-", explainerConfig, () =>
+    withToolChannel("nyaucast-video-status-resumed-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
-        const written = yield* explainerWritePlan(planInput());
+        const written = yield* callTool("explainer_write_plan", planInput());
         yield* insertGateFact("rejection", written.videoId, "produce", "2026-10-03T13:00:00.000Z");
         yield* insertGateFact("approval", written.videoId, "produce", "2026-10-03T14:00:00.000Z");
 
-        const status = yield* videoStatus({ videoId: written.videoId });
+        const status = yield* callTool("video_status", { videoId: written.videoId });
 
         assert.isFalse(status.abandoned);
       }),
@@ -227,13 +232,13 @@ describe("video.status: reading a video", () => {
   );
 
   it.effect("returns abandoned: false for an approved video", () =>
-    withVideoChannel("nyaucast-video-status-approved-", explainerConfig, () =>
+    withToolChannel("nyaucast-video-status-approved-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
-        const written = yield* explainerWritePlan(planInput());
+        const written = yield* callTool("explainer_write_plan", planInput());
         yield* insertGateFact("approval", written.videoId, "produce", "2026-10-03T13:00:00.000Z");
 
-        const status = yield* videoStatus({ videoId: written.videoId });
+        const status = yield* callTool("video_status", { videoId: written.videoId });
 
         assert.isFalse(status.abandoned);
       }),
@@ -241,14 +246,14 @@ describe("video.status: reading a video", () => {
   );
 
   it.effect("does not read another video's NO-GO", () =>
-    withVideoChannel("nyaucast-video-status-other-", explainerConfig, () =>
+    withToolChannel("nyaucast-video-status-other-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
-        const first = yield* explainerWritePlan(planInput({ title: "First" }));
-        const other = yield* explainerWritePlan(planInput({ title: "Other" }));
+        const first = yield* callTool("explainer_write_plan", planInput({ title: "First" }));
+        const other = yield* callTool("explainer_write_plan", planInput({ title: "Other" }));
         yield* insertGateFact("rejection", other.videoId, "produce", "2026-10-03T13:00:00.000Z");
 
-        const status = yield* videoStatus({ videoId: first.videoId });
+        const status = yield* callTool("video_status", { videoId: first.videoId });
 
         assert.isFalse(status.abandoned);
       }),
@@ -256,9 +261,9 @@ describe("video.status: reading a video", () => {
   );
 
   it.effect("fails with a declared VideoNotFound when the video does not exist", () =>
-    withVideoChannel("nyaucast-video-status-missing-", explainerConfig, () =>
+    withToolChannel("nyaucast-video-status-missing-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
-        const failure = yield* Effect.flip(videoStatus({ videoId: "missing" }));
+        const failure = yield* Effect.flip(callTool("video_status", { videoId: "missing" }));
 
         assert.strictEqual(failure._tag, "VideoNotFound");
       }),
@@ -268,9 +273,9 @@ describe("video.status: reading a video", () => {
 
 describe("video.status: channel kind", () => {
   it.effect("fails with NotExplainerChannel when the channel kind is not explainer", () =>
-    withVideoChannel("nyaucast-video-status-collection-", collectionConfig, () =>
+    withToolChannel("nyaucast-video-status-collection-", { config: collectionConfig }, () =>
       Effect.gen(function* () {
-        const failure = yield* Effect.flip(videoStatus({ videoId: "V1" }));
+        const failure = yield* Effect.flip(callTool("video_status", { videoId: "V1" }));
 
         assert.strictEqual(failure._tag, "NotExplainerChannel");
       }),
@@ -278,9 +283,9 @@ describe("video.status: channel kind", () => {
   );
 
   it.effect("fails with ChannelConfigNotFound when the channel has no video config", () =>
-    withVideoChannel("nyaucast-video-status-noconfig-", undefined, () =>
+    withToolChannel("nyaucast-video-status-noconfig-", {}, () =>
       Effect.gen(function* () {
-        const failure = yield* Effect.flip(videoStatus({ videoId: "V1" }));
+        const failure = yield* Effect.flip(callTool("video_status", { videoId: "V1" }));
 
         assert.strictEqual(failure._tag, "ChannelConfigNotFound");
       }),
@@ -288,9 +293,9 @@ describe("video.status: channel kind", () => {
   );
 
   it.effect("fails with InvalidChannelConfig when the video config is broken", () =>
-    withVideoChannel("nyaucast-video-status-invalid-", "{ not json", () =>
+    withToolChannel("nyaucast-video-status-invalid-", { config: "{ not json" }, () =>
       Effect.gen(function* () {
-        const failure = yield* Effect.flip(videoStatus({ videoId: "V1" }));
+        const failure = yield* Effect.flip(callTool("video_status", { videoId: "V1" }));
 
         assert.strictEqual(failure._tag, "InvalidChannelConfig");
       }),
@@ -302,10 +307,10 @@ describe("video.status: thumbnails", () => {
   const at = (hour: number) => `2026-10-03T${String(hour).padStart(2, "0")}:00:00.000Z`;
 
   it.effect("returns every candidate with its keys, origin and time, and every exclusion", () =>
-    withVideoChannel("nyaucast-video-status-thumbnails-", explainerConfig, () =>
+    withToolChannel("nyaucast-video-status-thumbnails-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
-        const written = yield* explainerWritePlan(planInput());
+        const written = yield* callTool("explainer_write_plan", planInput());
         const keyOne = yield* insertCandidate({
           createdAt: at(13),
           number: 1,
@@ -333,7 +338,7 @@ describe("video.status: thumbnails", () => {
           videoId: written.videoId,
         });
 
-        const status = yield* videoStatus({ videoId: written.videoId });
+        const status = yield* callTool("video_status", { videoId: written.videoId });
 
         assert.deepStrictEqual(status.thumbnails.candidates, [
           {
@@ -370,10 +375,10 @@ describe("video.status: thumbnails", () => {
   );
 
   it.effect("keeps an excluded candidate in the candidates", () =>
-    withVideoChannel("nyaucast-video-status-excluded-", explainerConfig, () =>
+    withToolChannel("nyaucast-video-status-excluded-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
-        const written = yield* explainerWritePlan(planInput());
+        const written = yield* callTool("explainer_write_plan", planInput());
         yield* insertCandidate({ number: 1, round: 1, videoId: written.videoId });
         yield* insertExclusion({
           excludedAt: at(14),
@@ -383,7 +388,7 @@ describe("video.status: thumbnails", () => {
           videoId: written.videoId,
         });
 
-        const status = yield* videoStatus({ videoId: written.videoId });
+        const status = yield* callTool("video_status", { videoId: written.videoId });
 
         assert.strictEqual(status.thumbnails.candidates.length, 1);
         assert.strictEqual(status.thumbnails.exclusions.length, 1);
@@ -392,10 +397,10 @@ describe("video.status: thumbnails", () => {
   );
 
   it.effect("returns the last selection, with the key of the candidate it points at", () =>
-    withVideoChannel("nyaucast-video-status-selection-", explainerConfig, () =>
+    withToolChannel("nyaucast-video-status-selection-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
-        const written = yield* explainerWritePlan(planInput());
+        const written = yield* callTool("explainer_write_plan", planInput());
         yield* insertCandidate({ number: 1, round: 1, videoId: written.videoId });
         const keyTwo = yield* insertCandidate({ number: 2, round: 1, videoId: written.videoId });
         yield* insertSelection({
@@ -411,7 +416,7 @@ describe("video.status: thumbnails", () => {
           videoId: written.videoId,
         });
 
-        const status = yield* videoStatus({ videoId: written.videoId });
+        const status = yield* callTool("video_status", { videoId: written.videoId });
 
         assert.deepStrictEqual(status.thumbnails.selection, {
           key: keyTwo,
@@ -424,10 +429,10 @@ describe("video.status: thumbnails", () => {
   );
 
   it.effect("returns the later selection even when it points at a candidate chosen before", () =>
-    withVideoChannel("nyaucast-video-status-reselected-", explainerConfig, () =>
+    withToolChannel("nyaucast-video-status-reselected-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
-        const written = yield* explainerWritePlan(planInput());
+        const written = yield* callTool("explainer_write_plan", planInput());
         const keyOne = yield* insertCandidate({ number: 1, round: 1, videoId: written.videoId });
         yield* insertCandidate({ number: 2, round: 1, videoId: written.videoId });
         yield* insertSelection({
@@ -449,7 +454,7 @@ describe("video.status: thumbnails", () => {
           videoId: written.videoId,
         });
 
-        const status = yield* videoStatus({ videoId: written.videoId });
+        const status = yield* callTool("video_status", { videoId: written.videoId });
 
         assert.deepStrictEqual(status.thumbnails.selection, {
           key: keyOne,
@@ -462,11 +467,11 @@ describe("video.status: thumbnails", () => {
   );
 
   it.effect("does not return another video's candidates, exclusions or selection", () =>
-    withVideoChannel("nyaucast-video-status-thumbnails-other-", explainerConfig, () =>
+    withToolChannel("nyaucast-video-status-thumbnails-other-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
-        const first = yield* explainerWritePlan(planInput({ title: "First" }));
-        const other = yield* explainerWritePlan(planInput({ title: "Other" }));
+        const first = yield* callTool("explainer_write_plan", planInput({ title: "First" }));
+        const other = yield* callTool("explainer_write_plan", planInput({ title: "Other" }));
         yield* insertCandidate({ number: 1, round: 1, videoId: other.videoId });
         yield* insertExclusion({
           excludedAt: at(14),
@@ -477,7 +482,7 @@ describe("video.status: thumbnails", () => {
         });
         yield* insertSelection({ number: 1, round: 1, selectedAt: at(15), videoId: other.videoId });
 
-        const status = yield* videoStatus({ videoId: first.videoId });
+        const status = yield* callTool("video_status", { videoId: first.videoId });
 
         assert.deepStrictEqual(status.thumbnails, { candidates: [], exclusions: [] });
       }),
@@ -491,22 +496,22 @@ describe("video.status: gate records and the awaiting gate", () => {
   // 企画（noon）の後の 13 時に、候補 1-1 が選ばれた動画。
   const seedSelected = Effect.gen(function* () {
     yield* setClock(noon);
-    const written = yield* explainerWritePlan(planInput());
+    const written = yield* callTool("explainer_write_plan", planInput());
     yield* insertCandidate({ number: 1, round: 1, videoId: written.videoId });
     yield* insertSelection({ number: 1, round: 1, selectedAt: at(13), videoId: written.videoId });
     return written;
   });
 
   it.effect("returns the approvals and NO-GOs as facts in ascending time order", () =>
-    withVideoChannel("nyaucast-video-status-records-", explainerConfig, () =>
+    withToolChannel("nyaucast-video-status-records-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
-        const written = yield* explainerWritePlan(planInput());
+        const written = yield* callTool("explainer_write_plan", planInput());
         yield* insertGateFact("approval", written.videoId, "produce", at(15));
         yield* insertGateFact("rejection", written.videoId, "produce", at(13));
         yield* insertGateFact("approval", written.videoId, "publish", at(16));
 
-        const status = yield* videoStatus({ videoId: written.videoId });
+        const status = yield* callTool("video_status", { videoId: written.videoId });
 
         assert.deepStrictEqual(status.gateRecords, [
           { gate: "produce", kind: "rejection", recordedAt: at(13) },
@@ -518,14 +523,14 @@ describe("video.status: gate records and the awaiting gate", () => {
   );
 
   it.effect("does not return another video's gate records", () =>
-    withVideoChannel("nyaucast-video-status-records-other-", explainerConfig, () =>
+    withToolChannel("nyaucast-video-status-records-other-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
-        const first = yield* explainerWritePlan(planInput({ title: "First" }));
-        const other = yield* explainerWritePlan(planInput({ title: "Other" }));
+        const first = yield* callTool("explainer_write_plan", planInput({ title: "First" }));
+        const other = yield* callTool("explainer_write_plan", planInput({ title: "Other" }));
         yield* insertGateFact("approval", other.videoId, "produce", at(15));
 
-        const status = yield* videoStatus({ videoId: first.videoId });
+        const status = yield* callTool("video_status", { videoId: first.videoId });
 
         assert.deepStrictEqual(status.gateRecords, []);
       }),
@@ -533,11 +538,11 @@ describe("video.status: gate records and the awaiting gate", () => {
   );
 
   it.effect("awaits the produce gate when the last selection is newer than the plan", () =>
-    withVideoChannel("nyaucast-video-status-awaiting-", explainerConfig, () =>
+    withToolChannel("nyaucast-video-status-awaiting-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         const written = yield* seedSelected;
 
-        const status = yield* videoStatus({ videoId: written.videoId });
+        const status = yield* callTool("video_status", { videoId: written.videoId });
 
         assert.strictEqual(status.awaitingApproval, "produce");
       }),
@@ -545,12 +550,12 @@ describe("video.status: gate records and the awaiting gate", () => {
   );
 
   it.effect("does not await when there is no selection", () =>
-    withVideoChannel("nyaucast-video-status-awaiting-none-", explainerConfig, () =>
+    withToolChannel("nyaucast-video-status-awaiting-none-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
-        const written = yield* explainerWritePlan(planInput());
+        const written = yield* callTool("explainer_write_plan", planInput());
 
-        const status = yield* videoStatus({ videoId: written.videoId });
+        const status = yield* callTool("video_status", { videoId: written.videoId });
 
         assert.isUndefined(status.awaitingApproval);
       }),
@@ -561,14 +566,14 @@ describe("video.status: gate records and the awaiting gate", () => {
     ["before the plan's update", at(11)],
     ["at the plan's update", noon],
   ] as const)("does not await when the last selection is %s", ([, selectedAt]) =>
-    withVideoChannel("nyaucast-video-status-awaiting-stale-", explainerConfig, () =>
+    withToolChannel("nyaucast-video-status-awaiting-stale-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
-        const written = yield* explainerWritePlan(planInput());
+        const written = yield* callTool("explainer_write_plan", planInput());
         yield* insertCandidate({ number: 1, round: 1, videoId: written.videoId });
         yield* insertSelection({ number: 1, round: 1, selectedAt, videoId: written.videoId });
 
-        const status = yield* videoStatus({ videoId: written.videoId });
+        const status = yield* callTool("video_status", { videoId: written.videoId });
 
         assert.isUndefined(status.awaitingApproval);
       }),
@@ -576,26 +581,32 @@ describe("video.status: gate records and the awaiting gate", () => {
   );
 
   it.effect("stops awaiting once the plan is overwritten after the selection", () =>
-    withVideoChannel("nyaucast-video-status-awaiting-overwritten-", explainerConfig, () =>
-      Effect.gen(function* () {
-        const written = yield* seedSelected;
-        yield* setClock(at(14));
-        yield* explainerWritePlan(planInput({ title: "Revised", videoId: written.videoId }));
+    withToolChannel(
+      "nyaucast-video-status-awaiting-overwritten-",
+      { config: explainerConfig },
+      () =>
+        Effect.gen(function* () {
+          const written = yield* seedSelected;
+          yield* setClock(at(14));
+          yield* callTool(
+            "explainer_write_plan",
+            planInput({ title: "Revised", videoId: written.videoId }),
+          );
 
-        const status = yield* videoStatus({ videoId: written.videoId });
+          const status = yield* callTool("video_status", { videoId: written.videoId });
 
-        assert.isUndefined(status.awaitingApproval);
-      }),
+          assert.isUndefined(status.awaitingApproval);
+        }),
     ),
   );
 
   it.effect("does not await once the produce gate is approved", () =>
-    withVideoChannel("nyaucast-video-status-awaiting-approved-", explainerConfig, () =>
+    withToolChannel("nyaucast-video-status-awaiting-approved-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         const written = yield* seedSelected;
         yield* insertGateFact("approval", written.videoId, "produce", at(14));
 
-        const status = yield* videoStatus({ videoId: written.videoId });
+        const status = yield* callTool("video_status", { videoId: written.videoId });
 
         assert.isUndefined(status.awaitingApproval);
       }),
@@ -603,15 +614,32 @@ describe("video.status: gate records and the awaiting gate", () => {
   );
 
   it.effect("does not await an abandoned video", () =>
-    withVideoChannel("nyaucast-video-status-awaiting-abandoned-", explainerConfig, () =>
+    withToolChannel("nyaucast-video-status-awaiting-abandoned-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         const written = yield* seedSelected;
         yield* insertGateFact("rejection", written.videoId, "produce", at(14));
 
-        const abandoned = yield* videoStatus({ videoId: written.videoId });
+        const abandoned = yield* callTool("video_status", { videoId: written.videoId });
 
         assert.isTrue(abandoned.abandoned);
         assert.isUndefined(abandoned.awaitingApproval);
+      }),
+    ),
+  );
+});
+
+describe("video.status: unknown keys", () => {
+  it.effect("rejects an unknown key as invalid parameters, as the MCP entry does", () =>
+    withToolChannel("nyaucast-video-status-unknown-", { config: explainerConfig }, () =>
+      Effect.gen(function* () {
+        yield* setClock(noon);
+        const written = yield* callTool("explainer_write_plan", planInput());
+        const input = { next: "approve", videoId: written.videoId };
+
+        assert.strictEqual(
+          yield* rejectionReason("video_status", input),
+          "ToolParameterValidationError",
+        );
       }),
     ),
   );

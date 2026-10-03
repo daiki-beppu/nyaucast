@@ -6,10 +6,10 @@ import {
   publishedAdditionalProperties,
   insertCollection,
   setClock,
-  withChannel,
 } from "../../test/helpers.ts";
+import { callTool, rejectionReason, withToolChannel } from "../../test/tool-helpers.ts";
 import { rejectCollectionGate } from "../collections/gate-operations.ts";
-import { CollectionStatusTool, collectionStatus } from "./collection.status.ts";
+import { CollectionStatusTool } from "./collection.status.ts";
 
 const collectionId = "01JCOLLECTION00000000000000";
 
@@ -27,13 +27,13 @@ describe("collection.status", () => {
   });
 
   it.effect("returns derived progress and both gate decisions as facts", () =>
-    withChannel("nyaucast-status-tool-", () =>
+    withToolChannel("nyaucast-status-tool-", {}, () =>
       Effect.gen(function* () {
         yield* insertCollection({ id: collectionId, title: "Night Drive" });
         yield* setClock("2026-09-02T00:00:00.000Z");
         yield* rejectCollectionGate({ collectionId, gate: "produce" });
 
-        assert.deepStrictEqual(yield* collectionStatus({ collectionId }), {
+        assert.deepStrictEqual(yield* callTool("collection_status", { collectionId }), {
           collectionId,
           gates: { produce: "rejected", publish: "pending" },
           progress: { terminated: true },
@@ -43,10 +43,10 @@ describe("collection.status", () => {
   );
 
   it.effect("fails with a declared CollectionNotFound when the collection does not exist", () =>
-    withChannel("nyaucast-status-tool-missing-", () =>
+    withToolChannel("nyaucast-status-tool-missing-", {}, () =>
       Effect.gen(function* () {
         const failure = yield* Effect.flip(
-          collectionStatus({ collectionId: "01JMISSING0000000000000000" }),
+          callTool("collection_status", { collectionId: "01JMISSING0000000000000000" }),
         );
 
         assert.strictEqual(failure._tag, "CollectionNotFound");
@@ -70,4 +70,20 @@ describe("collection.status", () => {
       assert.isFalse(accepts(CollectionStatusTool.successSchema, outputWithAction));
     }
   });
+});
+
+describe("collection.status: unknown keys", () => {
+  it.effect("rejects an unknown key as invalid parameters, as the MCP entry does", () =>
+    withToolChannel("nyaucast-status-tool-unknown-", {}, () =>
+      Effect.gen(function* () {
+        yield* insertCollection({ id: collectionId, title: "Night Drive" });
+        const input = { collectionId, next: "publish" };
+
+        assert.strictEqual(
+          yield* rejectionReason("collection_status", input),
+          "ToolParameterValidationError",
+        );
+      }),
+    ),
+  );
 });

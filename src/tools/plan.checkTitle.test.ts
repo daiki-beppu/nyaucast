@@ -1,13 +1,9 @@
 import { assert, describe, it } from "@effect/vitest";
 import { Effect } from "effect";
 
-import {
-  accepts,
-  publishedAdditionalProperties,
-  insertCollection,
-  withChannel,
-} from "../../test/helpers.ts";
-import { PlanCheckTitleTool, planCheckTitle } from "./plan.checkTitle.ts";
+import { accepts, publishedAdditionalProperties, insertCollection } from "../../test/helpers.ts";
+import { callTool, rejectionReason, withToolChannel } from "../../test/tool-helpers.ts";
+import { PlanCheckTitleTool } from "./plan.checkTitle.ts";
 
 describe("plan.checkTitle", () => {
   it("is named with its wire name", () => {
@@ -26,27 +22,33 @@ describe("plan.checkTitle", () => {
   });
 
   it.effect("accepts an unused title whose UTF-16 length is exactly 100", () =>
-    withChannel("nyaucast-check-title-100-", () =>
+    withToolChannel("nyaucast-check-title-100-", {}, () =>
       Effect.gen(function* () {
-        assert.deepStrictEqual(yield* planCheckTitle({ title: "😀".repeat(50) }), { ok: true });
+        assert.deepStrictEqual(yield* callTool("plan_check_title", { title: "😀".repeat(50) }), {
+          ok: true,
+        });
       }),
     ),
   );
 
   it.effect("accepts a title that no collection uses", () =>
-    withChannel("nyaucast-check-title-free-", () =>
+    withToolChannel("nyaucast-check-title-free-", {}, () =>
       Effect.gen(function* () {
         yield* insertCollection({ id: "01JEXISTING00000000000000", title: "Other" });
 
-        assert.deepStrictEqual(yield* planCheckTitle({ title: "Night Drive" }), { ok: true });
+        assert.deepStrictEqual(yield* callTool("plan_check_title", { title: "Night Drive" }), {
+          ok: true,
+        });
       }),
     ),
   );
 
   it.effect("fails with a declared failure when the UTF-16 length exceeds 100", () =>
-    withChannel("nyaucast-check-title-101-", () =>
+    withToolChannel("nyaucast-check-title-101-", {}, () =>
       Effect.gen(function* () {
-        const failure = yield* Effect.flip(planCheckTitle({ title: `${"😀".repeat(50)}a` }));
+        const failure = yield* Effect.flip(
+          callTool("plan_check_title", { title: `${"😀".repeat(50)}a` }),
+        );
 
         assert.strictEqual(failure._tag, "TitleTooLong");
       }),
@@ -54,11 +56,11 @@ describe("plan.checkTitle", () => {
   );
 
   it.effect("fails with a declared failure when a collection already uses the title", () =>
-    withChannel("nyaucast-check-title-used-", () =>
+    withToolChannel("nyaucast-check-title-used-", {}, () =>
       Effect.gen(function* () {
         yield* insertCollection({ id: "01JEXISTING00000000000000", title: "Night Drive" });
 
-        const failure = yield* Effect.flip(planCheckTitle({ title: "Night Drive" }));
+        const failure = yield* Effect.flip(callTool("plan_check_title", { title: "Night Drive" }));
 
         assert.strictEqual(failure._tag, "TitleAlreadyInUse");
       }),
@@ -66,12 +68,27 @@ describe("plan.checkTitle", () => {
   );
 
   it.effect("does not reserve the title (read-only)", () =>
-    withChannel("nyaucast-check-title-readonly-", () =>
+    withToolChannel("nyaucast-check-title-readonly-", {}, () =>
       Effect.gen(function* () {
-        yield* planCheckTitle({ title: "Night Drive" });
-        yield* planCheckTitle({ title: "Night Drive" });
+        yield* callTool("plan_check_title", { title: "Night Drive" });
+        yield* callTool("plan_check_title", { title: "Night Drive" });
 
         yield* insertCollection({ id: "01JNEW00000000000000000000", title: "Night Drive" });
+      }),
+    ),
+  );
+});
+
+describe("plan.checkTitle: unknown keys", () => {
+  it.effect("rejects an unknown key as invalid parameters, as the MCP entry does", () =>
+    withToolChannel("nyaucast-check-title-unknown-", {}, () =>
+      Effect.gen(function* () {
+        const input = { channelDir: "/channels/deepfocus365", title: "Night Drive" };
+
+        assert.strictEqual(
+          yield* rejectionReason("plan_check_title", input),
+          "ToolParameterValidationError",
+        );
       }),
     ),
   );

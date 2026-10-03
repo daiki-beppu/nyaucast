@@ -9,7 +9,6 @@ import {
   explainerConfig,
   planInput,
   source,
-  withVideoChannel,
 } from "../../test/explainer-helpers.ts";
 import {
   accepts,
@@ -19,11 +18,8 @@ import {
   writeVideoConfig,
 } from "../../test/helpers.ts";
 import { type Routes, fakeHttp } from "../../test/sns-api.ts";
-import {
-  ExplainerFetchTopicCandidatesTool,
-  explainerFetchTopicCandidates,
-} from "./explainer.fetchTopicCandidates.ts";
-import { explainerWritePlan } from "./explainer.writePlan.ts";
+import { callTool, rejectionReason, withToolChannel } from "../../test/tool-helpers.ts";
+import { ExplainerFetchTopicCandidatesTool } from "./explainer.fetchTopicCandidates.ts";
 
 const noon = "2026-10-03T12:00:00.000Z";
 const bodySentinel = "FULL_ARTICLE_BODY_SENTINEL";
@@ -154,7 +150,10 @@ const feedList = [
 
 const run = (routes: Routes) => {
   const http = fakeHttp(routes);
-  return { http, effect: explainerFetchTopicCandidates({}).pipe(Effect.provide(http.layer)) };
+  return {
+    http,
+    effect: callTool("explainer_fetch_topic_candidates", {}).pipe(Effect.provide(http.layer)),
+  };
 };
 
 describe("explainer.fetchTopicCandidates: parameters and result", () => {
@@ -207,9 +206,9 @@ describe("explainer.fetchTopicCandidates: parameters and result", () => {
 
 describe("explainer.fetchTopicCandidates: reading feeds", () => {
   it.effect("reads RSS 2.0 (CDATA description) and keeps the feed order and item order", () =>
-    withVideoChannel(
+    withToolChannel(
       "nyaucast-topics-rss2-",
-      configWith([{ name: "HN", url: "https://hn.example/frontpage" }]),
+      { config: configWith([{ name: "HN", url: "https://hn.example/frontpage" }]) },
       () =>
         Effect.gen(function* () {
           const { effect } = run({ [hnroute.feed]: xml(hnrss) });
@@ -238,9 +237,9 @@ describe("explainer.fetchTopicCandidates: reading feeds", () => {
   );
 
   it.effect("reads RSS 1.0 (rdf:RDF) with dc:date and never returns content:encoded", () =>
-    withVideoChannel(
+    withToolChannel(
       "nyaucast-topics-rss1-",
-      configWith([{ name: "Hatena", url: "https://b.example/hotentry.rss" }]),
+      { config: configWith([{ name: "Hatena", url: "https://b.example/hotentry.rss" }]) },
       () =>
         Effect.gen(function* () {
           const { effect } = run({ "GET https://b.example/hotentry.rss": xml(hatena) });
@@ -262,9 +261,9 @@ describe("explainer.fetchTopicCandidates: reading feeds", () => {
   );
 
   it.effect("reads Atom: the alternate link, published and summary, and never the content", () =>
-    withVideoChannel(
+    withToolChannel(
       "nyaucast-topics-atom-",
-      configWith([{ name: "Blog", url: "https://blog.example/atom.xml" }]),
+      { config: configWith([{ name: "Blog", url: "https://blog.example/atom.xml" }]) },
       () =>
         Effect.gen(function* () {
           const { effect } = run({ "GET https://blog.example/atom.xml": xml(atom) });
@@ -286,9 +285,9 @@ describe("explainer.fetchTopicCandidates: reading feeds", () => {
   );
 
   it.effect("omits the optional fields a feed item does not have", () =>
-    withVideoChannel(
+    withToolChannel(
       "nyaucast-topics-bare-",
-      configWith([{ name: "Bare", url: "https://bare.example/rss" }]),
+      { config: configWith([{ name: "Bare", url: "https://bare.example/rss" }]) },
       () =>
         Effect.gen(function* () {
           const { effect } = run({ "GET https://bare.example/rss": xml(rssLinks) });
@@ -301,12 +300,14 @@ describe("explainer.fetchTopicCandidates: reading feeds", () => {
   );
 
   it.effect("resolves a relative Atom href against each feed's own URL", () =>
-    withVideoChannel(
+    withToolChannel(
       "nyaucast-topics-relative-",
-      configWith([
-        { name: "Blog", url: "https://blog.example/atom.xml" },
-        { name: "Other", url: "https://other.example/feed/atom.xml" },
-      ]),
+      {
+        config: configWith([
+          { name: "Blog", url: "https://blog.example/atom.xml" },
+          { name: "Other", url: "https://other.example/feed/atom.xml" },
+        ]),
+      },
       () =>
         Effect.gen(function* () {
           const { effect } = run({
@@ -325,9 +326,9 @@ describe("explainer.fetchTopicCandidates: reading feeds", () => {
   );
 
   it.effect("uses only an Atom link with no rel or rel=alternate", () =>
-    withVideoChannel(
+    withToolChannel(
       "nyaucast-topics-atom-links-",
-      configWith([{ name: "Links", url: "https://links.example/atom" }]),
+      { config: configWith([{ name: "Links", url: "https://links.example/atom" }]) },
       () =>
         Effect.gen(function* () {
           const { effect } = run({ "GET https://links.example/atom": xml(atomLinks) });
@@ -343,7 +344,7 @@ describe("explainer.fetchTopicCandidates: reading feeds", () => {
   );
 
   it.effect("returns the channel's genre and hit patterns with the candidates", () =>
-    withVideoChannel("nyaucast-topics-declarations-", configWith([]), () =>
+    withToolChannel("nyaucast-topics-declarations-", { config: configWith([]) }, () =>
       Effect.gen(function* () {
         const { effect } = run({});
 
@@ -359,7 +360,7 @@ describe("explainer.fetchTopicCandidates: reading feeds", () => {
   );
 
   it.effect("returns empty lists for a channel that registered no feeds, without any request", () =>
-    withVideoChannel("nyaucast-topics-nofeeds-", explainerConfig, () =>
+    withToolChannel("nyaucast-topics-nofeeds-", { config: explainerConfig }, () =>
       Effect.gen(function* () {
         const { effect, http } = run({});
 
@@ -373,7 +374,7 @@ describe("explainer.fetchTopicCandidates: reading feeds", () => {
   );
 
   it.effect("requests only the feed URLs and never an article URL", () =>
-    withVideoChannel("nyaucast-topics-requests-", configWith(feedList), () =>
+    withToolChannel("nyaucast-topics-requests-", { config: configWith(feedList) }, () =>
       Effect.gen(function* () {
         const { effect, http } = run({
           [hnroute.feed]: xml(hnrss),
@@ -391,12 +392,14 @@ describe("explainer.fetchTopicCandidates: reading feeds", () => {
   );
 
   it.effect("returns feeds' candidates in the configured feed order and keeps duplicates", () =>
-    withVideoChannel(
+    withToolChannel(
       "nyaucast-topics-order-",
-      configWith([
-        { name: "First", url: "https://one.example/rss" },
-        { name: "Second", url: "https://two.example/rss" },
-      ]),
+      {
+        config: configWith([
+          { name: "First", url: "https://one.example/rss" },
+          { name: "Second", url: "https://two.example/rss" },
+        ]),
+      },
       () =>
         Effect.gen(function* () {
           const { effect } = run({
@@ -431,13 +434,14 @@ describe("explainer.fetchTopicCandidates: excluding sources already planned", ()
 </channel></rss>`;
 
   it.effect("drops a candidate whose normalized URL equals an existing plan's primary source", () =>
-    withVideoChannel(
+    withToolChannel(
       "nyaucast-topics-dedupe-",
-      configWith([{ name: "F", url: "https://f.example/rss" }]),
+      { config: configWith([{ name: "F", url: "https://f.example/rss" }]) },
       () =>
         Effect.gen(function* () {
           yield* setClock(noon);
-          yield* explainerWritePlan(
+          yield* callTool(
+            "explainer_write_plan",
             planInput({
               sources: [source("https://ex.com/a"), source("https://ex.com/secondary")],
             }),
@@ -460,13 +464,14 @@ describe("explainer.fetchTopicCandidates: excluding sources already planned", ()
   );
 
   it.effect("still excludes the primary source of an abandoned video", () =>
-    withVideoChannel(
+    withToolChannel(
       "nyaucast-topics-dedupe-abandoned-",
-      configWith([{ name: "F", url: "https://f.example/rss" }]),
+      { config: configWith([{ name: "F", url: "https://f.example/rss" }]) },
       () =>
         Effect.gen(function* () {
           yield* setClock(noon);
-          const written = yield* explainerWritePlan(
+          const written = yield* callTool(
+            "explainer_write_plan",
             planInput({ sources: [source("https://ex.com/a")] }),
           );
           yield* insertRejection(written.videoId);
@@ -483,16 +488,18 @@ describe("explainer.fetchTopicCandidates: excluding sources already planned", ()
   );
 
   it.effect("only excludes the latest version's primary source of a rewritten plan", () =>
-    withVideoChannel(
+    withToolChannel(
       "nyaucast-topics-dedupe-latest-",
-      configWith([{ name: "F", url: "https://f.example/rss" }]),
+      { config: configWith([{ name: "F", url: "https://f.example/rss" }]) },
       () =>
         Effect.gen(function* () {
           yield* setClock(noon);
-          const written = yield* explainerWritePlan(
+          const written = yield* callTool(
+            "explainer_write_plan",
             planInput({ sources: [source("https://ex.com/a")] }),
           );
-          yield* explainerWritePlan(
+          yield* callTool(
+            "explainer_write_plan",
             planInput({ sources: [source("https://ex.com/secondary")], videoId: written.videoId }),
           );
           const { effect } = run({ "GET https://f.example/rss": xml(dedupeFeed) });
@@ -513,13 +520,13 @@ describe("explainer.fetchTopicCandidates: excluding sources already planned", ()
   );
 
   it.effect("does not exclude by a plan recorded without sources", () =>
-    withVideoChannel(
+    withToolChannel(
       "nyaucast-topics-dedupe-title-",
-      configWith([{ name: "F", url: "https://f.example/rss" }]),
+      { config: configWith([{ name: "F", url: "https://f.example/rss" }]) },
       () =>
         Effect.gen(function* () {
           yield* setClock(noon);
-          yield* explainerWritePlan(planInput({ title: "https://ex.com/a" }));
+          yield* callTool("explainer_write_plan", planInput({ title: "https://ex.com/a" }));
           const { effect } = run({ "GET https://f.example/rss": xml(dedupeFeed) });
 
           const result = yield* effect;
@@ -532,7 +539,7 @@ describe("explainer.fetchTopicCandidates: excluding sources already planned", ()
 
 describe("explainer.fetchTopicCandidates: a failing feed does not fail the call", () => {
   it.effect("returns the other feed's candidates and the failed feed with its status", () =>
-    withVideoChannel("nyaucast-topics-500-", configWith(feedList), () =>
+    withToolChannel("nyaucast-topics-500-", { config: configWith(feedList) }, () =>
       Effect.gen(function* () {
         const { effect } = run({
           [hnroute.feed]: () => new Response("", { status: 500 }),
@@ -553,7 +560,7 @@ describe("explainer.fetchTopicCandidates: a failing feed does not fail the call"
   );
 
   it.effect("classifies a transport error as Unreachable", () =>
-    withVideoChannel("nyaucast-topics-unreachable-", configWith(feedList), () =>
+    withToolChannel("nyaucast-topics-unreachable-", { config: configWith(feedList) }, () =>
       Effect.gen(function* () {
         const { effect } = run({
           [hnroute.feed]: () =>
@@ -580,12 +587,14 @@ describe("explainer.fetchTopicCandidates: a failing feed does not fail the call"
   it.effect(
     "classifies a feed with an external entity DOCTYPE as InvalidFeed and keeps the others",
     () =>
-      withVideoChannel(
+      withToolChannel(
         "nyaucast-topics-doctype-",
-        configWith([
-          { name: "Doctype", url: "https://doctype.example/rss" },
-          { name: "Good", url: "https://good.example/rss" },
-        ]),
+        {
+          config: configWith([
+            { name: "Doctype", url: "https://doctype.example/rss" },
+            { name: "Good", url: "https://good.example/rss" },
+          ]),
+        },
         () =>
           Effect.gen(function* () {
             const { effect } = run({
@@ -609,9 +618,9 @@ describe("explainer.fetchTopicCandidates: a failing feed does not fail the call"
   );
 
   it.effect("reads the same feed without the DOCTYPE", () =>
-    withVideoChannel(
+    withToolChannel(
       "nyaucast-topics-nodoctype-",
-      configWith([{ name: "Doctype", url: "https://doctype.example/rss" }]),
+      { config: configWith([{ name: "Doctype", url: "https://doctype.example/rss" }]) },
       () =>
         Effect.gen(function* () {
           const { effect } = run({ "GET https://doctype.example/rss": xml(plainRss) });
@@ -627,13 +636,15 @@ describe("explainer.fetchTopicCandidates: a failing feed does not fail the call"
   );
 
   it.effect("classifies malformed XML and an unknown root element as InvalidFeed", () =>
-    withVideoChannel(
+    withToolChannel(
       "nyaucast-topics-invalid-",
-      configWith([
-        { name: "Broken", url: "https://broken.example/rss" },
-        { name: "Html", url: "https://html.example/page" },
-        { name: "Good", url: "https://good.example/rss" },
-      ]),
+      {
+        config: configWith([
+          { name: "Broken", url: "https://broken.example/rss" },
+          { name: "Html", url: "https://html.example/page" },
+          { name: "Good", url: "https://good.example/rss" },
+        ]),
+      },
       () =>
         Effect.gen(function* () {
           const { effect } = run({
@@ -659,7 +670,7 @@ describe("explainer.fetchTopicCandidates: a failing feed does not fail the call"
   );
 
   it.effect("classifies a feed that never answers as Timeout after 30 seconds", () =>
-    withVideoChannel("nyaucast-topics-timeout-", configWith(feedList), () =>
+    withToolChannel("nyaucast-topics-timeout-", { config: configWith(feedList) }, () =>
       Effect.gen(function* () {
         const { effect, http } = run({
           [hnroute.feed]: () => Effect.never,
@@ -683,7 +694,7 @@ describe("explainer.fetchTopicCandidates: a failing feed does not fail the call"
   );
 
   it.effect("returns every feed as failed, and still succeeds, when all feeds fail", () =>
-    withVideoChannel("nyaucast-topics-allfail-", configWith(feedList), () =>
+    withToolChannel("nyaucast-topics-allfail-", { config: configWith(feedList) }, () =>
       Effect.gen(function* () {
         const { effect } = run({
           [hnroute.feed]: () => new Response("", { status: 500 }),
@@ -707,10 +718,13 @@ describe("explainer.fetchTopicCandidates: a failing feed does not fail the call"
 
 describe("explainer.fetchTopicCandidates: read-only", () => {
   it.effect("does not add a row to any local store table", () =>
-    withVideoChannel("nyaucast-topics-readonly-", configWith(feedList), () =>
+    withToolChannel("nyaucast-topics-readonly-", { config: configWith(feedList) }, () =>
       Effect.gen(function* () {
         yield* setClock(noon);
-        yield* explainerWritePlan(planInput({ sources: [source("https://ex.com/cat")] }));
+        yield* callTool(
+          "explainer_write_plan",
+          planInput({ sources: [source("https://ex.com/cat")] }),
+        );
         const before = yield* countAllRows;
         const { effect } = run({
           [hnroute.feed]: xml(hnrss),
@@ -728,7 +742,7 @@ describe("explainer.fetchTopicCandidates: read-only", () => {
 
 describe("explainer.fetchTopicCandidates: channel settings", () => {
   it.effect("fails with NotExplainerChannel when the channel kind is not explainer", () =>
-    withVideoChannel("nyaucast-topics-collection-", collectionConfig, () =>
+    withToolChannel("nyaucast-topics-collection-", { config: collectionConfig }, () =>
       Effect.gen(function* () {
         const { effect } = run({});
 
@@ -740,7 +754,7 @@ describe("explainer.fetchTopicCandidates: channel settings", () => {
   );
 
   it.effect("fails with ChannelConfigNotFound when the channel has no video config", () =>
-    withVideoChannel("nyaucast-topics-noconfig-", undefined, () =>
+    withToolChannel("nyaucast-topics-noconfig-", {}, () =>
       Effect.gen(function* () {
         const { effect } = run({});
 
@@ -756,7 +770,7 @@ describe("explainer.fetchTopicCandidates: channel settings", () => {
     ["a feed without a name", configWith([{ url: "https://f.example/rss" }])],
     ["feeds that is not an array", configWith({ name: "F", url: "https://f.example/rss" })],
   ] as const)("fails with InvalidChannelConfig for %s", ([, content]) =>
-    withVideoChannel("nyaucast-topics-invalid-config-", content, () =>
+    withToolChannel("nyaucast-topics-invalid-config-", { config: content }, () =>
       Effect.gen(function* () {
         const { effect } = run({});
 
@@ -768,7 +782,7 @@ describe("explainer.fetchTopicCandidates: channel settings", () => {
   );
 
   it.effect("reads the feeds on every call, so a feed added later is fetched", () =>
-    withVideoChannel("nyaucast-topics-reread-", configWith([]), (channelRoot) =>
+    withToolChannel("nyaucast-topics-reread-", { config: configWith([]) }, (channelRoot) =>
       Effect.gen(function* () {
         const { effect: first } = run({});
         assert.deepStrictEqual((yield* first).candidates, []);
@@ -780,6 +794,19 @@ describe("explainer.fetchTopicCandidates: channel settings", () => {
         const { effect: second } = run({ [hnroute.feed]: xml(hnrss) });
 
         assert.strictEqual((yield* second).candidates.length, 2);
+      }),
+    ),
+  );
+});
+
+describe("explainer.fetchTopicCandidates: unknown keys", () => {
+  it.effect("rejects an unknown key as invalid parameters, as the MCP entry does", () =>
+    withToolChannel("nyaucast-topics-unknown-", { config: explainerConfig }, () =>
+      Effect.gen(function* () {
+        assert.strictEqual(
+          yield* rejectionReason("explainer_fetch_topic_candidates", { feed: "HN" } as never),
+          "ToolParameterValidationError",
+        );
       }),
     ),
   );
