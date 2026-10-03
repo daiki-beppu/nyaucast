@@ -27,6 +27,13 @@ import {
   GeminiResponseInvalid,
 } from "../thumbnails/gemini.ts";
 import {
+  CodexExecFailed,
+  CodexImageMissing,
+  CodexImageGenerator,
+  CodexNotLoggedIn,
+  CodexUnavailable,
+} from "../thumbnails/codex.ts";
+import {
   ReferenceImageNotFound,
   ReferenceImageUnsupported,
   ThumbnailFiles,
@@ -59,6 +66,8 @@ export const VideoGenerateThumbnailsTool = Tool.make("video_generate_thumbnails"
     "with BannedThumbnailWords before any provider call when the text or the background contains a banned word, " +
     "with ReferenceImageNotFound or ReferenceImageUnsupported for a declared reference image, and with ThumbnailImageRejected " +
     "(reason unreadable, too_small, not_16_9 or too_large) for a generated image that cannot become a candidate; candidates written before the failure are kept. " +
+    "When the provider is codex, the candidates are made one at a time with the codex CLI after checking that codex is logged in: " +
+    "fails with CodexNotLoggedIn (no image is generated), CodexUnavailable, CodexExecFailed (with the exit code) or CodexImageMissing. " +
     "Returns the round, how many candidates this call made, and every candidate of the round.",
   failure: Schema.Union([
     ChannelConfigNotFound,
@@ -73,6 +82,10 @@ export const VideoGenerateThumbnailsTool = Tool.make("video_generate_thumbnails"
     GeminiHttpFailure,
     GeminiResponseInvalid,
     GeminiHttpBoundaryFailed,
+    CodexNotLoggedIn,
+    CodexUnavailable,
+    CodexExecFailed,
+    CodexImageMissing,
     SecretNotConfigured,
     SecretResolutionFailed,
   ]),
@@ -140,14 +153,34 @@ const pickReference = (references: readonly ReferenceImage[]) =>
     return references.length === 0 ? undefined : references[count % references.length];
   });
 
-const makeCandidate = (
+interface GenerateRequest {
+  readonly prompt: string;
+  readonly referenceImage?: ReferenceImage;
+}
+
+type GenerateFailure =
+  | CodexExecFailed
+  | CodexImageMissing
+  | CodexUnavailable
+  | GeminiHttpBoundaryFailed
+  | GeminiHttpFailure
+  | GeminiResponseInvalid
+  | SecretNotConfigured
+  | SecretResolutionFailed;
+
+type Generate<E, R> = (
+  request: GenerateRequest,
+) => Effect.Effect<{ readonly bytes: Uint8Array }, E, R>;
+
+const makeCandidate = <E, R>(
   slot: { number: number; round: number; videoId: string },
   prompt: string,
   references: readonly ReferenceImage[],
+  generate: Generate<E, R>,
 ) =>
   Effect.gen(function* () {
     const referenceImage = yield* pickReference(references);
-    const generated = yield* (yield* GeminiImageGenerator).generate({
+    const generated = yield* generate({
       prompt,
       ...(referenceImage === undefined ? {} : { referenceImage }),
     });
@@ -157,6 +190,21 @@ const makeCandidate = (
     const createdAt = new Date(yield* Clock.currentTimeMillis).toISOString();
     yield* appendCandidate({ ...slot, createdAt, key, origin: "generated" });
   });
+
+// provider は設定で必ず選ばれる 2 本だけ。codex は生成の前に、1 回の呼び出しで 1 度だけログインを確かめる。
+const withGenerator = <A, E, R>(
+  provider: ThumbnailType["provider"],
+  use: (generate: Generate<GenerateFailure, never>) => Effect.Effect<A, E, R>,
+) =>
+  provider === "gemini"
+    ? Effect.gen(function* () {
+        return yield* use((yield* GeminiImageGenerator).generate);
+      }).pipe(Effect.provide(GeminiImageGenerator.layer))
+    : Effect.gen(function* () {
+        const codex = yield* CodexImageGenerator;
+        yield* codex.requireLogin;
+        return yield* use(codex.generate);
+      }).pipe(Effect.provide(CodexImageGenerator.layer));
 
 const resolveThumbnailType = Effect.gen(function* () {
   const settings = yield* (yield* ChannelSettings).requireExplainer;
@@ -181,11 +229,15 @@ const generateThumbnails = Effect.fn("video.generateThumbnails")(function* ({
   const references = yield* Effect.forEach(thumbnail.referenceImages, files.readReference);
   const { missing, round } = yield* planRound(videoId, thumbnail.candidates, force === true);
   const prompt = buildPrompt(thumbnail, input);
-  yield* Effect.forEach(
-    missing,
-    (number) => makeCandidate({ number, round, videoId }, prompt, references),
-    { discard: true },
-  ).pipe(Effect.provide(GeminiImageGenerator.layer));
+  if (missing.length > 0) {
+    yield* withGenerator(thumbnail.provider, (generate) =>
+      Effect.forEach(
+        missing,
+        (number) => makeCandidate({ number, round, videoId }, prompt, references, generate),
+        { discard: true },
+      ),
+    );
+  }
   const facts = yield* readThumbnailFacts(videoId);
   return {
     candidates: facts.candidates.filter((candidate) => candidate.round === round),

@@ -1,6 +1,7 @@
-import { Effect } from "effect";
+import { Effect, type FileSystem, type Path } from "effect";
 import { Toolkit } from "effect/ai";
 import type { HttpClient } from "effect/http";
+import type { ChildProcessSpawner } from "effect/process";
 import type { SqlClient } from "effect/sql";
 
 import type { StaticSecrets } from "./auth/secrets.ts";
@@ -40,9 +41,12 @@ export const NyaucastToolHandlers = NyaucastToolkit.toLayer(
   Effect.gen(function* () {
     const context = yield* Effect.context<
       | ChannelSettings
+      | ChildProcessSpawner.ChildProcessSpawner
       | CollectionDirectories
       | CollectionIds
+      | FileSystem.FileSystem
       | HttpClient.HttpClient
+      | Path.Path
       | SqlClient.SqlClient
       | StaticSecrets
       | ThumbnailFiles

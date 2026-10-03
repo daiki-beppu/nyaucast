@@ -17,11 +17,11 @@ export class NotExplainerChannel extends Schema.TaggedError<NotExplainerChannel>
 
 const PositiveInteger = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThan(0));
 
-// サムネイルの型。provider は必ず選ぶ（既定値なし）。この版で受けるのは gemini だけ。
+// サムネイルの型。provider は必ず選ぶ（既定値なし）。provider は gemini と codex の 2 本。
 const ThumbnailType = Schema.Struct({
   bannedWords: Schema.Array(Schema.String),
   candidates: PositiveInteger.pipe(Schema.withDecodingDefaultKey(Effect.succeed(3))),
-  provider: Schema.Literal("gemini"),
+  provider: Schema.Literals(["gemini", "codex"]),
   referenceImages: Schema.Array(Schema.String),
   style: Schema.String,
   textInstructions: Schema.String,

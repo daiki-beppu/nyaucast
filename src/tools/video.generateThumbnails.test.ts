@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
-import { Effect } from "effect";
+import { Deferred, Effect, Fiber } from "effect";
 
+import { type CodexCall, type FakeCodex, fakeCodex } from "../../test/codex-helpers.ts";
 import { planInput } from "../../test/explainer-helpers.ts";
 import {
   accepts,
@@ -27,6 +28,14 @@ import {
   copyrightAvoidancePhrase,
   videoGenerateThumbnails,
 } from "./video.generateThumbnails.ts";
+
+// テストの時計（TestClock）は止まっているが、別の fiber が動き出すまでの実時間は進む。
+const realDelay = (milliseconds: number) =>
+  Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
+const waitUntil = (condition: () => boolean) =>
+  Effect.gen(function* () {
+    for (let attempt = 0; attempt < 200 && !condition(); attempt += 1) yield* realDelay(10);
+  });
 
 const noon = "2026-10-03T12:00:00.000Z";
 
@@ -752,5 +761,532 @@ describe("video.generateThumbnails: checking the generated image", () => {
           assert.strictEqual(yield* rowCount, 0);
         }),
     );
+  });
+});
+
+describe("video.generateThumbnails: the codex provider", () => {
+  const codexType = (overrides: Record<string, unknown> = {}) =>
+    thumbnailType({ provider: "codex", ...overrides });
+
+  // Gemini は呼ばれない。偽の Gemini は応答を持たず、呼ばれたら calls に残る（defect にもなる）。
+  const withCodex = <A, E, R>(
+    prefix: string,
+    overrides: Record<string, unknown>,
+    codex: FakeCodex,
+    use: (channelRoot: string, gemini: ReturnType<typeof fakeGemini>) => Effect.Effect<A, E, R>,
+  ) => {
+    const gemini = fakeGemini([]);
+    return withThumbnailChannel(
+      prefix,
+      explainerConfigWith(codexType(overrides)),
+      gemini,
+      (channelRoot) => use(channelRoot, gemini),
+      codex,
+    );
+  };
+
+  const execArgsWithoutPaths = (call: CodexCall) => call.args.slice(0, 6);
+
+  it.effect(
+    "logs in once, then starts `codex exec` once per candidate in order, never calling Gemini",
+    () => {
+      const codex = fakeCodex({
+        replies: [
+          { image: solidPng(1344, 768) },
+          { image: solidPng(1344, 768) },
+          { image: solidPng(1344, 768) },
+        ],
+      });
+      return withCodex("nyaucast-thumbnails-codex-default-", {}, codex, (channelRoot, gemini) =>
+        Effect.gen(function* () {
+          yield* recordPlan();
+
+          const result = yield* videoGenerateThumbnails(input());
+
+          assert.deepStrictEqual(
+            codex.calls.map((call) => [call.command, call.args[0], call.args[1]]),
+            [
+              ["codex", "login", "status"],
+              ["codex", "exec", "--skip-git-repo-check"],
+              ["codex", "exec", "--skip-git-repo-check"],
+              ["codex", "exec", "--skip-git-repo-check"],
+            ],
+          );
+          assert.deepStrictEqual(codex.calls[0]?.args, ["login", "status"]);
+          for (const call of codex.execCalls) {
+            assert.deepStrictEqual(execArgsWithoutPaths(call), [
+              "exec",
+              "--skip-git-repo-check",
+              "--ephemeral",
+              "--sandbox",
+              "workspace-write",
+              "--cd",
+            ]);
+          }
+          assert.strictEqual(gemini.calls.length, 0);
+          assert.strictEqual(result.created, 3);
+          assert.strictEqual(result.round, 1);
+          assert.deepStrictEqual(
+            result.candidates.map((candidate) => candidate.key),
+            [1, 2, 3].map((number) => `videos/V1/thumbnails/1-${number}.jpg`),
+          );
+          for (const candidate of result.candidates) {
+            assert.deepStrictEqual(jpegSize(readChannelFile(channelRoot, candidate.key)), {
+              height: 1080,
+              width: 1920,
+            });
+            assert.deepStrictEqual(jpegSize(readChannelFile(channelRoot, candidate.smallKey)), {
+              height: 180,
+              width: 320,
+            });
+          }
+          assert.strictEqual(yield* rowCount, 3);
+        }),
+      );
+    },
+  );
+
+  it.effect("starts the next `codex exec` only after the previous one has finished", () => {
+    const hold = Deferred.makeUnsafe<void>();
+    const codex = fakeCodex({
+      replies: [{ hold, image: solidPng(1344, 768) }, good, good],
+    });
+    return withCodex("nyaucast-thumbnails-codex-sequential-", {}, codex, () =>
+      Effect.gen(function* () {
+        yield* recordPlan();
+
+        const running = yield* Effect.forkChild(videoGenerateThumbnails(input()));
+        yield* waitUntil(() => codex.execCalls.length >= 1);
+        // 並行なら 2 本目が起動できる時間を与えてから確かめる。逐次なら 1 本目の終了まで起動しない。
+        yield* realDelay(100);
+        assert.strictEqual(codex.execCalls.length, 1);
+
+        yield* Deferred.succeed(hold, undefined);
+        const result = yield* Fiber.join(running);
+
+        assert.strictEqual(codex.execCalls.length, 3);
+        assert.strictEqual(result.created, 3);
+        assert.strictEqual(yield* rowCount, 3);
+      }),
+    );
+  });
+
+  it.effect("makes as many candidates as the channel declares", () => {
+    const codex = fakeCodex({
+      replies: [{ image: solidPng(1344, 768) }, { image: solidPng(1344, 768) }],
+    });
+    return withCodex("nyaucast-thumbnails-codex-count-", { candidates: 2 }, codex, () =>
+      Effect.gen(function* () {
+        yield* recordPlan();
+
+        const result = yield* videoGenerateThumbnails(input());
+
+        assert.strictEqual(codex.execCalls.length, 2);
+        assert.strictEqual(result.created, 2);
+        assert.strictEqual(yield* rowCount, 2);
+      }),
+    );
+  });
+
+  it.effect(
+    "hands codex the prompt the tool built: the copyright-avoiding phrase, the style, the text instructions, the text and the background",
+    () => {
+      const codex = fakeCodex({ replies: [{ image: solidPng(1344, 768) }] });
+      return withCodex(
+        "nyaucast-thumbnails-codex-prompt-",
+        {
+          candidates: 1,
+          style: "paper-cut collage with thick outlines",
+          textInstructions: "headline in the top third, white on dark",
+        },
+        codex,
+        () =>
+          Effect.gen(function* () {
+            yield* recordPlan();
+
+            yield* videoGenerateThumbnails(input());
+
+            const instruction = codex.execCalls[0]?.args.at(-1) ?? "";
+            for (const part of [
+              copyrightAvoidancePhrase,
+              "paper-cut collage with thick outlines",
+              "headline in the top third, white on dark",
+              "Thumbnail text: 猫はなぜ喉を鳴らす？",
+              "Background: 夜の窓辺で猫が丸くなっている",
+            ]) {
+              assert.include(instruction, part);
+            }
+          }),
+      );
+    },
+  );
+
+  it.effect("passes the instruction as one argument without any shell in between", () => {
+    const codex = fakeCodex({ replies: [{ image: solidPng(1344, 768) }] });
+    return withCodex("nyaucast-thumbnails-codex-argv-", { candidates: 1 }, codex, () =>
+      Effect.gen(function* () {
+        yield* recordPlan();
+
+        yield* videoGenerateThumbnails(
+          input({ background: "引用符 ' \" と $(rm -rf /) と ; echo" }),
+        );
+
+        const [call] = codex.execCalls;
+        assert.strictEqual(call?.command, "codex");
+        assert.include(call?.args.at(-1) ?? "", "引用符 ' \" と $(rm -rf /) と ; echo");
+      }),
+    );
+  });
+
+  describe("reference images", () => {
+    const referenceA = solidPng(8, 8, [255, 0, 0]);
+    const referenceB = solidPng(8, 8, [0, 0, 255]);
+    const writeReferences = (channelRoot: string) => {
+      writeChannelFile(channelRoot, "thumbnails/references/a.png", referenceA);
+      writeChannelFile(channelRoot, "thumbnails/references/b.png", referenceB);
+    };
+
+    it.effect(
+      "rotates through the declared reference images with --image, like the other provider",
+      () => {
+        const codex = fakeCodex({
+          replies: [1, 2, 3].map(() => ({ image: solidPng(1344, 768) })),
+        });
+        return withCodex(
+          "nyaucast-thumbnails-codex-reference-",
+          { referenceImages: ["thumbnails/references/a.png", "thumbnails/references/b.png"] },
+          codex,
+          (channelRoot) =>
+            Effect.gen(function* () {
+              writeReferences(channelRoot);
+              yield* recordPlan();
+
+              yield* videoGenerateThumbnails(input());
+
+              assert.deepStrictEqual(
+                codex.execCalls.map((call) => call.imageBytes),
+                [[referenceA], [referenceB], [referenceA]],
+              );
+              for (const call of codex.execCalls) {
+                // 画像のパスは 1 件だけで、`--` の後ろがプロンプト。区切りがなければ画像のパスとして読まれる。
+                assert.strictEqual(call.imagePaths?.length, 1);
+                assert.deepStrictEqual(call.args.slice(-3, -1), [call.imagePaths?.[0], "--"]);
+                assert.include(call.prompt ?? "", "Thumbnail text: 猫はなぜ喉を鳴らす？");
+              }
+            }),
+        );
+      },
+    );
+
+    it.effect("does not pass --image when the channel declares no reference image", () => {
+      const codex = fakeCodex({ replies: [{ image: solidPng(1344, 768) }] });
+      return withCodex("nyaucast-thumbnails-codex-no-reference-", { candidates: 1 }, codex, () =>
+        Effect.gen(function* () {
+          yield* recordPlan();
+
+          yield* videoGenerateThumbnails(input());
+
+          const [call] = codex.execCalls;
+          // --image も -- も付かない 8 要素。最後の 1 つが指示文で、偽物はそれを prompt として読む。
+          assert.deepStrictEqual(call?.args.slice(0, 7), [
+            "exec",
+            "--skip-git-repo-check",
+            "--ephemeral",
+            "--sandbox",
+            "workspace-write",
+            "--cd",
+            call?.workDir,
+          ]);
+          assert.strictEqual(call?.args.length, 8);
+          assert.strictEqual(call?.args[7], call?.prompt);
+        }),
+      );
+    });
+
+    it.effect("stops a missing reference image before logging in or starting codex", () => {
+      const codex = fakeCodex();
+      return withCodex(
+        "nyaucast-thumbnails-codex-missing-reference-",
+        { referenceImages: ["thumbnails/references/gone.png"] },
+        codex,
+        () =>
+          Effect.gen(function* () {
+            yield* recordPlan();
+
+            const failure = yield* Effect.flip(videoGenerateThumbnails(input()));
+
+            assert.strictEqual(failure._tag, "ReferenceImageNotFound");
+            assert.strictEqual(codex.calls.length, 0);
+          }),
+      );
+    });
+  });
+
+  describe("the declared checks before codex is used", () => {
+    it.effect("stops a banned word before logging in or starting codex", () => {
+      const codex = fakeCodex();
+      return withCodex("nyaucast-thumbnails-codex-banned-", { bannedWords: ["ロゴ"] }, codex, () =>
+        Effect.gen(function* () {
+          yield* recordPlan();
+
+          const failure = yield* Effect.flip(videoGenerateThumbnails(input({ text: "ロゴ入り" })));
+
+          assert.strictEqual(failure._tag, "BannedThumbnailWords");
+          assert.strictEqual(codex.calls.length, 0);
+          assert.strictEqual(yield* rowCount, 0);
+        }),
+      );
+    });
+
+    it.effect("fails with VideoNotFound for an unknown video without starting codex", () => {
+      const codex = fakeCodex();
+      return withCodex("nyaucast-thumbnails-codex-unknown-", {}, codex, () =>
+        Effect.gen(function* () {
+          const failure = yield* Effect.flip(videoGenerateThumbnails(input({ videoId: "nope" })));
+
+          assert.strictEqual(failure._tag, "VideoNotFound");
+          assert.strictEqual(codex.calls.length, 0);
+        }),
+      );
+    });
+  });
+
+  describe("login", () => {
+    it.effect(
+      "fails with CodexNotLoggedIn without using codex to generate when not logged in",
+      () => {
+        const codex = fakeCodex({ login: "logged-out", replies: [{ image: solidPng(1344, 768) }] });
+        return withCodex(
+          "nyaucast-thumbnails-codex-logged-out-",
+          {},
+          codex,
+          (channelRoot, gemini) =>
+            Effect.gen(function* () {
+              yield* recordPlan();
+
+              const failure = yield* Effect.flip(videoGenerateThumbnails(input()));
+
+              assert.strictEqual(failure._tag, "CodexNotLoggedIn");
+              assert.deepStrictEqual(
+                codex.calls.map((call) => [call.command, ...call.args]),
+                [["codex", "login", "status"]],
+              );
+              assert.strictEqual(gemini.calls.length, 0);
+              assert.strictEqual(yield* rowCount, 0);
+              assert.isFalse(channelFileExists(channelRoot, "videos/V1/thumbnails/1-1.jpg"));
+            }),
+        );
+      },
+    );
+
+    it.effect("fails with CodexUnavailable, a different tag, when codex is not installed", () => {
+      const codex = fakeCodex({ login: "unavailable" });
+      return withCodex("nyaucast-thumbnails-codex-unavailable-", {}, codex, () =>
+        Effect.gen(function* () {
+          yield* recordPlan();
+
+          const failure = yield* Effect.flip(videoGenerateThumbnails(input()));
+
+          assert.strictEqual(failure._tag, "CodexUnavailable");
+          assert.strictEqual(codex.execCalls.length, 0);
+          assert.strictEqual(yield* rowCount, 0);
+        }),
+      );
+    });
+
+    it.effect("checks the login once per call, not once per candidate", () => {
+      const codex = fakeCodex({ replies: [1, 2, 3].map(() => ({ image: solidPng(1344, 768) })) });
+      return withCodex("nyaucast-thumbnails-codex-login-once-", {}, codex, () =>
+        Effect.gen(function* () {
+          yield* recordPlan();
+
+          yield* videoGenerateThumbnails(input());
+
+          assert.strictEqual(codex.calls.filter((call) => call.args[0] === "login").length, 1);
+        }),
+      );
+    });
+
+    it.effect("starts no process at all for a complete round", () => {
+      const codex = fakeCodex({ replies: [1, 2, 3].map(() => ({ image: solidPng(1344, 768) })) });
+      return withCodex("nyaucast-thumbnails-codex-complete-", {}, codex, () =>
+        Effect.gen(function* () {
+          yield* recordPlan();
+          yield* videoGenerateThumbnails(input());
+          const before = codex.calls.length;
+
+          const again = yield* videoGenerateThumbnails(input());
+
+          assert.strictEqual(again.created, 0);
+          assert.strictEqual(codex.calls.length, before);
+        }),
+      );
+    });
+  });
+
+  describe("checking the generated image", () => {
+    const rejected = (image: Uint8Array, reason: string) => {
+      const codex = fakeCodex({ replies: [{ image }] });
+      return withCodex(
+        "nyaucast-thumbnails-codex-rejected-",
+        { candidates: 1 },
+        codex,
+        (channelRoot) =>
+          Effect.gen(function* () {
+            yield* recordPlan();
+
+            const failure = yield* Effect.flip(videoGenerateThumbnails(input()));
+
+            assert.strictEqual(failure._tag, "ThumbnailImageRejected");
+            assert.strictEqual(failureFacts(failure)["reason"], reason);
+            assert.strictEqual(yield* rowCount, 0);
+            assert.isFalse(channelFileExists(channelRoot, "videos/V1/thumbnails/1-1.jpg"));
+            assert.isFalse(channelFileExists(channelRoot, "videos/V1/thumbnails/1-1.small.jpg"));
+          }),
+      );
+    };
+
+    it.effect("does not make a candidate of a 1200x675 image (16:9 but below 1280x720)", () =>
+      rejected(solidPng(1200, 675), "too_small"),
+    );
+    it.effect("does not make a candidate of a 1600x1600 image (square)", () =>
+      rejected(solidPng(1600, 1600), "not_16_9"),
+    );
+    it.effect(
+      "does not make a candidate of an image that stays over 2 MB at the lowest quality",
+      () => rejected(noisePng(1920, 1080, 127), "too_large"),
+    );
+    it.effect("does not make a candidate of bytes that are not an image", () =>
+      rejected(Uint8Array.from([1, 2, 3, 4]), "unreadable"),
+    );
+
+    it.effect("makes a 1920x1080 JPG and a 320x180 small one of a 1280x720 image", () => {
+      const codex = fakeCodex({ replies: [{ image: solidPng(1280, 720) }] });
+      return withCodex(
+        "nyaucast-thumbnails-codex-accepted-",
+        { candidates: 1 },
+        codex,
+        (channelRoot) =>
+          Effect.gen(function* () {
+            yield* recordPlan();
+
+            const result = yield* videoGenerateThumbnails(input());
+
+            const key = result.candidates[0]?.key ?? "";
+            assert.deepStrictEqual(jpegSize(readChannelFile(channelRoot, key)), {
+              height: 1080,
+              width: 1920,
+            });
+            assert.deepStrictEqual(jpegSize(readChannelFile(channelRoot, smallKeyOf(key))), {
+              height: 180,
+              width: 320,
+            });
+          }),
+      );
+    });
+  });
+
+  describe("failures while making candidates", () => {
+    it.effect(
+      "keeps the first candidate when the second `codex exec` exits non-zero, and resumes from number 2",
+      () => {
+        const codex = fakeCodex({
+          replies: [
+            { image: solidPng(1344, 768) },
+            { exitCode: 2 },
+            { image: solidPng(1344, 768) },
+            { image: solidPng(1344, 768) },
+          ],
+        });
+        return withCodex("nyaucast-thumbnails-codex-resume-", {}, codex, (channelRoot) =>
+          Effect.gen(function* () {
+            yield* recordPlan();
+
+            const failure = yield* Effect.flip(videoGenerateThumbnails(input()));
+
+            assert.strictEqual(failure._tag, "CodexExecFailed");
+            assert.deepStrictEqual(failureFacts(failure)["exitCode"], 2);
+            assert.strictEqual(codex.execCalls.length, 2);
+            assert.deepStrictEqual(
+              (yield* candidateRows).map((row) => row.number),
+              [1],
+            );
+            assert.isTrue(channelFileExists(channelRoot, "videos/V1/thumbnails/1-1.jpg"));
+            assert.isFalse(channelFileExists(channelRoot, "videos/V1/thumbnails/1-2.jpg"));
+
+            const resumed = yield* videoGenerateThumbnails(input());
+
+            assert.strictEqual(codex.execCalls.length, 4);
+            assert.strictEqual(resumed.created, 2);
+            assert.deepStrictEqual(
+              (yield* candidateRows).map((row) => [row.round, row.number]),
+              [
+                [1, 1],
+                [1, 2],
+                [1, 3],
+              ],
+            );
+          }),
+        );
+      },
+    );
+
+    it.effect("fails with CodexImageMissing when codex exits with 0 but writes no file", () => {
+      const codex = fakeCodex({ replies: [{ stdout: "Image saved to thumbnail.png" }] });
+      return withCodex("nyaucast-thumbnails-codex-missing-image-", { candidates: 1 }, codex, () =>
+        Effect.gen(function* () {
+          yield* recordPlan();
+
+          const failure = yield* Effect.flip(videoGenerateThumbnails(input()));
+
+          assert.strictEqual(failure._tag, "CodexImageMissing");
+          assert.strictEqual(yield* rowCount, 0);
+        }),
+      );
+    });
+
+    it.effect("makes a new round with force, leaving the earlier round alone", () => {
+      const codex = fakeCodex({
+        replies: [1, 2, 3, 4, 5, 6].map(() => ({ image: solidPng(1344, 768) })),
+      });
+      return withCodex("nyaucast-thumbnails-codex-force-", {}, codex, () =>
+        Effect.gen(function* () {
+          yield* recordPlan();
+          yield* videoGenerateThumbnails(input());
+
+          const forced = yield* videoGenerateThumbnails(input({ force: true }));
+
+          assert.strictEqual(forced.round, 2);
+          assert.strictEqual(forced.created, 3);
+          assert.strictEqual(codex.execCalls.length, 6);
+          assert.strictEqual(yield* rowCount, 6);
+        }),
+      );
+    });
+  });
+});
+
+describe("video.generateThumbnails: the failures codex can cause", () => {
+  it("names them in the description", () => {
+    const description = VideoGenerateThumbnailsTool.description ?? "";
+
+    for (const tag of [
+      "CodexNotLoggedIn",
+      "CodexUnavailable",
+      "CodexExecFailed",
+      "CodexImageMissing",
+    ]) {
+      assert.include(description, tag);
+    }
+  });
+
+  it("accepts each of them as a failure of the tool", () => {
+    const schema = VideoGenerateThumbnailsTool.failureSchema;
+
+    assert.isTrue(accepts(schema, { _tag: "ThumbnailTypeNotDeclared" }));
+    assert.isTrue(accepts(schema, { _tag: "CodexNotLoggedIn" }));
+    assert.isTrue(accepts(schema, { _tag: "CodexUnavailable" }));
+    assert.isTrue(accepts(schema, { _tag: "CodexExecFailed", exitCode: 1 }));
+    assert.isTrue(accepts(schema, { _tag: "CodexImageMissing" }));
   });
 });
