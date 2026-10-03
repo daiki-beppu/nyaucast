@@ -10,7 +10,7 @@ export class VideoIdCollision extends Schema.TaggedError<VideoIdCollision>()("Vi
 }) {}
 
 // 出典は URL・記事タイトル・取得日時だけを持つ。記事の本文は持たない。
-const HttpUrl = Schema.String.check(
+export const HttpUrl = Schema.String.check(
   Schema.makeFilter((value: string) => URL.canParse(value) && /^https?:/iu.test(value), {
     description: "an http(s) URL",
   }),
@@ -76,6 +76,10 @@ export const requireLatestPlan = (videoId: string) =>
     return plan.value;
   });
 
+// 別名 `plan` の行が、その動画の最後の版であること。冪等性の照合と題材候補の除外が同じ定義を使う。
+const isLatestPlan = (sql: SqlClient.SqlClient) =>
+  sql`plan.recorded_at = (SELECT max(recorded_at) FROM explainer_plans WHERE video_id = plan.video_id)`;
+
 /** 各動画の最後の版が持つ冪等性のキーと一致する動画（最初に作られたもの）の ID。 */
 const findVideoIdByLatestPlanKey = (planKey: string) =>
   Effect.gen(function* () {
@@ -84,7 +88,7 @@ const findVideoIdByLatestPlanKey = (planKey: string) =>
       Request: Schema.String,
       Result: Schema.Struct({ video_id: Schema.String }),
       execute: (requested) =>
-        sql`SELECT plan.video_id AS video_id FROM explainer_plans AS plan JOIN explainer_videos AS video ON video.id = plan.video_id WHERE plan.plan_key = ${requested} AND plan.recorded_at = (SELECT max(recorded_at) FROM explainer_plans WHERE video_id = plan.video_id) ORDER BY video.created_at, video.id LIMIT 1`,
+        sql`SELECT plan.video_id AS video_id FROM explainer_plans AS plan JOIN explainer_videos AS video ON video.id = plan.video_id WHERE plan.plan_key = ${requested} AND ${isLatestPlan(sql)} ORDER BY video.created_at, video.id LIMIT 1`,
     });
     return Option.map(yield* find(planKey), (row) => row.video_id);
   }).pipe(Effect.orDie);
@@ -138,3 +142,15 @@ export const recordPlanOnce = (video: NewVideo) =>
     const sql = yield* SqlClient.SqlClient;
     return yield* sql.withTransaction(findKeyedOrCreate(video));
   }).pipe(Effect.catchTag("SqlError", Effect.die));
+
+/** 各動画の最後の版が持つ冪等性のキー。キーの形式は解釈しない。 */
+export const listLatestPlanKeys = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const findAll = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: Schema.Struct({ plan_key: Schema.String }),
+    execute: () =>
+      sql`SELECT DISTINCT plan.plan_key AS plan_key FROM explainer_plans AS plan WHERE ${isLatestPlan(sql)}`,
+  });
+  return (yield* findAll(undefined)).map((row) => row.plan_key);
+}).pipe(Effect.orDie);

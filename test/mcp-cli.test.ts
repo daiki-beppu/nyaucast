@@ -64,6 +64,7 @@ describe("nyaucast mcp", () => {
         });
         expect(toolNames.toSorted()).toEqual([
           "collection_status",
+          "explainer_fetch_topic_candidates",
           "explainer_write_plan",
           "plan_check_title",
           "plan_init",
