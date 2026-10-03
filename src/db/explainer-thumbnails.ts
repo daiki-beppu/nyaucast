@@ -160,41 +160,41 @@ export const latestSelectionAt = (videoId: string) =>
 const queryCount = (statement: Effect.Effect<ReadonlyArray<unknown>, unknown>) =>
   queryRows(Count, statement).pipe(Effect.map((rows) => rows[0]?.n ?? 0));
 
-/** 動画の、出所を問わない最大の回。回が無ければ 0。 */
+/** 動画の、出所を問わない最大の回（検査に落ちた生成の回を含む）。回が無ければ 0。 */
 export const maxRound = (videoId: string) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     return yield* queryCount(
-      sql`SELECT coalesce(max(round), 0) AS n FROM explainer_thumbnail_candidates WHERE video_id = ${videoId}`,
+      sql`SELECT coalesce(max(round), 0) AS n FROM (SELECT round FROM explainer_thumbnail_candidates WHERE video_id = ${videoId} UNION ALL SELECT round FROM explainer_thumbnail_rejections WHERE video_id = ${videoId})`,
     );
   });
 
-/** 動画の、出所が生成の最大の回。無ければ None。 */
+/** 動画の、出所が生成の最大の回（検査に落ちた生成だけの回を含む）。無ければ None。 */
 export const latestGeneratedRound = (videoId: string) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const n = yield* queryCount(
-      sql`SELECT coalesce(max(round), 0) AS n FROM explainer_thumbnail_candidates WHERE video_id = ${videoId} AND origin = 'generated'`,
+      sql`SELECT coalesce(max(round), 0) AS n FROM (SELECT round FROM explainer_thumbnail_candidates WHERE video_id = ${videoId} AND origin = 'generated' UNION ALL SELECT round FROM explainer_thumbnail_rejections WHERE video_id = ${videoId})`,
     );
     return n === 0 ? Option.none<number>() : Option.some(n);
   });
 
-/** 回にある候補の番号。 */
+/** 回で生成を済ませた番号（候補があるか、検査に落ちた記録がある）。 */
 export const numbersInRound = (videoId: string, round: number) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const rows = yield* queryRows(
       Schema.Struct({ number: Schema.Finite }),
-      sql`SELECT number FROM explainer_thumbnail_candidates WHERE video_id = ${videoId} AND round = ${round} ORDER BY number`,
+      sql`SELECT number FROM explainer_thumbnail_candidates WHERE video_id = ${videoId} AND round = ${round} UNION SELECT number FROM explainer_thumbnail_rejections WHERE video_id = ${videoId} AND round = ${round} ORDER BY number`,
     );
     return rows.map((row) => row.number);
   });
 
-/** チャンネル全体の、出所が生成の候補の行数。参照画像を回す位置の元になる。 */
-export const generatedCandidateCount = Effect.gen(function* () {
+/** チャンネル全体の生成の回数（出所が生成の候補と、検査に落ちた生成の行数）。参照画像を回す位置の元になる。 */
+export const generationCount = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   return yield* queryCount(
-    sql`SELECT count(*) AS n FROM explainer_thumbnail_candidates WHERE origin = 'generated'`,
+    sql`SELECT (SELECT count(*) FROM explainer_thumbnail_candidates WHERE origin = 'generated') + (SELECT count(*) FROM explainer_thumbnail_rejections) AS n`,
   );
 });
 
@@ -213,6 +213,25 @@ export const appendCandidate = (candidate: {
     origin: candidate.origin,
     round: candidate.round,
     video_id: candidate.videoId,
+  });
+
+/** 生成には成功したが検査に落ちた画像の事実。参照画像は、使ったときだけ宣言のパスを持つ。 */
+export const appendRejection = (
+  rejection: CandidateRef & {
+    readonly reason: string;
+    readonly referenceImage?: string;
+    readonly rejectedAt: string;
+  },
+) =>
+  insertRow("explainer_thumbnail_rejections", {
+    number: rejection.number,
+    reason: rejection.reason,
+    ...(rejection.referenceImage === undefined
+      ? {}
+      : { reference_image: rejection.referenceImage }),
+    rejected_at: rejection.rejectedAt,
+    round: rejection.round,
+    video_id: rejection.videoId,
   });
 
 /** 候補が無ければ ThumbnailCandidateNotFound。 */

@@ -63,6 +63,18 @@ const rowCount = selectAll("explainer_thumbnail_candidates").pipe(
   Effect.map((rows) => rows.length),
 );
 
+const rejectionRows = selectAll("explainer_thumbnail_rejections").pipe(
+  Effect.map((rows) =>
+    rows.map((row) => ({
+      number: Number(row["number"]),
+      reason: row["reason"],
+      referenceImage: row["reference_image"],
+      round: Number(row["round"]),
+      videoId: row["video_id"],
+    })),
+  ),
+);
+
 const recordPlan = (overrides: Record<string, unknown> = {}) =>
   setClock(noon).pipe(Effect.andThen(callTool("explainer_write_plan", planInput(overrides))));
 
@@ -441,6 +453,31 @@ describe("video.generateThumbnails: reference images", () => {
     },
   );
 
+  it.effect(
+    "counts a rejected generation as using its reference image, and records which one",
+    () => {
+      const gemini = fakeGemini([{ image: solidPng(1200, 675) }, good]);
+      return withToolChannel(
+        "nyaucast-thumbnails-rotation-rejected-",
+        { config: explainerConfigWith({ ...declared, candidates: 2 }), gemini },
+        (channelRoot) =>
+          Effect.gen(function* () {
+            writeReferences(channelRoot);
+            yield* recordPlan();
+
+            yield* Effect.flip(callTool("video_generate_thumbnails", input()));
+            yield* callTool("video_generate_thumbnails", input());
+
+            assert.deepStrictEqual(used(gemini), [[a], [b]]);
+            assert.deepStrictEqual(
+              (yield* rejectionRows).map((row) => row.referenceImage),
+              ["thumbnails/references/a.png"],
+            );
+          }),
+      );
+    },
+  );
+
   it.effect("avoids the reference image used last even when it was used for another video", () => {
     const gemini = fakeGemini([good, good]);
     return withToolChannel(
@@ -705,9 +742,9 @@ describe("video.generateThumbnails: checking the generated image", () => {
   });
 
   it.effect(
-    "keeps the candidates written before a rejected image, and the next run continues from that number",
+    "records a rejected image, keeps the candidates written before it, and the next run does not generate that number again",
     () => {
-      const gemini = fakeGemini([good, { image: solidPng(1200, 675) }, good, good]);
+      const gemini = fakeGemini([good, { image: solidPng(1200, 675) }, good]);
       return withToolChannel(
         "nyaucast-thumbnails-rejected-midway-",
         { config: explainerConfigWith(thumbnailType({ candidates: 3 })), gemini },
@@ -722,18 +759,67 @@ describe("video.generateThumbnails: checking the generated image", () => {
               (yield* candidateRows).map((row) => row.number),
               [1],
             );
+            assert.deepStrictEqual(yield* rejectionRows, [
+              { number: 2, reason: "too_small", referenceImage: null, round: 1, videoId: "V1" },
+            ]);
 
             const resumed = yield* callTool("video_generate_thumbnails", input());
 
-            assert.strictEqual(gemini.calls.length, 4);
-            assert.strictEqual(resumed.created, 2);
+            assert.strictEqual(gemini.calls.length, 3);
+            assert.strictEqual(resumed.created, 1);
             assert.deepStrictEqual(
-              (yield* candidateRows).map((row) => [row.round, row.number]),
+              resumed.candidates.map((candidate) => [candidate.round, candidate.number]),
               [
                 [1, 1],
-                [1, 2],
                 [1, 3],
               ],
+            );
+          }),
+      );
+    },
+  );
+
+  it.effect(
+    "makes no provider call for a round whose every number has a candidate or a rejection",
+    () => {
+      const gemini = fakeGemini([good, { image: solidPng(1200, 675) }]);
+      return withToolChannel(
+        "nyaucast-thumbnails-rejected-complete-",
+        { config: explainerConfigWith(thumbnailType({ candidates: 2 })), gemini },
+        () =>
+          Effect.gen(function* () {
+            yield* recordPlan();
+            yield* Effect.flip(callTool("video_generate_thumbnails", input()));
+
+            const again = yield* callTool("video_generate_thumbnails", input());
+
+            assert.strictEqual(gemini.calls.length, 2);
+            assert.strictEqual(again.created, 0);
+            assert.strictEqual(again.round, 1);
+          }),
+      );
+    },
+  );
+
+  it.effect(
+    "continues a round whose only generation so far was rejected, instead of starting a new one",
+    () => {
+      const gemini = fakeGemini([{ image: solidPng(1200, 675) }, good]);
+      return withToolChannel(
+        "nyaucast-thumbnails-rejected-first-",
+        { config: explainerConfigWith(thumbnailType({ candidates: 2 })), gemini },
+        () =>
+          Effect.gen(function* () {
+            yield* recordPlan();
+            yield* Effect.flip(callTool("video_generate_thumbnails", input()));
+
+            const resumed = yield* callTool("video_generate_thumbnails", input());
+
+            assert.strictEqual(resumed.round, 1);
+            assert.strictEqual(resumed.created, 1);
+            assert.deepStrictEqual(
+              resumed.candidates.map((candidate) => candidate.number),
+              [2],
             );
           }),
       );
