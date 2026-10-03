@@ -187,8 +187,41 @@ const urlCalls = (value: string) =>
     call === undefined ? '""' : whole,
   );
 
+// image-set() は、url() で包まない素の文字列も画像の URL として読む。その引数の中の文字列も参照として検査する。
+const imageSetCall = /(?:-webkit-)?image-set\(/giu;
+const cssString = /"(?:\\[\s\S]|[^"\\])*"?|'(?:\\[\s\S]|[^'\\])*'?/gu;
+const stringOrParen = new RegExp(`${cssString.source}|[()]`, "gu");
+
+// 呼び出しの引数の中で、括弧の深さ 1 にある文字列（引用符を外したもの）。文字列の中の括弧は数えない。閉じていなければ末尾まで。
+const depthAfter = (depth: number, token: string) =>
+  token === "(" ? depth + 1 : token === ")" ? depth - 1 : depth;
+
+const stringArguments = (afterOpen: string): string[] => {
+  let depth = 1;
+  const tokens = [...afterOpen.matchAll(stringOrParen)].map(([token]) => {
+    depth = depthAfter(depth, token);
+    return { depth, token };
+  });
+  const closing = tokens.findIndex((token) => token.depth === 0);
+  return (closing === -1 ? tokens : tokens.slice(0, closing))
+    .filter(({ depth: at, token }) => at === 1 && token !== "(" && token !== ")")
+    .map(({ token }) => token.replace(/^["']|["']$/gu, ""));
+};
+
+// 呼び出しは文字列の外でだけ探す（`content: 'image-set(...)'` は字面）。文字列を同じ長さで伏せた版で位置を決め、
+// 引数は伏せない版の同じ位置から読む。文字列以外の部分は 2 つの版で同じなので、位置がそろう。
+const imageSetStrings = (value: string): string[] => {
+  const text = cssText(value, (literal) => literal);
+  const masked = cssText(value, (literal) => " ".repeat(literal.length));
+  return [...masked.matchAll(imageSetCall)].flatMap((call) =>
+    stringArguments(text.slice((call.index ?? 0) + call[0].length)),
+  );
+};
+
 const callsExternalUrl = (value: string) =>
-  [...urlCalls(value).matchAll(urlCall)].some(([, target = ""]) => !allowedReference.test(target));
+  [...urlCalls(value).matchAll(urlCall)].some(
+    ([, target = ""]) => !allowedReference.test(target),
+  ) || imageSetStrings(value).some((target) => !allowedReference.test(target));
 
 const isReservedName = (name: string, value: string) =>
   (name === "id" && lower(value).startsWith(reservedPrefix)) ||
