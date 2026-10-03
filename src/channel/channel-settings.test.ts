@@ -2,6 +2,7 @@ import { NodeServices } from "@effect/platform-node";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 
+import { explainerConfigWithTheme, themeDeclaration } from "../../test/composition-helpers.ts";
 import { explainerConfig } from "../../test/explainer-helpers.ts";
 import { temporaryDirectory, writeVideoConfig } from "../../test/helpers.ts";
 import { explainerConfigWithVoice, voiceDeclaration } from "../../test/narration-helpers.ts";
@@ -176,6 +177,147 @@ describe("ChannelSettings: the voice", () => {
 
       assert.strictEqual(settings.thumbnail?.provider, "gemini");
       assert.strictEqual(settings.voice?.adapter, "gemini");
+    }),
+  );
+});
+
+type Declaration = ReturnType<typeof themeDeclaration>;
+
+const withoutKey = (group: "colors" | "fonts" | "sizes", key: string): Record<string, unknown> => {
+  const declared: Declaration = themeDeclaration();
+  return {
+    ...declared,
+    [group]: Object.fromEntries(Object.entries(declared[group]).filter(([name]) => name !== key)),
+  };
+};
+
+describe("ChannelSettings: the theme (colors, fonts and sizes of the composition)", () => {
+  it.effect("reads the declared theme", () =>
+    Effect.gen(function* () {
+      const declared = themeDeclaration();
+
+      const settings = yield* settingsOf(explainerConfigWithTheme(declared));
+
+      assert.deepStrictEqual<unknown>(settings.theme, declared);
+    }),
+  );
+
+  it.effect("keeps a channel that does not declare a theme working", () =>
+    Effect.gen(function* () {
+      const settings = yield* settingsOf(explainerConfigWithTheme());
+
+      assert.strictEqual(settings.kind, "explainer");
+      assert.isUndefined(settings.theme);
+    }),
+  );
+
+  it.effect.each(["#abc", "#abcd", "#aabbcc", "#aabbccdd", "#AABBCC"] as const)(
+    "accepts the hexadecimal color %j",
+    (color) =>
+      Effect.gen(function* () {
+        const settings = yield* settingsOf(
+          explainerConfigWithTheme(themeDeclaration({ colors: { accent: color } })),
+        );
+
+        assert.strictEqual(settings.theme?.colors.accent, color);
+      }),
+  );
+
+  // 色は CSS にそのまま入るので、16 進の記法だけを受ける（CSS への注入を防ぐ）。
+  it.effect.each([
+    "red",
+    "#12",
+    "#12345",
+    "#ggg",
+    "#aabbccddee",
+    "abc",
+    "",
+    "rgb(0, 0, 0)",
+    "#fff; } body { display: none",
+    "#fff url(https://example.com/a.png)",
+  ] as const)("fails with InvalidChannelConfig when a color is %j", (color) =>
+    Effect.gen(function* () {
+      const failure = yield* Effect.flip(
+        settingsOf(explainerConfigWithTheme(themeDeclaration({ colors: { text: color } }))),
+      );
+
+      assert.strictEqual(failure._tag, "InvalidChannelConfig");
+    }),
+  );
+
+  it.effect.each([0, -1, 1.5, "44", null] as const)(
+    "fails with InvalidChannelConfig when a size is %j (a positive integer)",
+    (size) =>
+      Effect.gen(function* () {
+        const failure = yield* Effect.flip(
+          settingsOf(
+            explainerConfigWithTheme(themeDeclaration({ sizes: { captionFontSize: size } })),
+          ),
+        );
+
+        assert.strictEqual(failure._tag, "InvalidChannelConfig");
+      }),
+  );
+
+  it.effect.each([
+    ["colors", "background"],
+    ["colors", "text"],
+    ["colors", "accent"],
+    ["colors", "muted"],
+    ["colors", "captionText"],
+    ["colors", "captionBackground"],
+    ["fonts", "body"],
+    ["fonts", "caption"],
+    ["sizes", "captionFontSize"],
+    ["sizes", "captionMargin"],
+    ["sizes", "stagePadding"],
+  ] as const)("fails with InvalidChannelConfig when the theme has no %s.%s", ([group, key]) =>
+    Effect.gen(function* () {
+      const failure = yield* Effect.flip(
+        settingsOf(explainerConfigWithTheme(withoutKey(group, key))),
+      );
+
+      assert.strictEqual(failure._tag, "InvalidChannelConfig");
+    }),
+  );
+
+  // フォントのファイルはチャンネルルートの中に限る（ルートの外のファイルを composition に埋め込ませない）。
+  it.effect.each([
+    "../outside.woff2",
+    "/etc/outside.woff2",
+    "assets/../../outside.woff2",
+    "assets/..",
+    "..\\outside.woff2",
+    "",
+  ] as const)("fails with InvalidChannelConfig when a font path is %j", (path) =>
+    Effect.gen(function* () {
+      const failure = yield* Effect.flip(
+        settingsOf(explainerConfigWithTheme(themeDeclaration({ fonts: { body: path } }))),
+      );
+
+      assert.strictEqual(failure._tag, "InvalidChannelConfig");
+    }),
+  );
+
+  it.effect("accepts a font path inside the channel root, including dots in names", () =>
+    Effect.gen(function* () {
+      const settings = yield* settingsOf(
+        explainerConfigWithTheme(
+          themeDeclaration({ fonts: { body: "assets/fonts/a..b.v2.woff2" } }),
+        ),
+      );
+
+      assert.strictEqual(settings.theme?.fonts.body, "assets/fonts/a..b.v2.woff2");
+    }),
+  );
+
+  it.effect("fails with InvalidChannelConfig when a font is not a path", () =>
+    Effect.gen(function* () {
+      const failure = yield* Effect.flip(
+        settingsOf(explainerConfigWithTheme(themeDeclaration({ fonts: { body: 12 } }))),
+      );
+
+      assert.strictEqual(failure._tag, "InvalidChannelConfig");
     }),
   );
 });

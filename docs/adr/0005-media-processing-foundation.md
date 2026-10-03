@@ -46,7 +46,7 @@ accepted (2026-07-24) / 改訂 2026-07-31（#178。動画生成工程を「agent
 
 （以下、改訂 2026-10-02 / #467 で追加）
 
-12. **解説動画の composition は agent が書かず、Chrome を使わない組み立ての tool が作る。** agent が書くのはシーンごとの図解（演出の時刻を台本上の位置で宣言し、script を持たない HTML）だけで、組み立ての tool がタイミング表で位置を秒に直し、字幕・テーマ・`window.__hf`（seek と segments）を加えて、カット 1 本 = composition 1 枚を作る。seek を実装するタイムラインの runtime は、組み立ての tool が composition にインラインで埋め込む。これは改訂 2026-07-31 の Consequences「nyaucast 本体にブラウザ内 runtime 資産を持たない」を、解説動画について改めるものである。runtime と演出の語彙は業務ロジックなので、決定 10 に従い `src/lib/` に置かず組み立ての tool の実装に同居させる。collection（BGM 動画）は agent が composition 全体を書く形のまま変えない。組み立ては Chrome を使わないので、決定 7 の許可リストは広げない
+12. **解説動画の composition は agent が書かず、Chrome を使わない組み立ての tool が作る。** agent が書くのはシーンごとの図解（演出の時刻を台本上の位置で宣言し、script を持たない HTML）だけで、組み立ての tool がタイミング表で位置を秒に直し、字幕・テーマ・`window.__hf`（seek と segments）を加えて、カット 1 本 = composition 1 枚を作る。seek を実装するタイムラインの runtime は、組み立ての tool が composition にインラインで埋め込む。これは改訂 2026-07-31 の Consequences「nyaucast 本体にブラウザ内 runtime 資産を持たない」を、解説動画について改めるものである。runtime と演出の語彙は業務ロジックなので、決定 10 に従い `src/lib/` に置かず組み立ての tool の実装に同居させる。collection（BGM 動画）は agent が composition 全体を書く形のまま変えない。組み立ては Chrome を使わないので、決定 7 の許可リストは広げない（改訂 2026-10-04 / #548: 演出の語彙と図解の検査は、図解を書く tool と組み立ての tool の両方が使う共有の業務ロジックなので、決定 10 の改訂に従い `src/diagrams/` に置く。seek の runtime は組み立ての tool に同居させたまま）
 13. **`video.preview` は各 segment の終わる直前のフレームを撮る。** 中点では、解説動画のシーンが組み上がる途中を撮ってしまう。static 区間ではどの時刻でも同じ絵なので、collection のプレビューは変わらない
 
 （以下、改訂 2026-10-03 / #525 で追加）

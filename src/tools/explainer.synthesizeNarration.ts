@@ -16,6 +16,7 @@ import {
 } from "../gemini/generate-content.ts";
 import { GeminiSpeechSynthesizer } from "../narration/gemini-tts.ts";
 import { NarrationTooLong, scriptAudio } from "../narration/paragraph-audio.ts";
+import { timingTableKey } from "../narration/timing-table.ts";
 import { assembleTrack } from "../narration/track.ts";
 import { encodeWav } from "../narration/wav.ts";
 import { InvalidReadingMarkup, ParagraphTooLong } from "../scripts/script.ts";
@@ -111,7 +112,7 @@ const synthesizeNarration = Effect.fn("explainer.synthesizeNarration")(function*
   );
   const files = yield* VideoFiles;
   const trackKey = narrationKey(videoId, "track.wav");
-  const timingKey = narrationKey(videoId, "timing.json");
+  const timingKey = timingTableKey(videoId);
   yield* files.write(trackKey, encodeWav(samples));
   yield* files.write(timingKey, new TextEncoder().encode(JSON.stringify(timing, null, 2)));
   const synthesized = audio.filter((paragraph) => paragraph.synthesized).length;

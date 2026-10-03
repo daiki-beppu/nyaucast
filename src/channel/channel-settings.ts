@@ -42,11 +42,39 @@ const Voice = Schema.Struct({
 });
 export type Voice = typeof Voice.Type;
 
+// テーマ（動画の色・書体・寸法のトークン）。色は CSS にそのまま入るので、16 進の記法だけを受ける。
+const HexColor = Schema.String.check(
+  Schema.isPattern(/^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/u),
+);
+// チャンネルルートの中の相対パスだけ。絶対パスと `..` の区間は、ルートの外のファイルを composition に埋め込めてしまうので拒否する。
+const FontPath = Schema.String.check(
+  Schema.isPattern(/^(?![/\\])(?!(?:.*[/\\])?\.\.(?:[/\\]|$)).+$/u),
+);
+const Theme = Schema.Struct({
+  colors: Schema.Struct({
+    accent: HexColor,
+    background: HexColor,
+    captionBackground: HexColor,
+    captionText: HexColor,
+    muted: HexColor,
+    text: HexColor,
+  }),
+  // フォントのファイルは、チャンネルルートからの相対パス。
+  fonts: Schema.Struct({ body: FontPath, caption: FontPath }),
+  sizes: Schema.Struct({
+    captionFontSize: PositiveInteger,
+    captionMargin: PositiveInteger,
+    stagePadding: PositiveInteger,
+  }),
+});
+export type Theme = typeof Theme.Type;
+
 const ExplainerSettings = Schema.Struct({
   feeds: Schema.Array(Feed).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
   genre: Schema.String,
   hitPatterns: Schema.Record(Schema.String, Schema.Struct({ description: Schema.String })),
   kind: Schema.Literal("explainer"),
+  theme: Schema.optionalKey(Theme),
   thumbnail: Schema.optionalKey(ThumbnailType),
   voice: Schema.optionalKey(Voice),
 });
