@@ -2,7 +2,7 @@
 
 ## Status
 
-accepted (2026-10-02)
+accepted (2026-10-02) / 改訂 2026-10-04（#587。ADR-0011 でリポを公開することにしたので、リポが private であることを前提にした記述を改めた。決定は変えていない）
 
 ## Context
 
@@ -19,7 +19,7 @@ ADR-0007 で workflow tool を廃止したため、区間を歩く手順を持�
   - skills-npm v2 と vercel-labs/skills の RFC #2323 は、node_modules を指す相対 symlink をコミットする方式
   - vercel-labs/skills の `experimental_sync` は、node_modules からコピーする方式
 - MCP の prompts は Codex に実装が無い。server の `instructions` は両方が自動で読むが、短い（Codex は 512 文字を推奨）
-- nyaucast のリポは private で、npm パッケージは public である
+- npm パッケージは public である。（改訂 2026-10-04 / #587）リポは当初 private だったが、ADR-0011 で公開することになった。下の決定は、どちらの状態でも変わらない
 
 ## Decision
 
@@ -36,12 +36,12 @@ ADR-0007 で workflow tool を廃止したため、区間を歩く手順を持�
 
 - **版のずれが構造上起きない。** MCP server と codec が下流リポの同じ lockfile の版から来るので、「codec が存在しない tool を呼ぶ」事故の源が消える。版を上げる操作も、`package.json` の 1 行と install で済む
 - **Claude Code と Codex の両方が読める。** どちらもリポの skill ディレクトリにある symlink をたどる
-- **GitHub リポの権限が要らない。** 配る経路が public な npm パッケージだけになり、リポは private のままでよい。有償で公開する意向とも衝突しない
+- **リポの公開状態に依存しない。**（改訂 2026-10-04 / #587）配る経路は public な npm パッケージだけで、下流はリポを読まない。リポを公開しても、配り方は変わらない
 - **チャンネルリポごとに版を固定できる。** グローバルに入れると、全リポが同じ版の codec を読むことになる
 
 ## Considered Options
 
-- **skills CLI でリポを直指定してグローバルに入れ、起動時に版を比べて警告する**（旧 #20）: 採らない。codec と MCP tool の版の対応を、タグの運用と警告で守ることになる。下流がリポを読める権限も要る
+- **skills CLI でリポを直指定してグローバルに入れ、起動時に版を比べて警告する**（旧 #20）: 採らない。codec と MCP tool の版の対応を、タグの運用と警告で守ることになる。（改訂 2026-10-04 / #587）当初は「下流がリポを読める権限も要る」ことも理由にしていた。リポの公開でこの理由は消えたが、版ずれの理由だけで採らない判断は変わらない
 - **Claude Code plugin の npm source で、skills と MCP 設定を一緒に配る**: 採らない。pnpm の lockfile では plugin の依存が入らないので、依存を bundle するか `npm-shrinkwrap.json` を同梱する必要がある。外部 source の plugin は各自が install しなければならず、Codex で stdio MCP が動くかも確認できていない
 - **MCP の prompts / resources で配る**: 採らない。Codex に prompts の実装が無く、resources は agent が自分から読まない
 - **Hono の方式（別リポに skill を置き、plugin marketplace と skills CLI で配る）**: 採らない。ライブラリと skill の版が連動しない構造で、避けたい事故がそのまま起こりうる
@@ -59,6 +59,7 @@ ADR-0007 で workflow tool を廃止したため、区間を歩く手順を持�
 
 ## Related
 
-- ADR-0001（thin architecture）/ ADR-0003（Node 配布と pnpm）/ ADR-0006（takt を製品の orchestration に採らない）/ ADR-0007（codec を読んだ agent が区間を歩く）/ ADR-0009（解説動画と 4 SNS 配信）
+- ADR-0001（thin architecture）/ ADR-0003（Node 配布と pnpm）/ ADR-0006（takt を製品の orchestration に採らない）/ ADR-0007（codec を読んだ agent が区間を歩く）/ ADR-0009（解説動画と 4 SNS 配信）/ ADR-0011（配布モデル。リポの公開を決めた）
 - issue #471「knowledge codec の置き場と下流への配り方」（地図 #457 の決定 ticket）
+- issue #587「リポ公開に合わせて ADR-0010 の private 前提を改める」（地図 #574 の決定 ticket）
 - 旧 issue #20（codec の配布・更新方式の確定）/ #13（v0.1 codec の範囲と深さ）/ #401（collection-lifecycle codec の執筆と配布整備）— 材料
