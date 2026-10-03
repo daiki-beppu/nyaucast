@@ -326,6 +326,61 @@ describe("explainer.fetchTopicCandidates: reading feeds", () => {
     ),
   );
 
+  it.effect(
+    "follows a redirected feed URL and resolves relative links against where it ended up",
+    () =>
+      withToolChannel(
+        "nyaucast-topics-redirect-",
+        { config: configWith([{ name: "Blog", url: "http://blog.example/atom.xml" }]) },
+        () =>
+          Effect.gen(function* () {
+            const { effect, http } = run({
+              "GET http://blog.example/atom.xml": () =>
+                new Response("", {
+                  headers: { location: "https://moved.example/feed/atom.xml" },
+                  status: 301,
+                }),
+              "GET https://moved.example/feed/atom.xml": xml(relativeAtom),
+            });
+
+            const result = yield* effect;
+
+            assert.deepStrictEqual(result.candidates, [
+              { feed: "Blog", title: "Relative", url: "https://moved.example/posts/1" },
+            ]);
+            assert.deepStrictEqual(result.failedFeeds, []);
+            assert.deepStrictEqual(
+              http.requests.map(({ key }) => key),
+              ["GET http://blog.example/atom.xml", "GET https://moved.example/feed/atom.xml"],
+            );
+          }),
+      ),
+  );
+
+  it.effect("gives up after five redirects and reports the last redirect status", () =>
+    withToolChannel(
+      "nyaucast-topics-redirect-loop-",
+      { config: configWith([{ name: "Loop", url: "https://loop.example/feed" }]) },
+      () =>
+        Effect.gen(function* () {
+          const { effect, http } = run({
+            "GET https://loop.example/feed": () =>
+              new Response("", {
+                headers: { location: "https://loop.example/feed" },
+                status: 302,
+              }),
+          });
+
+          const result = yield* effect;
+
+          assert.deepStrictEqual(result.failedFeeds, [
+            { name: "Loop", reason: "HttpStatus", status: 302, url: "https://loop.example/feed" },
+          ]);
+          assert.strictEqual(http.requests.length, 6);
+        }),
+    ),
+  );
+
   it.effect("uses only an Atom link with no rel or rel=alternate", () =>
     withToolChannel(
       "nyaucast-topics-atom-links-",
