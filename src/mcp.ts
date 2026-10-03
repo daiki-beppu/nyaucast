@@ -6,6 +6,7 @@ import type { SqlClient } from "effect/sql";
 
 import type { StaticSecrets } from "./auth/secrets.ts";
 
+import type { BgmPool } from "./channel/bgm-pool.ts";
 import type { ChannelSettings } from "./channel/channel-settings.ts";
 import type { CollectionIds } from "./collections/collection-ids.ts";
 import type { CollectionDirectories } from "./collections/directories.ts";
@@ -16,6 +17,10 @@ import {
   ExplainerFetchTopicCandidatesTool,
   explainerFetchTopicCandidates,
 } from "./tools/explainer.fetchTopicCandidates.ts";
+import {
+  ExplainerMixAudioTrackTool,
+  explainerMixAudioTrack,
+} from "./tools/explainer.mixAudioTrack.ts";
 import {
   ExplainerSynthesizeNarrationTool,
   explainerSynthesizeNarration,
@@ -44,6 +49,7 @@ export const NyaucastToolkit = Toolkit.make(
   ExplainerWritePlanTool,
   ExplainerWriteScriptTool,
   ExplainerSynthesizeNarrationTool,
+  ExplainerMixAudioTrackTool,
   VideoStatusTool,
   VideoGenerateThumbnailsTool,
   VideoExcludeThumbnailTool,
@@ -53,6 +59,7 @@ export const NyaucastToolkit = Toolkit.make(
 export const NyaucastToolHandlers = NyaucastToolkit.toLayer(
   Effect.gen(function* () {
     const context = yield* Effect.context<
+      | BgmPool
       | ChannelSettings
       | ChildProcessSpawner.ChildProcessSpawner
       | CollectionDirectories
@@ -70,6 +77,8 @@ export const NyaucastToolHandlers = NyaucastToolkit.toLayer(
       collection_status: (input) => collectionStatus(input).pipe(Effect.provideContext(context)),
       explainer_fetch_topic_candidates: (input) =>
         explainerFetchTopicCandidates(input).pipe(Effect.provideContext(context)),
+      explainer_mix_audio_track: (input) =>
+        explainerMixAudioTrack(input).pipe(Effect.provideContext(context)),
       explainer_synthesize_narration: (input) =>
         explainerSynthesizeNarration(input).pipe(Effect.provideContext(context)),
       explainer_write_plan: (input) =>

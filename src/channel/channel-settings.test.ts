@@ -4,6 +4,7 @@ import { Effect, Layer } from "effect";
 
 import { explainerConfig } from "../../test/explainer-helpers.ts";
 import { temporaryDirectory, writeVideoConfig } from "../../test/helpers.ts";
+import { explainerConfigWithBgm } from "../../test/bgm-helpers.ts";
 import { explainerConfigWithVoice, voiceDeclaration } from "../../test/narration-helpers.ts";
 import { explainerConfigWith, thumbnailType } from "../../test/thumbnail-config.ts";
 import { ChannelSettings } from "./channel-settings.ts";
@@ -177,5 +178,101 @@ describe("ChannelSettings: the voice", () => {
       assert.strictEqual(settings.thumbnail?.provider, "gemini");
       assert.strictEqual(settings.voice?.adapter, "gemini");
     }),
+  );
+});
+
+describe("ChannelSettings: the BGM declaration", () => {
+  it.effect("defaults the volume to -12 dB (narration ratio) and the ducking depth to 6 dB", () =>
+    Effect.gen(function* () {
+      const settings = yield* settingsOf(explainerConfigWithBgm({ enabled: true }));
+
+      assert.deepStrictEqual<unknown>(settings.bgm, {
+        duckingDb: 6,
+        enabled: true,
+        volumeDb: -12,
+      });
+    }),
+  );
+
+  it.effect("reads an override of the volume and of the ducking depth", () =>
+    Effect.gen(function* () {
+      const settings = yield* settingsOf(
+        explainerConfigWithBgm({ duckingDb: 9, enabled: true, volumeDb: -9 }),
+      );
+
+      assert.deepStrictEqual<unknown>(settings.bgm, { duckingDb: 9, enabled: true, volumeDb: -9 });
+    }),
+  );
+
+  it.effect("reads a channel that turns BGM off", () =>
+    Effect.gen(function* () {
+      const settings = yield* settingsOf(explainerConfigWithBgm({ enabled: false }));
+
+      assert.strictEqual(settings.bgm?.enabled, false);
+    }),
+  );
+
+  it.effect("keeps a channel that does not declare BGM working, and declares nothing for it", () =>
+    Effect.gen(function* () {
+      const settings = yield* settingsOf(explainerConfig);
+
+      assert.strictEqual(settings.kind, "explainer");
+      assert.isUndefined(settings.bgm);
+    }),
+  );
+
+  it.effect(
+    "fails with InvalidChannelConfig when enabled is missing (BGM is stated, not implied)",
+    () =>
+      Effect.gen(function* () {
+        const failure = yield* Effect.flip(settingsOf(explainerConfigWithBgm({ volumeDb: -9 })));
+
+        assert.strictEqual(failure._tag, "InvalidChannelConfig");
+      }),
+  );
+
+  it.effect.each([-1, "6", null] as const)(
+    "fails with InvalidChannelConfig when the ducking depth is %j",
+    (duckingDb) =>
+      Effect.gen(function* () {
+        const failure = yield* Effect.flip(
+          settingsOf(explainerConfigWithBgm({ duckingDb, enabled: true })),
+        );
+
+        assert.strictEqual(failure._tag, "InvalidChannelConfig");
+      }),
+  );
+
+  it.effect.each(["-12", null, true] as const)(
+    "fails with InvalidChannelConfig when the volume is %j",
+    (volumeDb) =>
+      Effect.gen(function* () {
+        const failure = yield* Effect.flip(
+          settingsOf(explainerConfigWithBgm({ enabled: true, volumeDb })),
+        );
+
+        assert.strictEqual(failure._tag, "InvalidChannelConfig");
+      }),
+  );
+
+  it.effect(
+    "does not let the declaration override anything but the volume and the ducking depth",
+    () =>
+      Effect.gen(function* () {
+        const settings = yield* settingsOf(
+          explainerConfigWithBgm({
+            crossfadeSeconds: 9,
+            duckingReleaseSeconds: 9,
+            enabled: true,
+            silenceSeconds: 9,
+          }),
+        );
+
+        assert.deepStrictEqual<unknown>(settings.bgm, {
+          duckingDb: 6,
+          enabled: true,
+          volumeDb: -12,
+        });
+      }),
   );
 });
