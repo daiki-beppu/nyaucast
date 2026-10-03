@@ -11,8 +11,10 @@ import { TestClock, TestConsole } from "effect/testing";
 
 import { ChannelAccounts } from "../src/auth/accounts.ts";
 import { CredentialStore } from "../src/auth/credential-store.ts";
+import { ChannelSettings } from "../src/channel/channel-settings.ts";
 import { LocalStore } from "../src/db/local-store.ts";
 import { InstagramAuth } from "../src/instagram/auth.ts";
+import { ThumbnailFiles } from "../src/thumbnails/thumbnail-files.ts";
 import { XAuth } from "../src/x/auth.ts";
 import { YouTubeAuth } from "../src/youtube/auth.ts";
 
@@ -75,6 +77,13 @@ export const unusedAuthLayer = Layer.mergeAll(
   Layer.effect(YouTubeAuth, notUsed),
 );
 
+/** video を使わないテストが CLI のプログラムへ渡す Layer。組まれたら失敗する。 */
+export const unusedVideoLayer = Layer.mergeAll(
+  Layer.effect(SqlClient.SqlClient, notUsed),
+  Layer.effect(ChannelSettings, notUsed),
+  Layer.effect(ThumbnailFiles, notUsed),
+);
+
 /** local store を使わないテストが CLI のプログラムへ渡す Layer。組まれたら失敗する。 */
 export const unusedLocalStoreLayer = Layer.effect(SqlClient.SqlClient, notUsed);
 
@@ -119,6 +128,9 @@ export const selectAll = (
     | "explainer_approvals"
     | "explainer_plans"
     | "explainer_rejections"
+    | "explainer_thumbnail_candidates"
+    | "explainer_thumbnail_exclusions"
+    | "explainer_thumbnail_selections"
     | "explainer_videos"
     | "rejections"
     | "thumbnails",

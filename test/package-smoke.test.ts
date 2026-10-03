@@ -12,6 +12,8 @@ describe("K3 package smoke", () => {
       "explainer_write_plan",
       "plan_check_title",
       "plan_init",
+      "video_exclude_thumbnail",
+      "video_generate_thumbnails",
       "video_status",
     ]);
     expect(localDatabaseCreated).toBe(true);

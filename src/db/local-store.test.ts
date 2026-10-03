@@ -101,7 +101,7 @@ describe("local store", () => {
     }),
   );
 
-  it.effect("records the hand-written 0001 and 0002 migrations in the migrator's table", () =>
+  it.effect("records the hand-written 0001, 0002 and 0003 migrations in the migrator's table", () =>
     Effect.gen(function* () {
       const channelRoot = yield* temporaryDirectory("nyaucast-local-store-migrator-");
       yield* openAndClose(channelRoot);
@@ -109,7 +109,7 @@ describe("local store", () => {
       const rows = migrationRows(localDatabasePath(channelRoot));
       assert.deepStrictEqual(
         rows.map((row) => row["migration_id"]),
-        [1, 2],
+        [1, 2, 3],
       );
       for (const row of rows) {
         expect(String(row["name"])).toMatch(/\S/u);
@@ -205,8 +205,8 @@ describe("local store", () => {
 
           yield* openAndClose(channelRoot);
 
-          assert.deepStrictEqual(backupNames(channelRoot), ["local.db.bak-2"]);
-          const backupPath = join(dataDirectory, "local.db.bak-2");
+          assert.deepStrictEqual(backupNames(channelRoot), ["local.db.bak-3"]);
+          const backupPath = join(dataDirectory, "local.db.bak-3");
           assert.deepStrictEqual(query(backupPath, "SELECT value FROM sentinel"), [
             { value: "before migration" },
           ]);
@@ -236,7 +236,7 @@ describe("local store", () => {
         yield* openAndClose(channelRoot);
 
         assert.deepStrictEqual(backupNames(channelRoot), []);
-        assert.strictEqual(migrationRows(localDatabasePath(channelRoot)).length, 2);
+        assert.strictEqual(migrationRows(localDatabasePath(channelRoot)).length, 3);
       }),
     );
   });
@@ -254,12 +254,12 @@ describe("local store", () => {
 
         // 0001 の DDL を再実行して "table already exists" で落ちない
         assert.isTrue(Exit.isSuccess(exit));
-        assert.deepStrictEqual(backupNames(channelRoot), ["local.db.bak-2"]);
-        assert.isTrue(readFileSync(join(channelRoot, "data", "local.db.bak-2")).equals(original));
+        assert.deepStrictEqual(backupNames(channelRoot), ["local.db.bak-3"]);
+        assert.isTrue(readFileSync(join(channelRoot, "data", "local.db.bak-3")).equals(original));
         const rows = migrationRows(databasePath);
         assert.deepStrictEqual(
           rows.map((row) => row["migration_id"]),
-          [1, 2],
+          [1, 2, 3],
         );
         assert.deepStrictEqual(query(databasePath, "SELECT id, title FROM collections"), [
           drizzleCollection,
@@ -306,9 +306,9 @@ describe("local store", () => {
         assert.isTrue(Exit.isSuccess(exit));
         assert.deepStrictEqual(
           migrationRows(databasePath).map((row) => row["migration_id"]),
-          [1, 2],
+          [1, 2, 3],
         );
-        assert.deepStrictEqual(backupNames(channelRoot), ["local.db.bak-2"]);
+        assert.deepStrictEqual(backupNames(channelRoot), ["local.db.bak-3"]);
       }),
     );
 
@@ -330,7 +330,7 @@ describe("local store", () => {
         );
         assert.deepStrictEqual(backupNames(channelRoot), [
           "local.db.bak-1787771653213",
-          "local.db.bak-2",
+          "local.db.bak-3",
         ]);
       }),
     );
@@ -388,15 +388,18 @@ describe("local store", () => {
   );
 
   describe("0002 on a database that only has 0001", () => {
-    it.effect("backs it up as local.db.bak-2, keeps its rows, and adds the explainer tables", () =>
+    it.effect("backs it up as local.db.bak-3, keeps its rows, and adds the explainer tables", () =>
       Effect.gen(function* () {
         const channelRoot = yield* temporaryDirectory("nyaucast-local-store-0002-");
         const databasePath = localDatabasePath(channelRoot);
         yield* openAndClose(channelRoot);
-        // 0001 だけを適用した状態を作る: 0002 の表と適用の記録を取り除き、0001 の表に行を置く
+        // 0001 だけを適用した状態を作る: 0002 以降の表と適用の記録を取り除き、0001 の表に行を置く
         const database = new DatabaseSync(databasePath);
         try {
           for (const table of [
+            "explainer_thumbnail_selections",
+            "explainer_thumbnail_exclusions",
+            "explainer_thumbnail_candidates",
             "explainer_approvals",
             "explainer_rejections",
             "explainer_plans",
@@ -404,7 +407,7 @@ describe("local store", () => {
           ]) {
             database.exec(`DROP TABLE ${table}`);
           }
-          database.exec("DELETE FROM effect_sql_migrations WHERE migration_id = 2");
+          database.exec("DELETE FROM effect_sql_migrations WHERE migration_id >= 2");
           database.exec("INSERT INTO collections (id, title) VALUES ('c1', 'Kept')");
         } finally {
           database.close();
@@ -413,9 +416,9 @@ describe("local store", () => {
 
         yield* openAndClose(channelRoot);
 
-        assert.deepStrictEqual(backupNames(channelRoot), ["local.db.bak-2"]);
+        assert.deepStrictEqual(backupNames(channelRoot), ["local.db.bak-3"]);
         assert.deepStrictEqual(
-          tableColumns(join(channelRoot, "data", "local.db.bak-2"), "explainer_videos"),
+          tableColumns(join(channelRoot, "data", "local.db.bak-3"), "explainer_videos"),
           [],
         );
         assert.deepStrictEqual(query(databasePath, "SELECT id, title FROM collections"), [
@@ -427,7 +430,7 @@ describe("local store", () => {
         ]);
         assert.deepStrictEqual(
           migrationRows(databasePath).map((row) => row["migration_id"]),
-          [1, 2],
+          [1, 2, 3],
         );
       }),
     );
@@ -502,6 +505,105 @@ describe("local store", () => {
         yield* sql`INSERT INTO collections (id, title) VALUES ('c1', 'Night Drive')`;
         yield* sql`INSERT INTO collections (id, title) VALUES ('c2', 'Night Drive')`;
       }).pipe(Effect.exit, Effect.provide(channelLayer(channelRoot)));
+
+      assert.isTrue(Exit.isFailure(exit));
+    }),
+  );
+
+  it.effect("creates the explainer thumbnail tables with the columns the read model needs", () =>
+    Effect.gen(function* () {
+      const channelRoot = yield* temporaryDirectory("nyaucast-local-store-thumbnail-tables-");
+      yield* openAndClose(channelRoot);
+      const databasePath = localDatabasePath(channelRoot);
+
+      assert.deepStrictEqual(tableColumns(databasePath, "explainer_thumbnail_candidates"), [
+        "video_id",
+        "round",
+        "number",
+        "key",
+        "origin",
+        "created_at",
+      ]);
+      assert.deepStrictEqual(tableColumns(databasePath, "explainer_thumbnail_exclusions"), [
+        "video_id",
+        "round",
+        "number",
+        "reason",
+        "excluded_at",
+      ]);
+      assert.deepStrictEqual(tableColumns(databasePath, "explainer_thumbnail_selections"), [
+        "video_id",
+        "round",
+        "number",
+        "selected_at",
+      ]);
+    }),
+  );
+
+  it.effect.each([
+    ["explainer_thumbnail_candidates", "key"],
+    ["explainer_thumbnail_exclusions", "reason"],
+    ["explainer_thumbnail_selections", "round"],
+  ] as const)("enforces %s as append-only on a freshly migrated database", ([table, column]) =>
+    Effect.gen(function* () {
+      const channelRoot = yield* temporaryDirectory("nyaucast-local-store-thumbnail-append-only-");
+
+      const outcomes = yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const at = "2026-10-03T00:00:00.000Z";
+        yield* sql`INSERT INTO explainer_videos (id, created_at) VALUES ('v1', ${at})`;
+        yield* sql`INSERT INTO explainer_thumbnail_candidates (video_id, round, number, key, origin, created_at) VALUES ('v1', 1, 1, 'videos/v1/thumbnails/1-1.jpg', 'generated', ${at})`;
+        yield* sql`INSERT INTO explainer_thumbnail_exclusions (video_id, round, number, reason, excluded_at) VALUES ('v1', 1, 1, 'typo', ${at})`;
+        yield* sql`INSERT INTO explainer_thumbnail_selections (video_id, round, number, selected_at) VALUES ('v1', 1, 1, ${at})`;
+        return yield* Effect.all([
+          Effect.exit(sql.unsafe(`DELETE FROM ${table}`)),
+          Effect.exit(
+            sql.unsafe(`UPDATE ${table} SET ${column} = ${column === "round" ? 9 : "'changed'"}`),
+          ),
+        ]);
+      }).pipe(Effect.provide(channelLayer(channelRoot)));
+
+      for (const outcome of outcomes) {
+        assert.isTrue(Exit.isFailure(outcome));
+      }
+    }),
+  );
+
+  it.effect("rejects a second thumbnail candidate with the same video, round and number", () =>
+    Effect.gen(function* () {
+      const channelRoot = yield* temporaryDirectory("nyaucast-local-store-thumbnail-unique-");
+      const at = "2026-10-03T00:00:00.000Z";
+
+      const exit = yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`INSERT INTO explainer_videos (id, created_at) VALUES ('v1', ${at})`;
+        yield* sql`INSERT INTO explainer_thumbnail_candidates (video_id, round, number, key, origin, created_at) VALUES ('v1', 1, 1, 'videos/v1/thumbnails/1-1.jpg', 'generated', ${at})`;
+        // 別の round・number は積める。同じ (video, round, number) だけが拒否される
+        yield* sql`INSERT INTO explainer_thumbnail_candidates (video_id, round, number, key, origin, created_at) VALUES ('v1', 1, 2, 'videos/v1/thumbnails/1-2.jpg', 'generated', ${at})`;
+        yield* sql`INSERT INTO explainer_thumbnail_candidates (video_id, round, number, key, origin, created_at) VALUES ('v1', 2, 1, 'videos/v1/thumbnails/2-1.jpg', 'file', ${at})`;
+        return yield* Effect.exit(
+          sql`INSERT INTO explainer_thumbnail_candidates (video_id, round, number, key, origin, created_at) VALUES ('v1', 1, 1, 'videos/v1/thumbnails/other.jpg', 'file', ${at})`,
+        );
+      }).pipe(Effect.provide(channelLayer(channelRoot)));
+
+      assert.isTrue(Exit.isFailure(exit));
+    }),
+  );
+
+  it.effect("rejects a thumbnail candidate origin other than generated and file", () =>
+    Effect.gen(function* () {
+      const channelRoot = yield* temporaryDirectory("nyaucast-local-store-thumbnail-origin-");
+      const at = "2026-10-03T00:00:00.000Z";
+
+      const exit = yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`INSERT INTO explainer_videos (id, created_at) VALUES ('v1', ${at})`;
+        yield* sql`INSERT INTO explainer_thumbnail_candidates (video_id, round, number, key, origin, created_at) VALUES ('v1', 1, 1, 'videos/v1/thumbnails/1-1.jpg', 'generated', ${at})`;
+        yield* sql`INSERT INTO explainer_thumbnail_candidates (video_id, round, number, key, origin, created_at) VALUES ('v1', 1, 2, 'videos/v1/thumbnails/1-2.jpg', 'file', ${at})`;
+        return yield* Effect.exit(
+          sql`INSERT INTO explainer_thumbnail_candidates (video_id, round, number, key, origin, created_at) VALUES ('v1', 1, 3, 'videos/v1/thumbnails/1-3.jpg', 'imported', ${at})`,
+        );
+      }).pipe(Effect.provide(channelLayer(channelRoot)));
 
       assert.isTrue(Exit.isFailure(exit));
     }),

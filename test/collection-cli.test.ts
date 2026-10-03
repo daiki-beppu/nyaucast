@@ -13,6 +13,7 @@ import {
   setClock,
   temporaryDirectory,
   unusedAuthLayer,
+  unusedVideoLayer,
 } from "./helpers.ts";
 
 const collectionId = "01JCOLLECTION00000000000000";
@@ -25,6 +26,7 @@ const runCollectionCli = (channelRoot: string, arguments_: string[]) =>
       auth: unusedAuthLayer,
       localStore: localStoreLayer(channelRoot),
       mcpServer: Layer.empty,
+      video: unusedVideoLayer,
     })(["collection", ...arguments_]),
   ).pipe(Effect.provide(NodeServices.layer));
 

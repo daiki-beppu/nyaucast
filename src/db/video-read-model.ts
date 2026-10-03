@@ -1,12 +1,14 @@
 import { Effect, Schema } from "effect";
 
+import { ThumbnailFacts, readThumbnailFacts } from "./explainer-thumbnails.ts";
 import { ExplainerPlan, requireLatestPlan } from "./explainer-videos.ts";
 import { getExplainerGateDecision } from "./gates.ts";
 
-/** 解説動画の read model が返す事実。後続の issue がサムネイル・ゲート・カット・投稿の状態をここへ足す。 */
+/** 解説動画の read model が返す事実。後続の issue がゲート・カット・投稿の状態をここへ足す。 */
 export const VideoStatus = Schema.Struct({
   abandoned: Schema.Boolean,
   plan: ExplainerPlan,
+  thumbnails: ThumbnailFacts,
   videoId: Schema.String,
 });
 type VideoStatus = typeof VideoStatus.Type;
@@ -21,5 +23,10 @@ export const isVideoAbandoned = (videoId: string) =>
 export const deriveVideoStatus = (videoId: string) =>
   Effect.gen(function* () {
     const plan = yield* requireLatestPlan(videoId);
-    return { abandoned: yield* isVideoAbandoned(videoId), plan, videoId } satisfies VideoStatus;
+    return {
+      abandoned: yield* isVideoAbandoned(videoId),
+      plan,
+      thumbnails: yield* readThumbnailFacts(videoId),
+      videoId,
+    } satisfies VideoStatus;
   });

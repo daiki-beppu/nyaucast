@@ -20,6 +20,7 @@ import {
   fakeSpawner,
   temporaryDirectory,
   unusedLocalStoreLayer,
+  unusedVideoLayer,
   writeJsonFile,
 } from "./helpers.ts";
 import {
@@ -136,10 +137,12 @@ function runAuth(
     const logsBefore = (yield* TestConsole.logLines).length;
     const errorsBefore = (yield* TestConsole.errorLines).length;
     const outcome = yield* Effect.result(
-      nyaucastCli({ auth: layer, localStore: unusedLocalStoreLayer, mcpServer: Layer.empty })([
-        "auth",
-        ...arguments_,
-      ]),
+      nyaucastCli({
+        auth: layer,
+        localStore: unusedLocalStoreLayer,
+        mcpServer: Layer.empty,
+        video: unusedVideoLayer,
+      })(["auth", ...arguments_]),
     );
     const logs = (yield* TestConsole.logLines).slice(logsBefore).map(String);
     const errors = (yield* TestConsole.errorLines).slice(errorsBefore).map(String);
