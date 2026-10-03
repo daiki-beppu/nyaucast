@@ -15,30 +15,34 @@
     "scripts/**"
   ],
   "ignoreDependencies": ["yaml"],
+  "rules": {
+    "unused-dev-dependencies": "error",
+    "unused-optional-dependencies": "error",
+    "type-only-dependencies": "error",
+    "test-only-dependencies": "error",
+    "dev-dependencies-in-production": "error",
+    "re-export-cycle": "error",
+    "stale-suppressions": "error",
+    "require-suppression-reason": "error",
+    "unused-catalog-entries": "error",
+    "unused-dependency-overrides": "error"
+  },
   "duplicates": {
     "enabled": true,
-    "mode": "semantic",
-    "minTokens": 50,
+    "mode": "weak",
+    "near": true,
+    "minTokens": 45,
     "minLines": 1,
     "minOccurrences": 2,
-    "threshold": 50,
-    "ignore": [
-      "src/db/schema.ts",
-      "src/db/gates.ts",
-      "src/channel/channel-settings.ts",
-      "src/tools/explainer.writePlan.ts",
-      "src/tools/plan.init.ts",
-      "src/tools/video.status.ts",
-      "test/helpers.ts",
-      "test/package-smoke-support.ts",
-      "test/fixtures/**"
-    ]
+    "threshold": 0.01,
+    "ignore": ["test/helpers.ts", "test/package-smoke-support.ts", "test/fixtures/**"]
   },
   "health": {
     "maxCyclomatic": 5,
     "maxCognitive": 5,
     "maxCrap": 30,
     "maxUnitSize": 60,
+    "suggestInlineSuppression": false,
     "ignore": ["test/package-smoke-support.ts", "test/fixtures/**"]
   }
 }
