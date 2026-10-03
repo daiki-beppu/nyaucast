@@ -10,7 +10,7 @@ accepted (2026-07-27)
 
 マップ issue #57「collection lifecycle の orchestration を takt workflow + facets に寄せる案の採否マップ」の destination。collection lifecycle のオーケストレーションと知識（現行設計の workflow tool + knowledge codec）を takt（v0.52.0 / 作者 nrslib / MIT / 第三者の 0.x ツール）の workflow YAML + facets に置き換える案の採否を確定する。
 
-**本 ADR は製品側のみを扱う。** 下流チャンネルリポの運用ワークフロー（collection lifecycle）が対象であり、**開発側で takt を使うこと**（CLAUDE.md / AGENTS.md の「開発は takt メイン」、`docs/agents/issue-tracker.md`、issue #55）は本 ADR の対象外で、何も変更しない。
+**本 ADR は製品側のみを扱う。** 下流チャンネルリポの運用ワークフロー（collection lifecycle）が対象であり、**開発側で takt を使うこと**（AGENTS.md の「開発は takt メイン」、`docs/agents/issue-tracker.md`、issue #55）は本 ADR の対象外で、何も変更しない。
 
 マップは 6 チケットで構成された:
 
@@ -27,7 +27,7 @@ accepted (2026-07-27)
 
 1. **takt を nyaucast 製品の orchestration に採用しない。** workflow YAML / facets を nyaucast リポにも下流チャンネルリポにも置かない。`takt` を製品の runtime 依存にしない
 2. **代替は knowledge codec を読んだ agent が primitive tool を呼ぶ形とする**（詳細は ADR-0007）
-3. **開発側の takt 利用は本 ADR の対象外**であり、CLAUDE.md / AGENTS.md / `docs/agents/issue-tracker.md` の記述は改訂しない
+3. **開発側の takt 利用は本 ADR の対象外**であり、AGENTS.md / `docs/agents/issue-tracker.md` の記述は改訂しない
 
 ## Why
 
@@ -62,7 +62,7 @@ accepted (2026-07-27)
 - **現行設計にそのまま戻るのではない。** #60 / #61 / #62 で確定した実行モデルは takt 採否と独立に有効であり、これを織り込んだ形を ADR-0007 が定める。特に CONTEXT.md の `workflow tool` は ADR-0007 で廃止される
 - **issue #59（takt への runtime 依存リスクの評価）は評価対象が消滅**し、未着手のまま close した
 - **issue #65（適用範囲の確定）は選択肢が消滅**し、close した
-- **開発側は無変更。** CLAUDE.md / AGENTS.md / `docs/agents/issue-tracker.md` の「custom workflow / facets は置かない」は開発ワークフローの規約であり、製品側の不採用とは独立に有効
+- **開発側は無変更。** AGENTS.md / `docs/agents/issue-tracker.md` の「custom workflow / facets は置かない」は開発ワークフローの規約であり、製品側の不採用とは独立に有効
 - **再検討する場合は新しい effort として起票する。** マップ #57 の再開ではなく、地図を引き直す
 - 副産物の記録: `WorkflowEngineOptions.mcpServers` は takt が "application boundary" 用に公開している正式な埋め込み拡張点である。将来 C 経路を再検討するならここが入口になる
 
