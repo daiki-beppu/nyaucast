@@ -4,7 +4,7 @@ import { SqlClient } from "effect/sql";
 import { afterLatestFact } from "./fact-time.ts";
 import { insertRow, queryRows } from "./explainer-thumbnails.ts";
 
-/** 長尺のカットの名前。ショートのカットの名前は、後続の issue が足す。 */
+/** 長尺のカットの名前。ショートのカットは `short-<n>-clip` と `short-<n>-dedicated`（`videos/cuts.ts` が名前を解決する）。 */
 export const longCut = "long";
 
 const CutExport = Schema.Struct({
@@ -81,10 +81,13 @@ export const lastCutExport = (videoId: string, cut: string) => lastFact(exportsT
 export const lastCutPreview = (videoId: string, cut: string) =>
   lastFact(previewsTable, videoId, cut);
 
-// 新しい行は、同じカットの直前の行より必ず後の時刻で積む。
+const laterOf = (a: string | undefined, b: string | undefined) =>
+  a === undefined || (b !== undefined && b > a) ? b : a;
+
+// 新しい行は、同じカットの直前の行と、after（ショートの候補の最後の版の時刻）より必ず後の時刻で積む。
 const appendFact = <Row, Fact extends { readonly createdAt: string }>(
   table: FactTable<Row, Fact>,
-  scope: { readonly cut: string; readonly videoId: string },
+  scope: { readonly after?: string | undefined; readonly cut: string; readonly videoId: string },
   columns: Readonly<Record<string, string>>,
 ) =>
   Effect.gen(function* () {
@@ -93,7 +96,7 @@ const appendFact = <Row, Fact extends { readonly createdAt: string }>(
     yield* insertRow(table.name, {
       ...columns,
       created_at: new Date(
-        afterLatestFact(now, Option.getOrUndefined(latest)?.createdAt),
+        afterLatestFact(now, laterOf(Option.getOrUndefined(latest)?.createdAt, scope.after)),
       ).toISOString(),
       cut: scope.cut,
       video_id: scope.videoId,
@@ -101,6 +104,7 @@ const appendFact = <Row, Fact extends { readonly createdAt: string }>(
   });
 
 export const appendCutExport = (fact: {
+  readonly after?: string | undefined;
   readonly compositionHash: string;
   readonly cut: string;
   readonly key: string;

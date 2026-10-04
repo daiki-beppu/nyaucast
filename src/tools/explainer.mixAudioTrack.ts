@@ -20,9 +20,26 @@ import {
   NotExplainerChannel,
   type Bgm,
 } from "../channel/channel-settings.ts";
+import { ShortCandidateNotFound } from "../db/explainer-shorts.ts";
 import { VideoNotFound, requireLatestPlan } from "../db/explainer-videos.ts";
+import {
+  decodeTimingTableBytes,
+  narrationKey,
+  type TimingTable,
+} from "../narration/timing-table.ts";
 import { outputSampleRate, parseWav } from "../narration/wav.ts";
-import { audioTrackKey } from "../videos/audio-track.ts";
+import type { ScriptTarget } from "../scripts/script-files.ts";
+import {
+  InvalidShortRange,
+  ShortTooLong,
+  clipSpan,
+  rangeKey,
+  requireShortLength,
+  type ParagraphRange,
+  type ShortRef,
+} from "../shorts/short-candidate.ts";
+import { audioFactsKey, audioTrackKey } from "../videos/audio-track.ts";
+import { CutField, resolveCut, sourceTarget, type CutTarget } from "../videos/cuts.ts";
 import { ProduceGateNotApproved, requireProduceApproval } from "../videos/produce-gate.ts";
 import { VideoFiles } from "../videos/video-files.ts";
 
@@ -51,15 +68,18 @@ class BgmLoopOutOfRange extends Schema.TaggedError<BgmLoopOutOfRange>()("BgmLoop
 
 export const ExplainerMixAudioTrackTool = Tool.make("explainer_mix_audio_track", {
   description: [
-    "Mix the final audio track of an explainer video (48 kHz stereo 16-bit WAV with a freshness key): ",
+    "Mix the final audio track of a cut of an explainer video (the long cut by default; 48 kHz stereo 16-bit WAV with a freshness key): ",
     "the narration track laid over a looped song of the channel's BGM pool, ducked under the narration by the paragraph times of the timing table, ",
     "then normalized to -14 LUFS with a true peak of -2 dBTP or less. The narration is measured and brought to the target first, the BGM is laid at the declared volume below it, ",
     "and the mix gets a simple gain to the target. When the channel declares BGM disabled, the narration alone goes through the same normalization. ",
     "The song is chosen from the video ID by rotation through the pool, or is the pool song named by song. The chosen song is part of the freshness key. ",
     "A track whose key is unchanged (narration, timing table, song file, loop point, volume, ducking depth) is reused without being written; force mixes it again. ",
+    "For a clip short (cut short-<n>-clip) the narration is cut from the long narration track (never from the final track of the long cut) to the paragraph range of the candidate, from the start of its first paragraph to the end of its last, and mixed again; the track is audio/<cut>.wav, its length is the length of the range, and the range is part of the freshness key. ",
+    "For a dedicated short the narration of the candidate (shorts/<n>/narration/) is mixed. A short is at most 60 seconds long. ",
     "Requires the produce gate to be approved. ",
     "Fails with BgmNotDeclared when the channel declares no BGM, with BgmNotEnabled when a song is named while BGM is disabled, ",
     "with VideoNotFound for an unknown video, with ProduceGateNotApproved before the produce gate is approved, ",
+    "with ShortCandidateNotFound when the cut names a candidate that was never written or is withdrawn, with InvalidShortRange when the range of a clip is not in the long timing table any more, with ShortTooLong when a short is over 60 seconds, ",
     "with NarrationNotFound or NarrationSilent for the narration track and timing table, with LoudnessTargetMissed when the mixed track does not reach -14 LUFS ± 0.5 and -2 dBTP or less, ",
     "with BgmPoolNotFound or InvalidBgmPool for the pool, with BgmPoolEmpty for a pool without songs, with BgmSongNotInPool for a named song the pool does not list, ",
     "with BgmSongNotFound or BgmSongUnreadable for a song file, and with BgmLoopTooShort or BgmLoopOutOfRange when no loop can be made from the song. ",
@@ -74,6 +94,9 @@ export const ExplainerMixAudioTrackTool = Tool.make("explainer_mix_audio_track",
     BgmNotEnabled,
     VideoNotFound,
     ProduceGateNotApproved,
+    ShortCandidateNotFound,
+    InvalidShortRange,
+    ShortTooLong,
     NarrationNotFound,
     NarrationSilent,
     LoudnessTargetMissed,
@@ -87,6 +110,7 @@ export const ExplainerMixAudioTrackTool = Tool.make("explainer_mix_audio_track",
     BgmLoopOutOfRange,
   ]),
   parameters: Schema.Struct({
+    cut: CutField,
     force: Schema.optionalKey(Schema.Boolean).annotate({
       description: "Mix the track again even when its inputs are unchanged.",
     }),
@@ -385,9 +409,6 @@ const chooseSong = (songs: readonly BgmSong[], videoId: string, named: string | 
 
 // ---- 設定・入力 ----
 
-const narrationKey = (videoId: string, file: string) => `videos/${videoId}/narration/${file}`;
-const factsKeyOf = (videoId: string) => `videos/${videoId}/audio/track.json`;
-
 // BGM の宣言。無効のチャンネルは undefined（プールは読まない）。宣言が無い・無効なのに曲を指定した、は失敗。
 const resolveBgm = (named: string | undefined) =>
   Effect.gen(function* () {
@@ -401,26 +422,23 @@ const resolveBgm = (named: string | undefined) =>
     return named === undefined ? undefined : yield* new BgmNotEnabled();
   });
 
-const Timing = Schema.Struct({
-  paragraphs: Schema.Array(
-    Schema.Struct({ endSeconds: Schema.Finite, startSeconds: Schema.Finite }),
-  ),
-});
-const decodeTiming = Schema.decodeUnknownEffect(Schema.fromJsonString(Timing));
-
 interface Narration {
   readonly paragraphs: readonly Paragraph[];
   readonly samples: Float32Array;
+  /** 長尺以外の、鮮度の鍵に足すもの（ショートのカットの名前と、切り抜きの範囲）。 */
+  readonly scope: unknown;
+  readonly table: TimingTable;
   readonly timingBytes: Uint8Array;
   readonly trackBytes: Uint8Array;
 }
 
-const readNarration = (videoId: string) =>
+// 置き場のナレーション（track.wav と timing.json）をそのまま読む。
+const readNarrationFiles = (videoId: string, source: ScriptTarget) =>
   Effect.gen(function* () {
     const files = yield* VideoFiles;
     const found = Option.all({
-      timing: yield* files.read(narrationKey(videoId, "timing.json")),
-      track: yield* files.read(narrationKey(videoId, "track.wav")),
+      timing: yield* files.read(narrationKey(source, "timing.json")),
+      track: yield* files.read(narrationKey(source, "track.wav")),
     });
     const pcm = Option.flatMap(found, ({ track }) => Option.fromNullishOr(parseWav(track))).pipe(
       Option.filter((wav) => wav.sampleRate === rate),
@@ -428,15 +446,48 @@ const readNarration = (videoId: string) =>
     if (Option.isNone(found) || Option.isNone(pcm)) {
       return yield* new NarrationNotFound({ videoId });
     }
-    const decoded = yield* decodeTiming(new TextDecoder().decode(found.value.timing)).pipe(
+    const table = yield* decodeTimingTableBytes(videoId, found.value.timing).pipe(
       Effect.mapError(() => new NarrationNotFound({ videoId })),
     );
     return {
-      paragraphs: decoded.paragraphs,
+      paragraphs: table.paragraphs,
       samples: Float32Array.from(pcm.value.samples, (sample) => sample / 32_768),
+      scope: undefined,
+      table,
       timingBytes: found.value.timing,
       trackBytes: found.value.track,
     } satisfies Narration;
+  });
+
+// 切り抜き: 範囲の最初の段落の頭から最後の段落の終わりまでのサンプルを、長尺のナレーションのトラックから切り出す。段落の時刻は区間の頭からの時刻にする。
+const clipNarration = (ref: ShortRef, range: ParagraphRange, narration: Narration) =>
+  Effect.gen(function* () {
+    const span = yield* clipSpan(ref, narration.table, range);
+    const from = seconds(span.startSeconds);
+    return {
+      ...narration,
+      paragraphs: span.paragraphs.map((paragraph) => ({
+        endSeconds: paragraph.endSeconds - span.startSeconds,
+        startSeconds: paragraph.startSeconds - span.startSeconds,
+      })),
+      samples: narration.samples.slice(from, from + seconds(span.endSeconds - span.startSeconds)),
+      scope: { cut: ref.cut, range: rangeKey(range) },
+    } satisfies Narration;
+  });
+
+// カットのナレーション。長尺は長尺のナレーション、専用は専用のナレーション（60 秒まで）、切り抜きは長尺のナレーションの範囲。
+const readNarration = (videoId: string, target: CutTarget) =>
+  Effect.gen(function* () {
+    const narration = yield* readNarrationFiles(videoId, sourceTarget(videoId, target));
+    if (target.kind === "long") {
+      return narration;
+    }
+    const ref = { cut: target.cut, number: target.number, videoId };
+    if (target.kind === "clip") {
+      return yield* clipNarration(ref, target.version.range, narration);
+    }
+    yield* requireShortLength(ref, narration.samples.length / rate);
+    return { ...narration, scope: { cut: target.cut } } satisfies Narration;
   });
 
 // ---- 鮮度の鍵と成果物 ----
@@ -463,6 +514,7 @@ const freshnessKey = (narration: Narration, bgm: Bgm | undefined, chosen: Chosen
             loop: chosen.song.loop ?? null,
             volumeDb: bgm.volumeDb,
           },
+      ...(narration.scope === undefined ? [] : [narration.scope]),
     ]),
   );
 
@@ -474,13 +526,13 @@ const Facts = Schema.Struct({
 });
 const decodeFacts = Schema.decodeUnknownOption(Schema.fromJsonString(Facts));
 
-const existingTrack = (videoId: string, key: string) =>
+const existingTrack = (videoId: string, cut: string, key: string) =>
   Effect.gen(function* () {
     const files = yield* VideoFiles;
-    const facts = Option.flatMap(yield* files.read(factsKeyOf(videoId)), (bytes) =>
+    const facts = Option.flatMap(yield* files.read(audioFactsKey(videoId, cut)), (bytes) =>
       decodeFacts(new TextDecoder().decode(bytes)),
     );
-    const wav = yield* files.read(audioTrackKey(videoId));
+    const wav = yield* files.read(audioTrackKey(videoId, cut));
     return Option.filter(
       facts,
       (found) => found.key === key && Option.isSome(wav) && sha256(wav.value) === found.audioSha256,
@@ -595,10 +647,12 @@ const loadChosen = (bgm: Bgm | undefined, videoId: string, named: string | undef
   });
 
 const mixAudioTrack = Effect.fn("explainer.mixAudioTrack")(function* ({
+  cut,
   force,
   song,
   videoId,
 }: {
+  readonly cut?: string;
   readonly force?: boolean;
   readonly song?: string;
   readonly videoId: string;
@@ -606,11 +660,12 @@ const mixAudioTrack = Effect.fn("explainer.mixAudioTrack")(function* ({
   const bgm = yield* resolveBgm(song);
   yield* requireLatestPlan(videoId);
   yield* requireProduceApproval(videoId);
-  const narration = yield* readNarration(videoId);
+  const target = yield* resolveCut(videoId, cut);
+  const narration = yield* readNarration(videoId, target);
   const chosen = yield* loadChosen(bgm, videoId, song);
   const key = freshnessKey(narration, bgm, chosen);
-  const trackKey = audioTrackKey(videoId);
-  const existing = force === true ? Option.none() : yield* existingTrack(videoId, key);
+  const trackKey = audioTrackKey(videoId, target.cut);
+  const existing = force === true ? Option.none() : yield* existingTrack(videoId, target.cut, key);
   if (Option.isSome(existing)) {
     return { reused: true, song: existing.value.song, trackKey, videoId };
   }
@@ -620,7 +675,7 @@ const mixAudioTrack = Effect.fn("explainer.mixAudioTrack")(function* ({
   const used = chosen?.song.file ?? null;
   yield* files.write(trackKey, wav);
   yield* files.write(
-    factsKeyOf(videoId),
+    audioFactsKey(videoId, target.cut),
     new TextEncoder().encode(
       JSON.stringify({ audioSha256: sha256(wav), key, song: used }, null, 2),
     ),
@@ -632,6 +687,7 @@ const mixAudioTrack = Effect.fn("explainer.mixAudioTrack")(function* ({
 const mixLock = Semaphore.makeUnsafe(1);
 
 export const explainerMixAudioTrack = (input: {
+  readonly cut?: string;
   readonly force?: boolean;
   readonly song?: string;
   readonly videoId: string;

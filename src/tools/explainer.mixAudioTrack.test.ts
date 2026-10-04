@@ -32,7 +32,23 @@ import {
   writeVideoConfig,
 } from "../../test/helpers.ts";
 import { source } from "../../test/explainer-helpers.ts";
-import { approveProduce, recordPlan, rejectProduce } from "../../test/narration-helpers.ts";
+import {
+  approveProduce,
+  recordPlan,
+  rejectProduce,
+  scriptInput,
+} from "../../test/narration-helpers.ts";
+import {
+  clipCut,
+  cutAudioFactsKey,
+  cutAudioKey,
+  dedicatedCut,
+  paragraphRange,
+  shortTimingKey,
+  shortTrackKey,
+  withdrawShort,
+  writeShort,
+} from "../../test/short-helpers.ts";
 import {
   channelFileExists,
   readChannelFile,
@@ -1029,5 +1045,455 @@ describe("explainer.mixAudioTrack: the loop length boundary", () => {
           }),
       ),
     slow,
+  );
+});
+
+// ---- ショートのカット（#550）----
+// 契約（この issue の計画 C3・C4・C8・D4・D7）:
+//   パラメータに cut?（"long" か "short-<n>-clip" / "short-<n>-dedicated"。省略は "long"）が増える。
+//   切り抜き: 長尺の narration/track.wav と timing.json から、段落の範囲（最初の段落の頭から最後の段落の終わり）を切り出して混ぜ直す。
+//     長尺の最終トラック（audio/track.wav）は読まず、書き換えない。成果物は audio/<cut>.wav と audio/<cut>.json。長さは範囲の長さに一致する。
+//   専用: shorts/<n>/narration/{track.wav,timing.json} を同じ手順で混ぜる。長さはそのナレーションの長さ。
+//   ショートは 60 秒まで。超えたら ShortTooLong（videoId・cut・seconds・limit）で、何も書かない。
+//   範囲が長尺のタイミング表に無ければ InvalidShortRange、候補が無い・取り下げ済みなら ShortCandidateNotFound。
+//   鮮度の鍵には、切り抜きでは範囲を含める（フックは読み上げないので含めない）。
+
+const shortSeconds = 60;
+// シーン i が 1 段落の台本とタイミング表。切り抜きは scene 2 から 3 まで: 3.35 秒から 9 秒（5.65 秒）。
+const clipParagraphs = [
+  [0.8, 3],
+  [3.35, 6],
+  [6.35, 9],
+  [9.35, 12],
+] as const;
+const clipNarration = narration({ duration: 14, paragraphs: clipParagraphs, spikes: true });
+const clipRange = paragraphRange([2, 1], [3, 1]);
+const clipSamples = Math.round((9 - 3.35) * sampleRate);
+
+interface ShortChannelOptions extends ChannelOptions {
+  /** 長尺の台本の段落数（シーンごとに 1 段落）。省略はナレーションの段落数。 */
+  readonly scriptScenes?: number;
+  /** 書く候補。undefined なら候補を書かない。 */
+  readonly candidate?: Parameters<typeof writeShort>[0] | undefined;
+}
+
+// 長尺の台本（シーンごとに 1 段落）と候補を書いた動画 V1 で use を動かす。
+const inShortChannel = <A, E, R>(
+  prefix: string,
+  options: ShortChannelOptions,
+  use: (channelRoot: string) => Effect.Effect<A, E, R>,
+) =>
+  inChannel(prefix, options, (channelRoot) =>
+    Effect.gen(function* () {
+      const scenes = options.scriptScenes ?? clipParagraphs.length;
+      yield* callTool(
+        "explainer_write_script",
+        scriptInput(Array.from({ length: scenes }, () => ["あ"])),
+      );
+      if (!("candidate" in options) || options.candidate !== undefined) {
+        yield* writeShort({ range: clipRange, ...options.candidate });
+      }
+      return yield* use(channelRoot);
+    }),
+  );
+
+const mixCut = (cut: string, extra: { force?: boolean } = {}) =>
+  callTool("explainer_mix_audio_track", { cut, videoId: "V1", ...extra });
+
+const readCutTrack = (channelRoot: string, cut: string) =>
+  decodeWav(readChannelFile(channelRoot, cutAudioKey(cut)));
+
+const noCutArtifacts = (channelRoot: string, cut: string) => {
+  assert.isFalse(channelFileExists(channelRoot, cutAudioKey(cut)));
+  assert.isFalse(channelFileExists(channelRoot, cutAudioFactsKey(cut)));
+};
+
+const writeDedicatedNarration = (channelRoot: string, fixture: NarrationFixture, number = 1) => {
+  writeChannelFile(channelRoot, shortTrackKey(number), fixture.track);
+  writeChannelFile(channelRoot, shortTimingKey(number), new TextEncoder().encode(fixture.timing));
+};
+
+describe("explainer.mixAudioTrack: the cut parameter", () => {
+  const schema = ExplainerMixAudioTrackTool.parametersSchema;
+
+  it.each(["long", "short-1-clip", "short-1-dedicated", "short-12-clip", "short-100-dedicated"])(
+    "accepts the cut %j",
+    (cut) => {
+      assert.isTrue(accepts(schema, { cut, videoId: "V1" }));
+    },
+  );
+
+  it.each([
+    "short-01-clip",
+    "short-0-clip",
+    "short-1-vertical",
+    "short-1.5-clip",
+    "short--1-clip",
+    "Long",
+    "short-1-clip ",
+    "",
+  ])("does not accept the cut %j", (cut) => {
+    assert.isFalse(accepts(schema, { cut, videoId: "V1" }));
+  });
+
+  it("describes the short failure tags", () => {
+    for (const tag of ["ShortTooLong", "InvalidShortRange", "ShortCandidateNotFound"]) {
+      assert.include(ExplainerMixAudioTrackTool.description, tag);
+    }
+  });
+
+  it.effect(
+    "mixes the long track for the cut long, as when the cut is omitted",
+    () =>
+      inChannel("nyaucast-mix-cut-long-", {}, (channelRoot) =>
+        Effect.gen(function* () {
+          const result = yield* mixCut("long");
+
+          assert.strictEqual(result.trackKey, audioKey);
+          assert.isTrue(channelFileExists(channelRoot, audioKey));
+        }),
+      ),
+    slow,
+  );
+});
+
+describe("explainer.mixAudioTrack: the audio of a clip short", () => {
+  it.effect(
+    "is -14 LUFS ± 0.5 and -2 dBTP or less, as long as the paragraph range, with BGM laid under a peaky narration",
+    () =>
+      inShortChannel("nyaucast-mix-clip-loudness-", { narration: clipNarration }, (channelRoot) =>
+        Effect.gen(function* () {
+          const result = yield* mixCut(clipCut(1));
+
+          const track = readCutTrack(channelRoot, clipCut(1));
+          assert.strictEqual(result.trackKey, cutAudioKey(clipCut(1)));
+          assert.strictEqual(result.videoId, "V1");
+          assert.isFalse(result.reused);
+          assert.strictEqual(track.format, 1);
+          assert.strictEqual(track.bitsPerSample, 16);
+          assert.strictEqual(track.sampleRate, sampleRate);
+          assert.strictEqual(track.channels.length, 2);
+          assert.strictEqual(track.channels[0]?.length, clipSamples);
+          assert.closeTo(loudness(track.channels) ?? Number.NaN, -14, 0.5);
+          assert.isAtMost(truePeakDbtp(track.channels), -2);
+          assert.isTrue(channelFileExists(channelRoot, cutAudioFactsKey(clipCut(1))));
+        }),
+      ),
+    slow,
+  );
+
+  it.effect(
+    "goes through the same normalization when BGM is off, and keeps the narration of the range only",
+    () =>
+      inShortChannel(
+        "nyaucast-mix-clip-off-",
+        { bgm: { enabled: false }, narration: clipNarration, pool: undefined, songs: {} },
+        (channelRoot) =>
+          Effect.gen(function* () {
+            yield* mixCut(clipCut(1));
+
+            const { channels } = readCutTrack(channelRoot, clipCut(1));
+            const left = channels[0] as Float32Array;
+            assert.strictEqual(left.length, clipSamples);
+            assert.closeTo(loudness(channels) ?? Number.NaN, -14, 0.5);
+            assert.isAtMost(truePeakDbtp(channels), -2);
+            // 範囲の最初の段落の頭から声が始まる（長尺の先頭の無音や、範囲より前の段落が残っていない）
+            assert.isAbove(rmsDb(left, 0.1, 0.4), -40);
+            // 範囲の 2 つの段落の間（切り出し後の 2.65〜3.0 秒）は完全な無音
+            const gap = left.slice(Math.round(2.7 * sampleRate), Math.round(2.95 * sampleRate));
+            assert.isTrue(gap.every((value) => Math.abs(value) < 1e-3));
+            // 範囲の 2 つ目の段落（切り出し後の 3.0〜5.65 秒）は声がある
+            assert.isAbove(rmsDb(left, 3.2, 5.4), -40);
+          }),
+      ),
+    slow,
+  );
+
+  it.effect(
+    "needs no final track of the long cut, and leaves one that exists byte for byte as it is",
+    () =>
+      inShortChannel("nyaucast-mix-clip-long-track-", { narration: clipNarration }, (channelRoot) =>
+        Effect.gen(function* () {
+          yield* mixCut(clipCut(1));
+          assert.isFalse(channelFileExists(channelRoot, audioKey));
+
+          yield* mix();
+          const longTrack = trackBytes(channelRoot);
+          yield* mixCut(clipCut(1), { force: true });
+
+          assert.isTrue(sameBytes(trackBytes(channelRoot), longTrack));
+        }),
+      ),
+    slow,
+  );
+
+  it.effect(
+    "is as long as the range the candidate was last written with",
+    () =>
+      inShortChannel(
+        "nyaucast-mix-clip-other-range-",
+        { bgm: { enabled: false }, narration: clipNarration, pool: undefined, songs: {} },
+        (channelRoot) =>
+          Effect.gen(function* () {
+            yield* writeShort({ range: paragraphRange([1, 1], [2, 1]) });
+
+            yield* mixCut(clipCut(1));
+
+            const left = readCutTrack(channelRoot, clipCut(1)).channels[0] as Float32Array;
+            assert.strictEqual(left.length, Math.round((6 - 0.8) * sampleRate));
+          }),
+      ),
+    slow,
+  );
+
+  it.effect(
+    "is reused while the range is unchanged (a new hook is not read aloud), mixed again for a new range or force",
+    () =>
+      inShortChannel("nyaucast-mix-clip-reuse-", { narration: clipNarration }, (channelRoot) =>
+        Effect.gen(function* () {
+          const first = yield* mixCut(clipCut(1));
+          const before = readChannelFile(channelRoot, cutAudioKey(clipCut(1)));
+          yield* writeShort({ hook: "新しいフック", range: clipRange });
+          const sameRange = yield* mixCut(clipCut(1));
+          yield* writeShort({ hook: "新しいフック", range: paragraphRange([2, 1], [4, 1]) });
+          const newRange = yield* mixCut(clipCut(1));
+          const forced = yield* mixCut(clipCut(1), { force: true });
+
+          assert.isFalse(first.reused);
+          assert.isTrue(sameRange.reused);
+          assert.isFalse(newRange.reused);
+          assert.isFalse(forced.reused);
+          assert.isFalse(sameBytes(readChannelFile(channelRoot, cutAudioKey(clipCut(1))), before));
+        }),
+      ),
+    slow,
+  );
+
+  it.effect(
+    "is mixed per cut: two candidates write their own tracks",
+    () =>
+      inShortChannel("nyaucast-mix-clip-two-", { narration: clipNarration }, (channelRoot) =>
+        Effect.gen(function* () {
+          yield* writeShort({ number: 2, range: paragraphRange([1, 1], [1, 1]) });
+
+          yield* mixCut(clipCut(1));
+          yield* mixCut(clipCut(2));
+
+          assert.strictEqual(
+            readCutTrack(channelRoot, clipCut(1)).channels[0]?.length,
+            clipSamples,
+          );
+          assert.strictEqual(
+            readCutTrack(channelRoot, clipCut(2)).channels[0]?.length,
+            Math.round((3 - 0.8) * sampleRate),
+          );
+        }),
+      ),
+    slow,
+  );
+});
+
+describe("explainer.mixAudioTrack: the 60 second limit of a short", () => {
+  // 範囲の長さは「最初の段落の頭から最後の段落の終わり」。2 進で正確な秒数にして、ちょうど 60 秒を作る。
+  const limitNarration = (end: number) =>
+    narration({
+      duration: end + 1,
+      paragraphs: [
+        [0.75, 30],
+        [30.5, end],
+      ],
+    });
+  const wholeRange = paragraphRange([1, 1], [2, 1]);
+
+  it.effect(
+    "fails with ShortTooLong for a range longer than 60 seconds, and writes nothing",
+    () =>
+      inShortChannel(
+        "nyaucast-mix-clip-too-long-",
+        { candidate: { range: wholeRange }, narration: limitNarration(60.8), scriptScenes: 2 },
+        (channelRoot) =>
+          Effect.gen(function* () {
+            const failure = yield* Effect.flip(mixCut(clipCut(1)));
+
+            assert.strictEqual(failure._tag, "ShortTooLong");
+            assert.strictEqual(failureFacts(failure)["videoId"], "V1");
+            assert.strictEqual(failureFacts(failure)["cut"], clipCut(1));
+            assert.strictEqual(failureFacts(failure)["limit"], shortSeconds);
+            assert.closeTo(Number(failureFacts(failure)["seconds"]), 60.05, 1e-6);
+            noCutArtifacts(channelRoot, clipCut(1));
+          }),
+      ),
+    slow,
+  );
+
+  it.effect(
+    "accepts a range of exactly 60 seconds",
+    () =>
+      inShortChannel(
+        "nyaucast-mix-clip-exactly-60-",
+        { candidate: { range: wholeRange }, narration: limitNarration(60.75), scriptScenes: 2 },
+        (channelRoot) =>
+          Effect.gen(function* () {
+            const result = yield* mixCut(clipCut(1));
+
+            assert.isFalse(result.reused);
+            assert.strictEqual(
+              readCutTrack(channelRoot, clipCut(1)).channels[0]?.length,
+              shortSeconds * sampleRate,
+            );
+          }),
+      ),
+    slow,
+  );
+
+  it.effect(
+    "fails with ShortTooLong for a dedicated narration longer than 60 seconds, and accepts one of exactly 60",
+    () =>
+      inShortChannel("nyaucast-mix-dedicated-limit-", { narration: undefined }, (channelRoot) =>
+        Effect.gen(function* () {
+          writeDedicatedNarration(
+            channelRoot,
+            narration({ duration: 61, paragraphs: [[0.8, 30]] }),
+          );
+          const failure = yield* Effect.flip(mixCut(dedicatedCut(1)));
+          assert.strictEqual(failure._tag, "ShortTooLong");
+          assert.strictEqual(failureFacts(failure)["cut"], dedicatedCut(1));
+          assert.strictEqual(failureFacts(failure)["limit"], shortSeconds);
+          noCutArtifacts(channelRoot, dedicatedCut(1));
+
+          writeDedicatedNarration(
+            channelRoot,
+            narration({ duration: 60, paragraphs: [[0.8, 30]] }),
+          );
+          const accepted = yield* mixCut(dedicatedCut(1));
+          assert.isFalse(accepted.reused);
+        }),
+      ),
+    slow,
+  );
+});
+
+describe("explainer.mixAudioTrack: the audio of a dedicated short", () => {
+  const dedicatedNarration = narration({
+    duration: 6,
+    paragraphs: [
+      [0.8, 2.5],
+      [2.85, 4.5],
+    ],
+    spikes: true,
+  });
+
+  it.effect(
+    "is made from the dedicated narration alone: -14 LUFS ± 0.5, -2 dBTP or less, as long as that narration",
+    () =>
+      inShortChannel("nyaucast-mix-dedicated-", { narration: undefined }, (channelRoot) =>
+        Effect.gen(function* () {
+          writeDedicatedNarration(channelRoot, dedicatedNarration);
+
+          const result = yield* mixCut(dedicatedCut(1));
+
+          const track = readCutTrack(channelRoot, dedicatedCut(1));
+          assert.strictEqual(result.trackKey, cutAudioKey(dedicatedCut(1)));
+          assert.isFalse(result.reused);
+          assert.strictEqual(track.channels.length, 2);
+          assert.strictEqual(track.channels[0]?.length, 6 * sampleRate);
+          assert.closeTo(loudness(track.channels) ?? Number.NaN, -14, 0.5);
+          assert.isAtMost(truePeakDbtp(track.channels), -2);
+          assert.isFalse(channelFileExists(channelRoot, audioKey));
+        }),
+      ),
+    slow,
+  );
+
+  it.effect(
+    "fails with NarrationNotFound when the dedicated narration is not synthesized, and writes nothing",
+    () =>
+      inShortChannel("nyaucast-mix-dedicated-no-narration-", {}, (channelRoot) =>
+        Effect.gen(function* () {
+          const failure = yield* Effect.flip(mixCut(dedicatedCut(1)));
+
+          assert.strictEqual(failure._tag, "NarrationNotFound");
+          noCutArtifacts(channelRoot, dedicatedCut(1));
+        }),
+      ),
+    slow,
+  );
+});
+
+describe("explainer.mixAudioTrack: what a short refuses", () => {
+  it.effect("fails with InvalidShortRange when the long timing table no longer has the range", () =>
+    inShortChannel(
+      "nyaucast-mix-clip-stale-range-",
+      {
+        narration: narration({
+          duration: 7,
+          paragraphs: [
+            [0.8, 3],
+            [3.35, 6],
+          ],
+        }),
+      },
+      (channelRoot) =>
+        Effect.gen(function* () {
+          const failure = yield* Effect.flip(mixCut(clipCut(1)));
+
+          assert.strictEqual(failure._tag, "InvalidShortRange");
+          assert.strictEqual(failureFacts(failure)["videoId"], "V1");
+          assert.strictEqual(failureFacts(failure)["number"], 1);
+          noCutArtifacts(channelRoot, clipCut(1));
+        }),
+    ),
+  );
+
+  it.effect(
+    "fails with NarrationNotFound for a clip when the long narration is not synthesized",
+    () =>
+      inShortChannel("nyaucast-mix-clip-no-narration-", { narration: undefined }, (channelRoot) =>
+        Effect.gen(function* () {
+          const failure = yield* Effect.flip(mixCut(clipCut(1)));
+
+          assert.strictEqual(failure._tag, "NarrationNotFound");
+          noCutArtifacts(channelRoot, clipCut(1));
+        }),
+      ),
+  );
+
+  it.effect("fails with ShortCandidateNotFound for a number that was never written", () =>
+    inShortChannel("nyaucast-mix-clip-no-candidate-", { narration: clipNarration }, (channelRoot) =>
+      Effect.gen(function* () {
+        const failure = yield* Effect.flip(mixCut(clipCut(2)));
+
+        assert.strictEqual(failure._tag, "ShortCandidateNotFound");
+        assert.strictEqual(failureFacts(failure)["number"], 2);
+        noCutArtifacts(channelRoot, clipCut(2));
+      }),
+    ),
+  );
+
+  it.effect("fails with ShortCandidateNotFound for a withdrawn candidate, for both cuts", () =>
+    inShortChannel("nyaucast-mix-withdrawn-", { narration: clipNarration }, (channelRoot) =>
+      Effect.gen(function* () {
+        yield* withdrawShort(1);
+
+        for (const cut of [clipCut(1), dedicatedCut(1)]) {
+          const failure = yield* Effect.flip(mixCut(cut));
+          assert.strictEqual(failure._tag, "ShortCandidateNotFound");
+          noCutArtifacts(channelRoot, cut);
+        }
+      }),
+    ),
+  );
+
+  it.effect("fails with ProduceGateNotApproved for a short after a NO-GO, and writes nothing", () =>
+    inShortChannel("nyaucast-mix-clip-rejected-", { narration: clipNarration }, (channelRoot) =>
+      Effect.gen(function* () {
+        yield* rejectProduce();
+
+        const failure = yield* Effect.flip(mixCut(clipCut(1)));
+
+        assert.strictEqual(failure._tag, "ProduceGateNotApproved");
+        noCutArtifacts(channelRoot, clipCut(1));
+      }),
+    ),
   );
 });

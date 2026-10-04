@@ -11,10 +11,12 @@ import { accepts, failureFacts, publishedAdditionalProperties } from "../../test
 import {
   approveProduce,
   recordPlan,
+  rejectProduce,
   scriptInput,
   tableRowCounts,
 } from "../../test/narration-helpers.ts";
 import { channelFileExists, readChannelFile } from "../../test/thumbnail-helpers.ts";
+import { shortDiagramKey, withdrawShort, writeShort } from "../../test/short-helpers.ts";
 import { callTool, rejectionReason, withToolChannel } from "../../test/tool-helpers.ts";
 import { ExplainerWriteDiagramTool } from "./explainer.writeDiagram.ts";
 
@@ -602,6 +604,156 @@ describe("explainer.writeDiagram: preconditions", () => {
           sceneTwo.map((violation) => [violation.scene, violation.rule]),
           [[2, "position-out-of-range"]],
         );
+      }),
+    ),
+  );
+});
+
+// ---- 専用ショートの図解（#550）----
+// 契約（この issue の計画 C6・C8）:
+//   パラメータに short?（候補の番号）が増える。付けると、図解は shorts/<n>/scenes/<scene>.html に書き、
+//   シーンと beat の位置は、長尺の台本ではなく、その候補の専用ショートの台本の段落・句で検査する。
+//   候補が無い・取り下げ済みなら ShortCandidateNotFound。短くない図解（short なし）の動きは変わらない。
+
+const writeShortDiagram = (html: string, scene = 1, short = 1) =>
+  callTool("explainer_write_diagram", { html, scene, short, videoId: "V1" });
+
+describe("explainer.writeDiagram: the dedicated short's diagrams", () => {
+  const schema = ExplainerWriteDiagramTool.parametersSchema;
+  const base = { html: "<div/>", scene: 1, videoId: "V1" };
+
+  it("accepts an optional short number, and rejects what is not a positive safe integer", () => {
+    assert.isTrue(accepts(schema, { ...base, short: 1 }));
+    assert.isTrue(accepts(schema, { ...base, short: Number.MAX_SAFE_INTEGER }));
+    for (const short of [0, -1, 1.5, 9_007_199_254_740_992, "1"]) {
+      assert.isFalse(accepts(schema, { ...base, short }));
+    }
+  });
+
+  it("describes the short failure tag", () => {
+    assert.include(ExplainerWriteDiagramTool.description, "ShortCandidateNotFound");
+  });
+
+  it.effect("writes the diagram under the short's scenes directory and returns that key", () =>
+    inChannel("nyaucast-diagram-short-write-", {}, (channelRoot) =>
+      Effect.gen(function* () {
+        yield* writeShort();
+
+        const result = yield* writeShortDiagram('<div><p data-beat="1">窓辺</p></div>', 2);
+
+        assert.strictEqual(result.key, shortDiagramKey(1, 2));
+        assert.strictEqual(result.scene, 2);
+        assert.strictEqual(result.videoId, "V1");
+        assert.include(
+          new TextDecoder().decode(readChannelFile(channelRoot, shortDiagramKey(1, 2))),
+          "窓辺",
+        );
+        assert.isFalse(channelFileExists(channelRoot, diagramKey(2)));
+      }),
+    ),
+  );
+
+  it.effect("keeps each candidate's diagrams apart from the long cut's and from each other's", () =>
+    inChannel("nyaucast-diagram-short-apart-", {}, (channelRoot) =>
+      Effect.gen(function* () {
+        yield* writeShort({ number: 1 });
+        yield* writeShort({ number: 2 });
+        yield* writeDiagram(sceneOneDiagram, 1);
+
+        yield* writeShortDiagram('<div><p data-beat="1">一つ目の候補</p></div>', 1, 1);
+        yield* writeShortDiagram('<div><p data-beat="1">二つ目の候補</p></div>', 1, 2);
+
+        assert.include(readDiagram(channelRoot, 1), "見出し");
+        const read = (number: number) =>
+          new TextDecoder().decode(readChannelFile(channelRoot, shortDiagramKey(number, 1)));
+        assert.include(read(1), "一つ目の候補");
+        assert.include(read(2), "二つ目の候補");
+      }),
+    ),
+  );
+
+  it.effect("writing a short scene again replaces it, and adds no row to the local store", () =>
+    inChannel("nyaucast-diagram-short-replace-", {}, (channelRoot) =>
+      Effect.gen(function* () {
+        yield* writeShort();
+        yield* writeShortDiagram('<div><p data-beat="1">最初</p></div>');
+        const before = yield* tableRowCounts;
+
+        yield* writeShortDiagram('<div><p data-beat="1">差し替え</p></div>');
+
+        const written = new TextDecoder().decode(
+          readChannelFile(channelRoot, shortDiagramKey(1, 1)),
+        );
+        assert.include(written, "差し替え");
+        assert.notInclude(written, "最初");
+        assert.deepStrictEqual(yield* tableRowCounts, before);
+      }),
+    ),
+  );
+
+  it.effect(
+    "judges the scene and the positions by the dedicated script, not by the long script",
+    () =>
+      inChannel("nyaucast-diagram-short-judged-", {}, (channelRoot) =>
+        Effect.gen(function* () {
+          // 専用の台本はシーン 3 つ・各 1 段落。長尺の台本はシーン 2 つ（シーン 1 は 2 段落）。
+          yield* writeShort({ scenes: [["一つ目。"], ["二つ目。"], ["三つ目。"]] });
+
+          const thirdScene = yield* writeShortDiagram('<div><p data-beat="1">三</p></div>', 3);
+          const secondParagraph = yield* Effect.flip(
+            writeShortDiagram('<div><p data-beat="2">段落 2</p></div>', 1),
+          );
+          const noScene = yield* Effect.flip(writeShortDiagram("<div/>", 4));
+
+          assert.strictEqual(thirdScene.key, shortDiagramKey(1, 3));
+          // beat "2" は、長尺のシーン 1（2 段落）では正しいが、専用のシーン 1（1 段落）には無い位置
+          assert.strictEqual(secondParagraph._tag, "InvalidDiagrams");
+          assert.strictEqual(noScene._tag, "SceneNotFound");
+          assert.isFalse(channelFileExists(channelRoot, shortDiagramKey(1, 4)));
+          assert.isFalse(channelFileExists(channelRoot, shortDiagramKey(1, 1)));
+        }),
+      ),
+  );
+
+  it.effect(
+    "fails with ShortCandidateNotFound for a number that was never written, and writes nothing",
+    () =>
+      inChannel("nyaucast-diagram-short-no-candidate-", {}, (channelRoot) =>
+        Effect.gen(function* () {
+          const failure = yield* Effect.flip(writeShortDiagram(sceneOneDiagram, 1, 2));
+
+          assert.strictEqual(failure._tag, "ShortCandidateNotFound");
+          assert.strictEqual(failureFacts(failure)["videoId"], "V1");
+          assert.strictEqual(failureFacts(failure)["number"], 2);
+          assert.isFalse(channelFileExists(channelRoot, shortDiagramKey(2, 1)));
+        }),
+      ),
+  );
+
+  it.effect("fails with ShortCandidateNotFound for a withdrawn candidate", () =>
+    inChannel("nyaucast-diagram-short-withdrawn-", {}, (channelRoot) =>
+      Effect.gen(function* () {
+        yield* writeShort();
+        yield* withdrawShort(1);
+
+        const failure = yield* Effect.flip(writeShortDiagram('<div><p data-beat="1">x</p></div>'));
+
+        assert.strictEqual(failure._tag, "ShortCandidateNotFound");
+        assert.isFalse(channelFileExists(channelRoot, shortDiagramKey(1, 1)));
+      }),
+    ),
+  );
+
+  it.effect("fails with ProduceGateNotApproved after a NO-GO", () =>
+    inChannel("nyaucast-diagram-short-rejected-", {}, (channelRoot) =>
+      Effect.gen(function* () {
+        yield* writeShort();
+        yield* rejectProduce();
+
+        const failure = yield* Effect.flip(writeShortDiagram('<div><p data-beat="1">x</p></div>'));
+
+        assert.strictEqual(failure._tag, "ProduceGateNotApproved");
+        assert.isFalse(channelFileExists(channelRoot, shortDiagramKey(1, 1)));
       }),
     ),
   );

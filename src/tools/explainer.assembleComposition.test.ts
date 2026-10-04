@@ -25,6 +25,8 @@ import {
   themeDeclaration,
   writeThemeFonts,
 } from "../../test/composition-helpers.ts";
+import sharp from "sharp";
+
 import { accepts, failureFacts, publishedAdditionalProperties } from "../../test/helpers.ts";
 import {
   approveProduce,
@@ -43,6 +45,16 @@ import {
   type FakeReply,
 } from "../../test/thumbnail-helpers.ts";
 import { writeVideoConfig } from "../../test/helpers.ts";
+import { narration } from "../../test/bgm-helpers.ts";
+import {
+  clipCut,
+  cutCompositionKey,
+  dedicatedCut,
+  paragraphRange,
+  shortTimingKey,
+  withdrawShort,
+  writeShort,
+} from "../../test/short-helpers.ts";
 import { callTool, rejectionReason, withToolChannel } from "../../test/tool-helpers.ts";
 import { ExplainerAssembleCompositionTool } from "./explainer.assembleComposition.ts";
 
@@ -1071,6 +1083,726 @@ describe("explainer.assembleComposition: the same inputs give the existing compo
 
         assert.deepStrictEqual(yield* tableRowCounts, before);
       }),
+    ),
+  );
+});
+
+// ---- ショートのカット（#550）----
+// 契約（この issue の計画 C4〜C6・C8・D5・D7）:
+//   パラメータに cut?（"long" か "short-<n>-clip" / "short-<n>-dedicated"。省略は "long"）が増える。成果物は compositions/<cut>.html。
+//   切り抜き: 1080x1920。長尺の図解を、範囲の段落を持つシーンだけ中央の 16:9 の枠に置き、上の帯にフック、下の帯に字幕。
+//     時刻は長尺のタイミング表から範囲の開始秒だけずらす（duration は範囲の長さ）。字幕は範囲の段落の句だけ。
+//     鮮度の鍵に範囲とフックが入る。フックは HTML のテキストとしてエスケープして入れる。
+//   専用: 1080x1920 の全面。shorts/<n>/scenes/ の図解と shorts/<n>/narration/ のタイミング表から作る。
+//   ショートは 60 秒まで: 切り抜きは範囲の長さ、専用はナレーションの長さが超えたら ShortTooLong。何も書かない。
+//   範囲が長尺のタイミング表に無ければ InvalidShortRange、候補が無い・取り下げ済みなら ShortCandidateNotFound。
+
+const shortWidth = 1080;
+const shortHeight = 1920;
+
+const assembleCut = (cut: string, extra: { force?: boolean } = {}) =>
+  callTool("explainer_assemble_composition", { cut, videoId: "V1", ...extra });
+
+const readCutHtml = (channelRoot: string, cut: string) =>
+  new TextDecoder().decode(readChannelFile(channelRoot, cutCompositionKey(cut)));
+
+const cutPage = (channelRoot: string, cut: string) =>
+  loadComposition(readCutHtml(channelRoot, cut));
+
+// 切り抜きの範囲: シーン 1 の 2 段落目から、シーン 2 の 1 段落目まで（タイミング表の段落の通し番号は 1 から 2）。
+const crossRange = paragraphRange([1, 2], [2, 1]);
+const crossParagraphs = [1, 2] as const;
+
+const spanOf = (timing: ReturnType<typeof readTimingFile>, first: number, last: number) => ({
+  duration: defined(timing.paragraphs[last]).endSeconds - paragraphStart(timing, first),
+  start: paragraphStart(timing, first),
+});
+
+// 0 から duration の手前まで細かく seek して、出た字幕の文字列を集める。
+const captionsShown = (page: ReturnType<typeof loadComposition>, duration: number) => {
+  const shown = new Set<string>();
+  for (let t = 0; t < duration; t += 0.02) {
+    page.seek(t);
+    if (page.caption() !== "") shown.add(page.caption());
+  }
+  return shown;
+};
+
+const phraseTexts = (timing: ReturnType<typeof readTimingFile>, paragraphs: readonly number[]) =>
+  paragraphs.flatMap((index) => defined(timing.paragraphs[index]).phrases.map((p) => p.text));
+
+const shortReplies = [...defaultReplies, speech(2), speech(3)];
+
+// 長尺（台本・図解・音声）を用意した動画 V1 に、切り抜きの候補 1 を書いて use を動かす。
+const withClip = <A, E, R>(
+  prefix: string,
+  use: (channelRoot: string) => Effect.Effect<A, E, R>,
+  range = crossRange,
+) =>
+  prepared(prefix, {}, (channelRoot) =>
+    Effect.gen(function* () {
+      yield* writeShort({ range });
+      return yield* use(channelRoot);
+    }),
+  );
+
+const dedicatedDiagrams = [
+  [1, '<div><p data-beat="1">窓辺の猫</p></div>'],
+  [2, '<div><p data-beat="1">日なたの猫</p></div>'],
+] as const;
+
+// 長尺を用意した動画 V1 に候補 1 を書き、専用ショートの図解と音声を作って use を動かす。
+const withDedicated = <A, E, R>(
+  prefix: string,
+  use: (channelRoot: string) => Effect.Effect<A, E, R>,
+) =>
+  prepared(prefix, { replies: shortReplies }, (channelRoot) =>
+    Effect.gen(function* () {
+      yield* writeShort();
+      for (const [scene, html] of dedicatedDiagrams) {
+        yield* callTool("explainer_write_diagram", { html, scene, short: 1, videoId: "V1" });
+      }
+      yield* callTool("explainer_synthesize_narration", { short: 1, videoId: "V1" });
+      return yield* use(channelRoot);
+    }),
+  );
+
+describe("explainer.assembleComposition: the cut parameter", () => {
+  const schema = ExplainerAssembleCompositionTool.parametersSchema;
+
+  it.each(["long", "short-1-clip", "short-1-dedicated", "short-12-clip", "short-100-dedicated"])(
+    "accepts the cut %j",
+    (cut) => {
+      assert.isTrue(accepts(schema, { cut, videoId: "V1" }));
+      assert.isTrue(accepts(schema, { cut, force: true, videoId: "V1" }));
+    },
+  );
+
+  it.each([
+    "short-01-clip",
+    "short-0-clip",
+    "short-1-vertical",
+    "short-1.5-clip",
+    "short--1-clip",
+    "Long",
+    "short-1-clip ",
+    "",
+  ])("does not accept the cut %j", (cut) => {
+    assert.isFalse(accepts(schema, { cut, videoId: "V1" }));
+  });
+
+  it("describes the short failure tags", () => {
+    for (const tag of ["ShortTooLong", "InvalidShortRange", "ShortCandidateNotFound"]) {
+      assert.include(ExplainerAssembleCompositionTool.description, tag);
+    }
+  });
+
+  it.effect("writes the long composition for the cut long, as when the cut is omitted", () =>
+    prepared("nyaucast-composition-cut-long-", {}, (channelRoot) =>
+      Effect.gen(function* () {
+        const result = yield* assembleCut("long");
+
+        assert.strictEqual(result.key, compositionKey);
+        assert.deepStrictEqual(readdirSync(join(channelRoot, "videos/V1/compositions")), [
+          "long.html",
+        ]);
+      }),
+    ),
+  );
+});
+
+describe("explainer.assembleComposition: the composition of a clip short", () => {
+  it.effect("writes the composition under the cut's name, and nothing for the long cut", () =>
+    withClip("nyaucast-composition-clip-write-", (channelRoot) =>
+      Effect.gen(function* () {
+        const result = yield* assembleCut(clipCut(1));
+
+        assert.strictEqual(result.assembled, true);
+        assert.strictEqual(result.key, cutCompositionKey(clipCut(1)));
+        assert.strictEqual(result.videoId, "V1");
+        assert.match(result.hash, /^[0-9a-f]{64}$/u);
+        assert.include(readCutHtml(channelRoot, clipCut(1)), compositionHashMeta(result.hash));
+        assert.deepStrictEqual(readdirSync(join(channelRoot, "videos/V1/compositions")), [
+          "short-1-clip.html",
+        ]);
+      }),
+    ),
+  );
+
+  it.effect(
+    "is 1080x1920 at 30 fps, as long as the paragraph range, and its segments cover it",
+    () =>
+      withClip("nyaucast-composition-clip-hf-", (channelRoot) =>
+        Effect.gen(function* () {
+          yield* assembleCut(clipCut(1));
+
+          const { hf } = cutPage(channelRoot, clipCut(1));
+          const span = spanOf(readTimingFile(channelRoot), ...crossParagraphs);
+          assert.strictEqual(hf.width, shortWidth);
+          assert.strictEqual(hf.height, shortHeight);
+          assert.strictEqual(hf.fps, 30);
+          near(hf.duration, span.duration, grid);
+          assertSegmentsCover(hf);
+        }),
+      ),
+  );
+
+  it.effect(
+    "shows the captions of the paragraphs in the range only, shifted by the start of the range",
+    () =>
+      withClip("nyaucast-composition-clip-captions-", (channelRoot) =>
+        Effect.gen(function* () {
+          yield* assembleCut(clipCut(1));
+
+          const page = cutPage(channelRoot, clipCut(1));
+          const timing = readTimingFile(channelRoot);
+          const span = spanOf(timing, ...crossParagraphs);
+          assert.deepStrictEqual(
+            captionsShown(page, span.duration),
+            new Set(phraseTexts(timing, crossParagraphs)),
+          );
+          // 範囲の最初の段落の頭が 0 秒、範囲の 2 つ目の段落の最初の句は、その開始秒から範囲の開始を引いた時刻。
+          page.seek(epsilon);
+          assert.strictEqual(page.caption(), defined(timing.paragraphs[1]?.phrases[0]).text);
+          const later = phraseStart(timing, 2, 0) - span.start;
+          page.seek(later + epsilon);
+          assert.strictEqual(page.caption(), defined(timing.paragraphs[2]?.phrases[0]).text);
+          // 範囲の外の段落の字幕は、どの時刻にも出ない
+          const outside = phraseTexts(timing, [0, 3]);
+          for (const text of captionsShown(page, page.hf.duration)) {
+            assert.notInclude(outside, text);
+          }
+        }),
+      ),
+  );
+
+  it.effect(
+    "moves the diagrams of the range with it: what a beat shows is shifted by the start of the range",
+    () =>
+      withClip(
+        "nyaucast-composition-clip-beats-",
+        (channelRoot) =>
+          Effect.gen(function* () {
+            yield* assembleCut(clipCut(1));
+
+            const page = cutPage(channelRoot, clipCut(1));
+            const timing = readTimingFile(channelRoot);
+            const { start } = spanOf(timing, 1, 3);
+            // シーン 1 の動く要素 0（beat "1"）は範囲より前の段落の頭なので、範囲の最初から見えている。
+            near(opacityAt(page, 0, 0), 1);
+            // 動く要素 1（beat "2.3" = 2 段落目の 3 句目）は、その句の頭から範囲の開始を引いた時刻に現れる。
+            const third = phraseStart(timing, 1, 2) - start;
+            assert.strictEqual(opacityAt(page, 1, third - epsilon), 0);
+            assert.isAbove(opacityAt(page, 1, third + epsilon), 0);
+            // シーン 2 の動く要素 3（beat "2" = 2 段落目の頭）も同じだけずれる。
+            const second = paragraphStart(timing, 3) - start;
+            assert.strictEqual(opacityAt(page, 3, second - epsilon), 0);
+            assert.isAbove(opacityAt(page, 3, second + epsilon), 0);
+          }),
+        paragraphRange([1, 2], [2, 2]),
+      ),
+  );
+
+  it.effect("puts only the scenes the range touches on the stage, with their long diagrams", () =>
+    withClip(
+      "nyaucast-composition-clip-scenes-",
+      (channelRoot) =>
+        Effect.gen(function* () {
+          yield* assembleCut(clipCut(1));
+
+          const html = readCutHtml(channelRoot, clipCut(1));
+          assert.include(html, 'data-nc-scene="2"');
+          assert.notInclude(html, 'data-nc-scene="1"');
+          assert.include(html, "二つ目");
+          assert.notInclude(html, "見出し");
+          assert.strictEqual(cutPage(channelRoot, clipCut(1)).sceneVisibility().length, 1);
+        }),
+      paragraphRange([2, 1], [2, 2]),
+    ),
+  );
+
+  it.effect("puts the scenes of a range across scenes both on the stage", () =>
+    withClip("nyaucast-composition-clip-two-scenes-", (channelRoot) =>
+      Effect.gen(function* () {
+        yield* assembleCut(clipCut(1));
+
+        const html = readCutHtml(channelRoot, clipCut(1));
+        assert.include(html, 'data-nc-scene="1"');
+        assert.include(html, 'data-nc-scene="2"');
+        assert.include(html, "見出し");
+        assert.strictEqual(cutPage(channelRoot, clipCut(1)).sceneVisibility().length, 2);
+      }),
+    ),
+  );
+
+  it.effect("shows the hook as text, and does not read it as markup", () =>
+    withClip("nyaucast-composition-clip-hook-", (channelRoot) =>
+      Effect.gen(function* () {
+        yield* assembleCut(clipCut(1));
+        const hostile = "</div><script>alert(1)</script>&amp;";
+        yield* writeShort({ hook: hostile, range: crossRange });
+        yield* assembleCut(clipCut(1));
+
+        const html = readCutHtml(channelRoot, clipCut(1));
+        assert.include(html, "&lt;/div&gt;&lt;script&gt;alert(1)&lt;/script&gt;&amp;amp;");
+        assert.notInclude(html, "<script>alert(1)");
+        // 組み立てが埋める script は、データと runtime の 2 つだけ
+        assert.strictEqual((html.match(/<script\b/gu) ?? []).length, 2);
+      }),
+    ),
+  );
+
+  it.effect("shows the plain hook of the candidate in the composition", () =>
+    withClip("nyaucast-composition-clip-hook-plain-", (channelRoot) =>
+      Effect.gen(function* () {
+        yield* assembleCut(clipCut(1));
+
+        assert.include(readCutHtml(channelRoot, clipCut(1)), "猫は窓が好き");
+      }),
+    ),
+  );
+
+  it.effect(
+    "is reused while the range and the hook are unchanged, and assembled again when either changes",
+    () =>
+      withClip("nyaucast-composition-clip-freshness-", () =>
+        Effect.gen(function* () {
+          const first = yield* assembleCut(clipCut(1));
+          const same = yield* assembleCut(clipCut(1));
+          yield* writeShort({ hook: "別のフック", range: crossRange });
+          const newHook = yield* assembleCut(clipCut(1));
+          yield* writeShort({ hook: "別のフック", range: paragraphRange([1, 1], [2, 1]) });
+          const newRange = yield* assembleCut(clipCut(1));
+          const forced = yield* assembleCut(clipCut(1), { force: true });
+
+          assert.isTrue(first.assembled);
+          assert.isFalse(same.assembled);
+          assert.strictEqual(same.hash, first.hash);
+          assert.isTrue(newHook.assembled);
+          assert.notStrictEqual(newHook.hash, first.hash);
+          assert.isTrue(newRange.assembled);
+          assert.notStrictEqual(newRange.hash, newHook.hash);
+          assert.isTrue(forced.assembled);
+          assert.strictEqual(forced.hash, newRange.hash);
+        }),
+      ),
+  );
+
+  it.effect("is assembled again when the long timing table changes", () =>
+    withClip("nyaucast-composition-clip-timing-changes-", (channelRoot) =>
+      Effect.gen(function* () {
+        const first = yield* assembleCut(clipCut(1));
+        const timing = readTimingFile(channelRoot);
+        writeChannelFile(
+          channelRoot,
+          timingKey,
+          new TextEncoder().encode(
+            JSON.stringify({ ...timing, durationSeconds: timing.durationSeconds + 1 }),
+          ),
+        );
+
+        const again = yield* assembleCut(clipCut(1));
+
+        assert.isTrue(again.assembled);
+        assert.notStrictEqual(again.hash, first.hash);
+      }),
+    ),
+  );
+
+  it.effect("keeps the long composition as it was assembled, and gives the clip its own hash", () =>
+    withClip("nyaucast-composition-clip-and-long-", (channelRoot) =>
+      Effect.gen(function* () {
+        const long = yield* assemble();
+        const longHtml = readComposition(channelRoot);
+
+        const clip = yield* assembleCut(clipCut(1));
+
+        assert.notStrictEqual(clip.hash, long.hash);
+        assert.strictEqual(readComposition(channelRoot), longHtml);
+        assert.isFalse((yield* assemble()).assembled);
+      }),
+    ),
+  );
+
+  it.effect(
+    "fails with ShortCandidateNotFound for a number that was never written, and writes nothing",
+    () =>
+      withClip("nyaucast-composition-clip-no-candidate-", (channelRoot) =>
+        Effect.gen(function* () {
+          const failure = yield* Effect.flip(assembleCut(clipCut(2)));
+
+          assert.strictEqual(failure._tag, "ShortCandidateNotFound");
+          assert.strictEqual(failureFacts(failure)["videoId"], "V1");
+          assert.strictEqual(failureFacts(failure)["number"], 2);
+          assert.isFalse(channelFileExists(channelRoot, cutCompositionKey(clipCut(2))));
+        }),
+      ),
+  );
+
+  it.effect("fails with ShortCandidateNotFound for a withdrawn candidate, for both cuts", () =>
+    withClip("nyaucast-composition-withdrawn-", (channelRoot) =>
+      Effect.gen(function* () {
+        yield* withdrawShort(1);
+
+        for (const cut of [clipCut(1), dedicatedCut(1)]) {
+          const failure = yield* Effect.flip(assembleCut(cut));
+          assert.strictEqual(failure._tag, "ShortCandidateNotFound");
+          assert.isFalse(channelFileExists(channelRoot, cutCompositionKey(cut)));
+        }
+      }),
+    ),
+  );
+
+  it.effect(
+    "fails with InvalidShortRange when the long timing table no longer has the range, and writes nothing",
+    () =>
+      withClip("nyaucast-composition-clip-stale-range-", (channelRoot) =>
+        Effect.gen(function* () {
+          const timing = readTimingFile(channelRoot);
+          writeChannelFile(
+            channelRoot,
+            timingKey,
+            new TextEncoder().encode(
+              JSON.stringify({ ...timing, paragraphs: timing.paragraphs.slice(0, 1) }),
+            ),
+          );
+
+          const failure = yield* Effect.flip(assembleCut(clipCut(1)));
+
+          assert.strictEqual(failure._tag, "InvalidShortRange");
+          assert.strictEqual(failureFacts(failure)["videoId"], "V1");
+          assert.strictEqual(failureFacts(failure)["number"], 1);
+          assert.isFalse(channelFileExists(channelRoot, cutCompositionKey(clipCut(1))));
+        }),
+      ),
+  );
+});
+
+// ショートを実際に描画して、領域の位置を画素で確かめる。図解は全面の赤、フックと字幕は明るい文字。
+const redDiagram =
+  '<div><svg viewBox="0 0 10 10" width="100%" height="100%"><rect x="0" y="0" width="10" height="10" fill="#ff0000"/></svg></div>';
+
+// 縦長の赤い図解（幅いっぱいで高さは幅の 1.5 倍）。専用ショートでは、clip の枠の上下の外側まで届く。
+const tallRedDiagram =
+  '<div><svg viewBox="0 0 10 15" width="100%"><rect x="0" y="0" width="10" height="15" fill="#ff0000"/></svg></div>';
+
+type Pixel = (r: number, g: number, b: number) => boolean;
+const isRed: Pixel = (r, g, b) => r === 255 && g === 0 && b === 0;
+const isBright: Pixel = (r, g, b) => Math.min(r, g, b) > 200;
+
+// 行の範囲 [from, to) で条件に合う画素の数。
+const countIn = (
+  data: Buffer,
+  width: number,
+  [from, to]: readonly [number, number],
+  match: Pixel,
+) => {
+  let count = 0;
+  for (let index = from * width; index < to * width; index += 1) {
+    const offset = index * 3;
+    if (match(data.readUInt8(offset), data.readUInt8(offset + 1), data.readUInt8(offset + 2))) {
+      count += 1;
+    }
+  }
+  return count;
+};
+
+// カットをプレビューして、最初のフレーム（最初の segment の終わる直前）の画素を返す。
+const previewPixels = (channelRoot: string, cut: string) =>
+  Effect.gen(function* () {
+    const preview = yield* callTool("explainer_preview_cut", { cut, videoId: "V1" });
+    const png = readChannelFile(channelRoot, preview.frames[0]?.key ?? "");
+    const { data, info } = yield* Effect.promise(() =>
+      sharp(png).removeAlpha().raw().toBuffer({ resolveWithObject: true }),
+    );
+    assert.strictEqual(info.width, shortWidth);
+    assert.strictEqual(info.height, shortHeight);
+    return data;
+  });
+
+// 切り抜きの帯の境は枠の上端（656.25）と下端（1263.75）。
+describe("explainer.assembleComposition: where a clip short puts its parts", () => {
+  it.effect(
+    "puts the long diagram in the middle 16:9 frame, the hook in the top band and the subtitle in the bottom band",
+    () =>
+      withClip(
+        "nyaucast-composition-clip-layout-",
+        (channelRoot) =>
+          Effect.gen(function* () {
+            yield* callTool("explainer_write_diagram", {
+              html: redDiagram,
+              scene: 2,
+              videoId: "V1",
+            });
+            yield* assembleCut(clipCut(1));
+
+            const data = yield* previewPixels(channelRoot, clipCut(1));
+
+            const red = (rows: readonly [number, number]) => countIn(data, shortWidth, rows, isRed);
+            const bright = (rows: readonly [number, number]) =>
+              countIn(data, shortWidth, rows, isBright);
+            // 赤い図解は、中央の枠（高さ 607.5）の中にだけある。上下の帯には出ない
+            assert.isAbove(red([650, 1270]), 200_000);
+            assert.isAtMost(red([650, 1270]), shortWidth * 608);
+            assert.strictEqual(red([0, 650]), 0);
+            assert.strictEqual(red([1270, shortHeight]), 0);
+            // 上の帯にはフックの文字（明るい画素）がある
+            assert.isAbove(bright([0, 650]), 100);
+            // 字幕の文字（明るい画素）は下の帯にあり、中央の枠の中には出ない
+            assert.isAbove(bright([1270, shortHeight]), 100);
+            assert.strictEqual(bright([650, 1270]), 0);
+          }),
+        paragraphRange([2, 1], [2, 2]),
+      ),
+    300_000,
+  );
+});
+
+describe("explainer.assembleComposition: the 60 second limit of a short", () => {
+  // 時刻を 2 進で正確に表せる値にした長尺のタイミング表を手で置く（範囲の長さがちょうど 60 秒になる）。
+  const simpleDiagram = '<div><p data-beat="1">一つ</p></div>';
+  const inLimitChannel = <A, E, R>(
+    prefix: string,
+    timingFixture: ReturnType<typeof narration>,
+    use: (channelRoot: string) => Effect.Effect<A, E, R>,
+  ) =>
+    prepared(
+      prefix,
+      { scenes: [["あ"], ["い"]], withoutDiagrams: true, withoutNarration: true },
+      (channelRoot) =>
+        Effect.gen(function* () {
+          for (const scene of [1, 2]) {
+            yield* callTool("explainer_write_diagram", {
+              html: simpleDiagram,
+              scene,
+              videoId: "V1",
+            });
+          }
+          writeChannelFile(channelRoot, timingKey, new TextEncoder().encode(timingFixture.timing));
+          yield* writeShort({ range: paragraphRange([1, 1], [2, 1]) });
+          return yield* use(channelRoot);
+        }),
+    );
+  const limitTiming = (end: number) =>
+    narration({
+      duration: end + 1,
+      paragraphs: [
+        [0.75, 30],
+        [30.5, end],
+      ],
+    });
+
+  it.effect("fails with ShortTooLong for a range longer than 60 seconds, and writes nothing", () =>
+    inLimitChannel("nyaucast-composition-clip-too-long-", limitTiming(60.8), (channelRoot) =>
+      Effect.gen(function* () {
+        const failure = yield* Effect.flip(assembleCut(clipCut(1)));
+
+        assert.strictEqual(failure._tag, "ShortTooLong");
+        assert.strictEqual(failureFacts(failure)["videoId"], "V1");
+        assert.strictEqual(failureFacts(failure)["cut"], clipCut(1));
+        assert.strictEqual(failureFacts(failure)["limit"], 60);
+        near(Number(failureFacts(failure)["seconds"]), 60.05, 1e-6);
+        assert.isFalse(channelFileExists(channelRoot, cutCompositionKey(clipCut(1))));
+      }),
+    ),
+  );
+
+  it.effect("accepts a range of exactly 60 seconds", () =>
+    inLimitChannel("nyaucast-composition-clip-exactly-60-", limitTiming(60.75), (channelRoot) =>
+      Effect.gen(function* () {
+        const result = yield* assembleCut(clipCut(1));
+
+        assert.isTrue(result.assembled);
+        near(cutPage(channelRoot, clipCut(1)).hf.duration, 60, grid);
+      }),
+    ),
+  );
+
+  it.effect(
+    "fails with ShortTooLong for a dedicated narration longer than 60 seconds, and accepts one of exactly 60",
+    () =>
+      inLimitChannel("nyaucast-composition-dedicated-limit-", limitTiming(60.75), (channelRoot) =>
+        Effect.gen(function* () {
+          for (const scene of [1, 2]) {
+            yield* callTool("explainer_write_diagram", {
+              html: simpleDiagram,
+              scene,
+              short: 1,
+              videoId: "V1",
+            });
+          }
+          writeChannelFile(
+            channelRoot,
+            shortTimingKey(1),
+            new TextEncoder().encode(limitTiming(60.8).timing),
+          );
+          const failure = yield* Effect.flip(assembleCut(dedicatedCut(1)));
+          assert.strictEqual(failure._tag, "ShortTooLong");
+          assert.strictEqual(failureFacts(failure)["cut"], dedicatedCut(1));
+          assert.strictEqual(failureFacts(failure)["limit"], 60);
+          assert.isFalse(channelFileExists(channelRoot, cutCompositionKey(dedicatedCut(1))));
+
+          writeChannelFile(
+            channelRoot,
+            shortTimingKey(1),
+            new TextEncoder().encode(
+              narration({
+                duration: 60,
+                paragraphs: [
+                  [0.75, 30],
+                  [30.5, 59],
+                ],
+              }).timing,
+            ),
+          );
+          const accepted = yield* assembleCut(dedicatedCut(1));
+          assert.isTrue(accepted.assembled);
+        }),
+      ),
+  );
+});
+
+describe("explainer.assembleComposition: the composition of a dedicated short", () => {
+  it.effect(
+    "is 1080x1920 at 30 fps, as long as the dedicated narration, and its segments cover it",
+    () =>
+      withDedicated("nyaucast-composition-dedicated-hf-", (channelRoot) =>
+        Effect.gen(function* () {
+          const result = yield* assembleCut(dedicatedCut(1));
+
+          const { hf } = cutPage(channelRoot, dedicatedCut(1));
+          const timing = JSON.parse(
+            new TextDecoder().decode(readChannelFile(channelRoot, shortTimingKey(1))),
+          ) as ReturnType<typeof readTimingFile>;
+          assert.strictEqual(result.assembled, true);
+          assert.strictEqual(result.key, cutCompositionKey(dedicatedCut(1)));
+          assert.strictEqual(hf.width, shortWidth);
+          assert.strictEqual(hf.height, shortHeight);
+          assert.strictEqual(hf.fps, 30);
+          near(hf.duration, timing.durationSeconds, grid);
+          assertSegmentsCover(hf);
+        }),
+      ),
+  );
+
+  it.effect("puts the diagrams of the dedicated script on the stage, and shows its captions", () =>
+    withDedicated("nyaucast-composition-dedicated-content-", (channelRoot) =>
+      Effect.gen(function* () {
+        yield* assembleCut(dedicatedCut(1));
+
+        const html = readCutHtml(channelRoot, dedicatedCut(1));
+        const page = cutPage(channelRoot, dedicatedCut(1));
+        const timing = JSON.parse(
+          new TextDecoder().decode(readChannelFile(channelRoot, shortTimingKey(1))),
+        ) as ReturnType<typeof readTimingFile>;
+        assert.include(html, "窓辺の猫");
+        assert.include(html, "日なたの猫");
+        assert.notInclude(html, "見出し");
+        assert.strictEqual(page.sceneVisibility().length, 2);
+        assert.deepStrictEqual(
+          captionsShown(page, page.hf.duration),
+          new Set(phraseTexts(timing, [0, 1])),
+        );
+      }),
+    ),
+  );
+
+  it.effect(
+    "spreads the diagram over the whole stage and puts the subtitle in the bottom band",
+    () =>
+      withDedicated("nyaucast-composition-dedicated-layout-", (channelRoot) =>
+        Effect.gen(function* () {
+          yield* callTool("explainer_write_diagram", {
+            html: tallRedDiagram,
+            scene: 1,
+            short: 1,
+            videoId: "V1",
+          });
+          yield* assembleCut(dedicatedCut(1));
+
+          const data = yield* previewPixels(channelRoot, dedicatedCut(1));
+
+          const red = (rows: readonly [number, number]) => countIn(data, shortWidth, rows, isRed);
+          const bright = (rows: readonly [number, number]) =>
+            countIn(data, shortWidth, rows, isBright);
+          // 赤い図解は舞台いっぱいに広がり、clip の枠（高さ約 607）の上下の外側にも描かれる
+          assert.isAbove(red([64, 650]), 0);
+          assert.isAbove(red([1270, 1628]), 0);
+          // 字幕の文字（明るい画素）は下の帯にだけある
+          assert.isAbove(bright([1640, shortHeight]), 100);
+          assert.strictEqual(bright([0, 1640]), 0);
+        }),
+      ),
+    300_000,
+  );
+
+  it.effect("does not show the hook, and is not affected by it", () =>
+    withDedicated("nyaucast-composition-dedicated-hook-", (channelRoot) =>
+      Effect.gen(function* () {
+        const first = yield* assembleCut(dedicatedCut(1));
+        yield* writeShort({ hook: "別のフック" });
+
+        const again = yield* assembleCut(dedicatedCut(1));
+
+        assert.notInclude(readCutHtml(channelRoot, dedicatedCut(1)), "別のフック");
+        assert.isFalse(again.assembled);
+        assert.strictEqual(again.hash, first.hash);
+      }),
+    ),
+  );
+
+  it.effect("is assembled again when a dedicated diagram changes", () =>
+    withDedicated("nyaucast-composition-dedicated-diagram-changes-", () =>
+      Effect.gen(function* () {
+        const first = yield* assembleCut(dedicatedCut(1));
+        yield* callTool("explainer_write_diagram", {
+          html: '<div><p data-beat="1">差し替え</p></div>',
+          scene: 1,
+          short: 1,
+          videoId: "V1",
+        });
+
+        const again = yield* assembleCut(dedicatedCut(1));
+
+        assert.isTrue(again.assembled);
+        assert.notStrictEqual(again.hash, first.hash);
+      }),
+    ),
+  );
+
+  it.effect("fails with TimingTableNotFound when the dedicated narration is not synthesized", () =>
+    prepared("nyaucast-composition-dedicated-no-narration-", {}, (channelRoot) =>
+      Effect.gen(function* () {
+        yield* writeShort();
+
+        const failure = yield* Effect.flip(assembleCut(dedicatedCut(1)));
+
+        assert.strictEqual(failure._tag, "TimingTableNotFound");
+        assert.isFalse(channelFileExists(channelRoot, cutCompositionKey(dedicatedCut(1))));
+      }),
+    ),
+  );
+
+  it.effect("fails with InvalidDiagrams for a dedicated scene without a diagram", () =>
+    prepared(
+      "nyaucast-composition-dedicated-no-diagram-",
+      { replies: shortReplies },
+      (channelRoot) =>
+        Effect.gen(function* () {
+          yield* writeShort();
+          yield* callTool("explainer_write_diagram", {
+            html: dedicatedDiagrams[0][1],
+            scene: 1,
+            short: 1,
+            videoId: "V1",
+          });
+          yield* callTool("explainer_synthesize_narration", { short: 1, videoId: "V1" });
+
+          const failure = yield* Effect.flip(assembleCut(dedicatedCut(1)));
+
+          assert.strictEqual(failure._tag, "InvalidDiagrams");
+          assert.isFalse(channelFileExists(channelRoot, cutCompositionKey(dedicatedCut(1))));
+        }),
     ),
   );
 });

@@ -8,6 +8,7 @@ import {
   InvalidChannelConfig,
   NotExplainerChannel,
 } from "../channel/channel-settings.ts";
+import { ShortCandidateNotFound } from "../db/explainer-shorts.ts";
 import { VideoNotFound, requireLatestPlan } from "../db/explainer-videos.ts";
 import {
   GeminiHttpBoundaryFailed,
@@ -16,17 +17,17 @@ import {
 } from "../gemini/generate-content.ts";
 import { GeminiSpeechSynthesizer } from "../narration/gemini-tts.ts";
 import { NarrationTooLong, scriptAudio } from "../narration/paragraph-audio.ts";
-import { timingTableKey } from "../narration/timing-table.ts";
+import { narrationKey, timingTableKey } from "../narration/timing-table.ts";
 import { assembleTrack } from "../narration/track.ts";
 import { encodeWav } from "../narration/wav.ts";
 import { InvalidReadingMarkup, ParagraphTooLong } from "../scripts/script.ts";
 import { InvalidScriptFile, ScriptNotFound, readScript } from "../scripts/script-files.ts";
+import { Ordinal } from "../shorts/short-candidate.ts";
+import { resolveShortTarget } from "../videos/cuts.ts";
 import { ProduceGateNotApproved, requireProduceApproval } from "../videos/produce-gate.ts";
 import { VideoFiles } from "../videos/video-files.ts";
 
 class VoiceNotDeclared extends Schema.TaggedError<VoiceNotDeclared>()("VoiceNotDeclared", {}) {}
-
-const narrationKey = (videoId: string, file: string) => `videos/${videoId}/narration/${file}`;
 
 export const ExplainerSynthesizeNarrationTool = Tool.make("explainer_synthesize_narration", {
   description:
@@ -37,9 +38,10 @@ export const ExplainerSynthesizeNarrationTool = Tool.make("explainer_synthesize_
     "so correcting only the notation of a paragraph synthesizes nothing. Audio longer than the reading time plus 1.5 seconds is synthesized again, up to 4 provider calls in all. " +
     "The track and the timing table are always rebuilt from the paragraph files and never call the provider by themselves. " +
     "With force, every paragraph is synthesized again. " +
+    "With short, the narration is made from the dedicated script of that candidate and written to videos/<id>/shorts/<short>/narration/; the long narration is neither read nor changed. " +
     "Requires the produce gate to be approved. " +
     "Fails with VoiceNotDeclared when the channel declares no voice, with VideoNotFound for an unknown video, " +
-    "with ProduceGateNotApproved before the produce gate is approved, with ScriptNotFound or InvalidScriptFile for the saved script, " +
+    "with ProduceGateNotApproved before the produce gate is approved, with ShortCandidateNotFound when short names a candidate that was never written or is withdrawn, with ScriptNotFound or InvalidScriptFile for the saved script, " +
     "with InvalidReadingMarkup or ParagraphTooLong when the saved script no longer passes the checks of explainer_write_script, " +
     "and with NarrationTooLong (scene, paragraph and attempts, numbered from 1) when the audio is still too long after 4 calls. " +
     "Paragraphs synthesized before a failure are kept, and a rerun synthesizes only the missing ones. " +
@@ -51,6 +53,7 @@ export const ExplainerSynthesizeNarrationTool = Tool.make("explainer_synthesize_
     VideoNotFound,
     ProduceGateNotApproved,
     VoiceNotDeclared,
+    ShortCandidateNotFound,
     ScriptNotFound,
     InvalidScriptFile,
     InvalidReadingMarkup,
@@ -66,6 +69,12 @@ export const ExplainerSynthesizeNarrationTool = Tool.make("explainer_synthesize_
     force: Schema.optionalKey(Schema.Boolean).annotate({
       description: "Synthesize every paragraph again instead of reusing the existing audio.",
     }),
+    short: Schema.optionalKey(
+      Ordinal.annotate({
+        description:
+          "Candidate number of a dedicated short, to synthesize its script instead of the long script.",
+      }),
+    ),
     videoId: Schema.String.annotate({ description: "Video ID returned by explainer_write_plan." }),
   }),
   success: Schema.Struct({
@@ -90,15 +99,18 @@ const synthesisLock = Semaphore.makeUnsafe(1);
 
 const synthesizeNarration = Effect.fn("explainer.synthesizeNarration")(function* ({
   force,
+  short,
   videoId,
 }: {
   readonly force?: boolean;
+  readonly short?: number;
   readonly videoId: string;
 }) {
   const voice = yield* resolveVoice;
   yield* requireLatestPlan(videoId);
   yield* requireProduceApproval(videoId);
-  const script = yield* readScript(videoId);
+  const target = yield* resolveShortTarget(videoId, short);
+  const script = yield* readScript(target);
   const audio = yield* scriptAudio(videoId, voice, script, force === true).pipe(
     Effect.provide(GeminiSpeechSynthesizer.layer),
   );
@@ -111,8 +123,8 @@ const synthesizeNarration = Effect.fn("explainer.synthesizeNarration")(function*
     })),
   );
   const files = yield* VideoFiles;
-  const trackKey = narrationKey(videoId, "track.wav");
-  const timingKey = timingTableKey(videoId);
+  const trackKey = narrationKey(target, "track.wav");
+  const timingKey = timingTableKey(target);
   yield* files.write(trackKey, encodeWav(samples));
   yield* files.write(timingKey, new TextEncoder().encode(JSON.stringify(timing, null, 2)));
   const synthesized = audio.filter((paragraph) => paragraph.synthesized).length;
@@ -121,5 +133,6 @@ const synthesizeNarration = Effect.fn("explainer.synthesizeNarration")(function*
 
 export const explainerSynthesizeNarration = (input: {
   readonly force?: boolean;
+  readonly short?: number;
   readonly videoId: string;
 }) => synthesisLock.withPermits(1)(synthesizeNarration(input));

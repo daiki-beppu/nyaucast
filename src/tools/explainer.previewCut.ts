@@ -12,9 +12,11 @@ import {
   openComposition,
 } from "../compositions/capture.ts";
 import { CompositionNotFound, readCutComposition } from "../compositions/composition.ts";
-import { appendCutPreview, lastCutPreview, longCut } from "../db/explainer-cuts.ts";
+import { appendCutPreview, lastCutPreview } from "../db/explainer-cuts.ts";
+import { ShortCandidateNotFound } from "../db/explainer-shorts.ts";
 import { VideoNotFound } from "../db/explainer-videos.ts";
 import { ChromeUnavailable } from "../lib/chrome.ts";
+import { CutField, type CutRequest } from "../videos/cuts.ts";
 import { ProduceGateNotApproved } from "../videos/produce-gate.ts";
 import { VideoFiles } from "../videos/video-files.ts";
 
@@ -26,14 +28,15 @@ const decodeManifest = Schema.decodeUnknownOption(Schema.fromJsonString(Manifest
 
 export const ExplainerPreviewCutTool = Tool.make("explainer_preview_cut", {
   description: [
-    "Take the preview of the long cut of an explainer video: the composition (videos/<id>/compositions/long.html) is opened in a headless Chrome ",
+    "Take the preview of a cut of an explainer video (the long cut by default): the composition of the cut (videos/<id>/compositions/<cut>.html) is opened in a headless Chrome ",
     "and one PNG is captured per segment, at the last frame just before the segment ends, so a segment declared static by mistake shows in the picture. ",
     "The composition is checked against docs/reference/composition-contract.md first. ",
-    "The frames are written to videos/<id>/cuts/long/previews/<composition hash>/<segment number>.png (segment numbers start at 1, in time order) and one preview is recorded for the cut with the composition hash. ",
+    "The frames are written to videos/<id>/cuts/<cut>/previews/<composition hash>/<segment number>.png (segment numbers start at 1, in time order) and one preview is recorded for the cut with the composition hash. ",
     "A preview whose composition hash is unchanged and whose files exist is returned as it is, without recording another; force takes it again. ",
     "The audio track is not used. ",
     "Requires the produce gate to be approved. ",
     "Fails with VideoNotFound for an unknown video, with ProduceGateNotApproved before the produce gate is approved, ",
+    "with ShortCandidateNotFound when the cut names a short candidate that was never written or is withdrawn, ",
     "with CompositionNotFound when there is no composition, ",
     "with InvalidComposition (violations lists every broken rule) when the composition breaks the contract, ",
     "and with ChromeUnavailable when the browser cannot be downloaded, started or driven. ",
@@ -46,11 +49,13 @@ export const ExplainerPreviewCutTool = Tool.make("explainer_preview_cut", {
     NotExplainerChannel,
     VideoNotFound,
     ProduceGateNotApproved,
+    ShortCandidateNotFound,
     CompositionNotFound,
     InvalidComposition,
     ChromeUnavailable,
   ]),
   parameters: Schema.Struct({
+    cut: CutField,
     force: Schema.optionalKey(Schema.Boolean).annotate({
       description: "Take the preview again even when the composition is unchanged.",
     }),
@@ -66,25 +71,25 @@ export const ExplainerPreviewCutTool = Tool.make("explainer_preview_cut", {
 }).annotate(Tool.Strict, true);
 
 // プレビューは composition の鍵ごとのディレクトリに置く。segment の数が違う別の composition の PNG と混ざらない。
-const previewDirectory = (videoId: string, compositionHash: string) =>
-  `videos/${videoId}/cuts/${longCut}/previews/${compositionHash}`;
-const manifestKey = (videoId: string, compositionHash: string) =>
-  `${previewDirectory(videoId, compositionHash)}/manifest.json`;
-const frameKey = (videoId: string, compositionHash: string, segment: number) =>
-  `${previewDirectory(videoId, compositionHash)}/${segment}.png`;
+const previewDirectory = (videoId: string, cut: string, compositionHash: string) =>
+  `videos/${videoId}/cuts/${cut}/previews/${compositionHash}`;
+const manifestKey = (videoId: string, cut: string, compositionHash: string) =>
+  `${previewDirectory(videoId, cut, compositionHash)}/manifest.json`;
+const frameKey = (videoId: string, cut: string, compositionHash: string, segment: number) =>
+  `${previewDirectory(videoId, cut, compositionHash)}/${segment}.png`;
 
-const readManifest = (videoId: string, compositionHash: string) =>
+const readManifest = (videoId: string, cut: string, compositionHash: string) =>
   Effect.gen(function* () {
-    const bytes = yield* (yield* VideoFiles).read(manifestKey(videoId, compositionHash));
+    const bytes = yield* (yield* VideoFiles).read(manifestKey(videoId, cut, compositionHash));
     return Option.flatMap(bytes, (value) => decodeManifest(new TextDecoder().decode(value)));
   });
 
 // 鍵が一致する最後のプレビューがあり、manifest と全部の PNG が残っていれば再利用できる（欠けていれば撮り直して行を積む）。
-const reusableFrames = (videoId: string, compositionHash: string) =>
+const reusableFrames = (videoId: string, cut: string, compositionHash: string) =>
   Effect.gen(function* () {
-    const last = yield* lastCutPreview(videoId, longCut);
+    const last = yield* lastCutPreview(videoId, cut);
     if (Option.isNone(last) || last.value.compositionHash !== compositionHash) return Option.none();
-    const manifest = yield* readManifest(videoId, compositionHash);
+    const manifest = yield* readManifest(videoId, cut, compositionHash);
     if (Option.isNone(manifest)) return Option.none();
     const files = yield* VideoFiles;
     const present = yield* Effect.forEach(manifest.value.frames, (frame) =>
@@ -101,11 +106,16 @@ const captureFrames = (videoId: string, composition: Uint8Array) =>
   );
 
 // PNG と manifest を書いてから行を積む。行を積む前に落ちても、次の実行で撮り直して行が積まれる。
-const writeFrames = (videoId: string, compositionHash: string, pngs: readonly Uint8Array[]) =>
+const writeFrames = (
+  videoId: string,
+  cut: string,
+  compositionHash: string,
+  pngs: readonly Uint8Array[],
+) =>
   Effect.gen(function* () {
     const files = yield* VideoFiles;
     const frames: Frame[] = pngs.map((_, index) => ({
-      key: frameKey(videoId, compositionHash, index + 1),
+      key: frameKey(videoId, cut, compositionHash, index + 1),
       segment: index + 1,
     }));
     yield* Effect.forEach(
@@ -116,41 +126,45 @@ const writeFrames = (videoId: string, compositionHash: string, pngs: readonly Ui
       },
     );
     yield* files.write(
-      manifestKey(videoId, compositionHash),
+      manifestKey(videoId, cut, compositionHash),
       new TextEncoder().encode(JSON.stringify({ frames }, null, 2)),
     );
     return frames;
   });
 
 const previewCut = Effect.fn("explainer.previewCut")(function* ({
+  cut,
   force,
   videoId,
-}: {
-  readonly force?: boolean;
-  readonly videoId: string;
-}) {
-  const composition = yield* readCutComposition(videoId);
+}: CutRequest) {
+  const composition = yield* readCutComposition(videoId, cut);
   const existing =
-    force === true ? Option.none() : yield* reusableFrames(videoId, composition.hash);
+    force === true
+      ? Option.none()
+      : yield* reusableFrames(videoId, composition.cut, composition.hash);
   if (Option.isSome(existing)) {
     return {
       compositionHash: composition.hash,
-      cut: longCut,
+      cut: composition.cut,
       frames: existing.value,
       previewed: false,
       videoId,
     };
   }
   const pngs = yield* captureFrames(videoId, composition.bytes);
-  const frames = yield* writeFrames(videoId, composition.hash, pngs);
-  yield* appendCutPreview({ compositionHash: composition.hash, cut: longCut, videoId });
-  return { compositionHash: composition.hash, cut: longCut, frames, previewed: true, videoId };
+  const frames = yield* writeFrames(videoId, composition.cut, composition.hash, pngs);
+  yield* appendCutPreview({ compositionHash: composition.hash, cut: composition.cut, videoId });
+  return {
+    compositionHash: composition.hash,
+    cut: composition.cut,
+    frames,
+    previewed: true,
+    videoId,
+  };
 });
 
 // 同じ動画への並行する呼び出しが、同じ行を二重に積まないよう、直列にする。
 const previewLock = Semaphore.makeUnsafe(1);
 
-export const explainerPreviewCut = (input: {
-  readonly force?: boolean;
-  readonly videoId: string;
-}) => previewLock.withPermits(1)(previewCut(input));
+export const explainerPreviewCut = (input: CutRequest) =>
+  previewLock.withPermits(1)(previewCut(input));

@@ -1,5 +1,6 @@
 import { Effect, Option, Schema } from "effect";
 
+import { targetDirectory, type ScriptTarget } from "../scripts/script-files.ts";
 import { VideoFiles } from "../videos/video-files.ts";
 
 export class TimingTableNotFound extends Schema.TaggedError<TimingTableNotFound>()(
@@ -35,14 +36,18 @@ export type TimingTable = typeof TimingTableSchema.Type;
 
 const decodeTimingTable = Schema.decodeUnknownEffect(Schema.fromJsonString(TimingTableSchema));
 
-export const timingTableKey = (videoId: string) => `videos/${videoId}/narration/timing.json`;
+/** ナレーションの成果物（track.wav・timing.json）の相対キー。長尺は narration/、専用ショートは shorts/<n>/narration/。 */
+export const narrationKey = (target: ScriptTarget, file: "timing.json" | "track.wav") =>
+  `${targetDirectory(target)}/narration/${file}`;
+
+export const timingTableKey = (target: ScriptTarget) => narrationKey(target, "timing.json");
 
 /** 保存済みのタイミング表のバイト列。鮮度の鍵が、書き出したそのままのバイト列から作れるように、読み取りと解釈を分ける。 */
-export const readTimingTableBytes = (videoId: string) =>
+export const readTimingTableBytes = (target: ScriptTarget) =>
   Effect.gen(function* () {
-    const bytes = yield* (yield* VideoFiles).read(timingTableKey(videoId));
+    const bytes = yield* (yield* VideoFiles).read(timingTableKey(target));
     if (Option.isNone(bytes)) {
-      return yield* new TimingTableNotFound({ videoId });
+      return yield* new TimingTableNotFound({ videoId: target.videoId });
     }
     return bytes.value;
   });
