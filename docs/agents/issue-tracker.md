@@ -26,7 +26,7 @@ nyaucast 固有の workflow 資産は持たない — `.takt/` は `config.yaml`
 
 共通の規約:
 
-- worktree 必須。メイン作業ツリーで直接ブランチを切らない。worktree は `git fetch origin` の後に `orca worktree create --repo name:nyaucast --name <slug> --base-branch origin/main` で作る（置き場は Orca の workspace、ブランチは Orca が作る。依存 install は Orca の repo の setup script が自動で実行する）。手動の `git worktree add` は使わない
+- worktree 必須。メイン作業ツリーで直接ブランチを切らない。worktree は `git fetch origin` の後に `orca worktree create --repo name:nyaucast --name <slug> --base-branch origin/main` で作る（置き場は Orca の workspace、ブランチは Orca が作る。依存 install は `orca.yaml` の setup script が自動で実行する）。手動の `git worktree add` は使わない
 - feature は origin/main から作った Orca の worktree 内で pipeline 実行する（pipeline は Orca が作ったブランチの上から `-b` の新しいブランチを切る）。review-adjudication 経路の隔離 clone 実走行が未検証のため、検証完了までは既知の pipeline 経路を維持する
 - `--auto-pr` は `--pipeline` 専用で、pipeline の issue 指定には `-i` が必要である。pipeline が `git checkout -b` するため、`-b` は未作成のブランチ名に限る
 - takt 更新時は、名前指定の builtin × `.takt/config.yaml` 整合検査を手動で実行する: `takt workflow doctor <workflow名>`（引数なし起動は自作 workflow ゼロのため no-op。ADR-0008）
