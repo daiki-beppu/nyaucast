@@ -7,7 +7,8 @@ import {
   produceCollection,
   publishCollection,
 } from "../collections/gate-operations.ts";
-import { abandonVideo, produceVideo, publishVideo } from "./gate-operations.ts";
+import { abandonVideo, produceVideo } from "./gate-operations.ts";
+import { publishExplainerVideo } from "./publish-dialog.ts";
 import { selectThumbnail } from "./thumbnail-selection.ts";
 
 const description = [
@@ -34,36 +35,34 @@ const thumbnail = Command.make(
     ),
 ).pipe(Command.withDescription(description));
 
-// 出力は事実の 1 行だけ。積んだか、既にそうだったかを分ける。
-const gateCommand = <E, R>(
-  name: string,
-  description: string,
-  operation: (
-    id: string,
-  ) => Effect.Effect<
-    { readonly gate: string; readonly recorded: boolean; readonly videoId: string },
-    E,
-    R
-  >,
-  messages: { readonly already: string; readonly recorded: string },
-) =>
-  Command.make(name, { id: Argument.String("id") }, ({ id }) =>
-    operation(id).pipe(
-      Effect.flatMap((result) =>
-        Console.log(
-          result.recorded
-            ? `${messages.recorded}: video ${result.videoId} / gate=${result.gate}`
-            : `${messages.already}: video ${result.videoId} / gate=${result.gate}（記録は追加していません）`,
-        ),
-      ),
-    ),
-  ).pipe(Command.withDescription(description));
-
 interface GateResult {
   readonly gate: string;
   readonly recorded: boolean;
   readonly videoId: string;
 }
+
+interface GateMessages {
+  readonly already: string;
+  readonly recorded: string;
+}
+
+// 出力は事実の 1 行だけ。積んだか、既にそうだったかを分ける。
+const logGateResult = (messages: GateMessages) => (result: GateResult) =>
+  Console.log(
+    result.recorded
+      ? `${messages.recorded}: video ${result.videoId} / gate=${result.gate}`
+      : `${messages.already}: video ${result.videoId} / gate=${result.gate}（記録は追加していません）`,
+  );
+
+const gateCommand = <E, R>(
+  name: string,
+  description: string,
+  operation: (id: string) => Effect.Effect<GateResult, E, R>,
+  messages: GateMessages,
+) =>
+  Command.make(name, { id: Argument.String("id") }, ({ id }) =>
+    operation(id).pipe(Effect.flatMap(logGateResult(messages))),
+  ).pipe(Command.withDescription(description));
 
 // どちらの動画のゲートを操作するかは、チャンネルの種類が決める。種類は呼び出しのたびに設定から読む。
 const byChannelKind =
@@ -93,11 +92,21 @@ const produce = gateCommand(
   { already: "既に承認済みです", recorded: "承認を記録しました" },
 );
 
-const publish = gateCommand(
-  "publish",
-  "公開ゲートを承認する。企画ゲートの承認が前提",
-  byChannelKind({ collection: publishCollection, explainer: publishVideo }),
-  { already: "既に承認済みです", recorded: "承認を記録しました" },
+const publishMessages = { already: "既に承認済みです", recorded: "承認を記録しました" };
+
+// BGM 動画は承認を書くだけ。解説動画は stdin が TTY のときだけ、対話で承認と投稿を書く。
+const publish = Command.make("publish", { id: Argument.String("id") }, ({ id }) =>
+  Effect.gen(function* () {
+    if ((yield* (yield* ChannelSettings).kind) === "explainer") {
+      return yield* publishExplainerVideo(id);
+    }
+    const { collectionId, gate, recorded } = yield* publishCollection(id);
+    return yield* logGateResult(publishMessages)({ gate, recorded, videoId: collectionId });
+  }),
+).pipe(
+  Command.withDescription(
+    "公開ゲートを承認する。企画ゲートの承認が前提。解説動画は TTY で投稿案を見て、承認と同時に投稿を作る",
+  ),
 );
 
 const abandon = gateCommand(

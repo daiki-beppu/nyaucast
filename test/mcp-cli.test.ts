@@ -18,6 +18,7 @@ const explainerToolNames = [
   "video_generate_thumbnails",
   "video_mix_audio_track",
   "video_preview_cut",
+  "video_recommend_short_cut",
   "video_render_cut",
   "video_status",
   "video_synthesize_narration",

@@ -193,6 +193,7 @@ describe("full migration to Effect 4.0", () => {
         "video.generateThumbnails.ts",
         "video.mixAudioTrack.ts",
         "video.previewCut.ts",
+        "video.recommendShortCut.ts",
         "video.renderCut.ts",
         "video.status.ts",
         "video.synthesizeNarration.ts",

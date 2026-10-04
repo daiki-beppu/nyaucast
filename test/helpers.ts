@@ -11,10 +11,12 @@ import { TestClock, TestConsole } from "effect/testing";
 
 import { ChannelAccounts } from "../src/auth/accounts.ts";
 import { CredentialStore } from "../src/auth/credential-store.ts";
+import { DeclaredAccounts } from "../src/auth/declared-accounts.ts";
 import { ChannelSettings } from "../src/channel/channel-settings.ts";
 import { LocalStore } from "../src/db/local-store.ts";
 import { InstagramAuth } from "../src/instagram/auth.ts";
 import { ThumbnailFiles } from "../src/thumbnails/thumbnail-files.ts";
+import { StdinTerminal } from "../src/videos/stdin-terminal.ts";
 import { XAuth } from "../src/x/auth.ts";
 import { YouTubeAuth } from "../src/youtube/auth.ts";
 
@@ -77,6 +79,9 @@ export const unusedAuthLayer = Layer.mergeAll(
 export const unusedVideoLayer = Layer.mergeAll(
   Layer.effect(SqlClient.SqlClient, notUsed),
   Layer.effect(ChannelSettings, notUsed),
+  Layer.effect(CredentialStore, notUsed),
+  Layer.effect(DeclaredAccounts, notUsed),
+  Layer.effect(StdinTerminal, notUsed),
   Layer.effect(ThumbnailFiles, notUsed),
 );
 
@@ -123,7 +128,9 @@ export const selectAll = (
     | "explainer_cut_previews"
     | "explainer_plans"
     | "explainer_post_drafts"
+    | "explainer_posts"
     | "explainer_rejections"
+    | "explainer_short_recommendations"
     | "explainer_short_versions"
     | "explainer_short_withdrawals"
     | "explainer_thumbnail_candidates"

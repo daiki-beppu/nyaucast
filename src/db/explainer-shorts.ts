@@ -167,3 +167,49 @@ export const readShortFacts = (videoId: string) =>
 
 /** 版と取り下げの時刻は直前の事実より後にするので、候補の事実を積む操作はこの 1 本で直列にして順序を守る。 */
 export const shortFactLock = Semaphore.makeUnsafe(1);
+
+/** agent の推奨。切り抜き・専用・どちらも出さない。 */
+export const ShortRecommendation = Schema.Literals(["clip", "dedicated", "none"]);
+export type ShortRecommendation = typeof ShortRecommendation.Type;
+
+const RecommendationRow = Schema.Struct({
+  cut: ShortRecommendation,
+  number: Schema.Finite,
+  recommended_at: Schema.String,
+});
+
+/** 候補ごとの最後の推奨（時刻の新しいもの、同時刻なら後から積まれたもの）を、番号の昇順に。推奨は候補の版に縛らない。 */
+export const readShortRecommendations = (videoId: string) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* queryRows(
+      RecommendationRow,
+      sql`SELECT cut, number, recommended_at FROM (
+        SELECT cut, number, recommended_at,
+          row_number() OVER (PARTITION BY number ORDER BY recommended_at DESC, rowid DESC) AS recency
+        FROM explainer_short_recommendations WHERE video_id = ${videoId}
+      ) WHERE recency = 1 ORDER BY number`,
+    );
+    return rows.map((row) => ({ cut: row.cut, number: row.number }));
+  });
+
+/** 新しい推奨は、同じ候補の直前の推奨より必ず後の時刻で積む。 */
+export const appendShortRecommendation = (recommendation: {
+  readonly cut: ShortRecommendation;
+  readonly number: number;
+  readonly videoId: string;
+}) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* queryRows(
+      LatestRow,
+      sql`SELECT max(recommended_at) AS latest FROM explainer_short_recommendations WHERE video_id = ${recommendation.videoId} AND number = ${recommendation.number}`,
+    );
+    const now = yield* Clock.currentTimeMillis;
+    yield* insertRow("explainer_short_recommendations", {
+      cut: recommendation.cut,
+      number: recommendation.number,
+      recommended_at: new Date(afterLatestFact(now, rows[0]?.latest ?? undefined)).toISOString(),
+      video_id: recommendation.videoId,
+    });
+  });
