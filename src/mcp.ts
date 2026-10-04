@@ -4,6 +4,7 @@ import type { HttpClient } from "effect/http";
 import type { ChildProcessSpawner } from "effect/process";
 import type { SqlClient } from "effect/sql";
 
+import type { DeclaredAccounts } from "./auth/declared-accounts.ts";
 import type { StaticSecrets } from "./auth/secrets.ts";
 
 import type { BgmPool } from "./channel/bgm-pool.ts";
@@ -53,6 +54,7 @@ import {
   videoGenerateThumbnails,
 } from "./tools/video.generateThumbnails.ts";
 import { VideoStatusTool, videoStatus } from "./tools/video.status.ts";
+import { VideoWritePostDraftTool, videoWritePostDraft } from "./tools/video.writePostDraft.ts";
 import type { VideoFiles } from "./videos/video-files.ts";
 import type { VideoIds } from "./videos/video-ids.ts";
 
@@ -73,6 +75,7 @@ export const NyaucastToolkit = Toolkit.make(
   ExplainerRenderCutTool,
   ExplainerPreviewCutTool,
   VideoStatusTool,
+  VideoWritePostDraftTool,
   VideoGenerateThumbnailsTool,
   VideoExcludeThumbnailTool,
 );
@@ -87,6 +90,7 @@ export const NyaucastToolHandlers = NyaucastToolkit.toLayer(
       | ChildProcessSpawner.ChildProcessSpawner
       | CollectionDirectories
       | CollectionIds
+      | DeclaredAccounts
       | FileSystem.FileSystem
       | HttpClient.HttpClient
       | Path.Path
@@ -127,6 +131,8 @@ export const NyaucastToolHandlers = NyaucastToolkit.toLayer(
       video_generate_thumbnails: (input) =>
         videoGenerateThumbnails(input).pipe(Effect.provideContext(context)),
       video_status: (input) => videoStatus(input).pipe(Effect.provideContext(context)),
+      video_write_post_draft: (input) =>
+        videoWritePostDraft(input).pipe(Effect.provideContext(context)),
     });
   }),
 );

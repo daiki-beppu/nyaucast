@@ -25,6 +25,7 @@ describe("K3 package smoke", () => {
       "video_exclude_thumbnail",
       "video_generate_thumbnails",
       "video_status",
+      "video_write_post_draft",
     ]);
     expect(localDatabaseCreated).toBe(true);
     expect(packedPaths).not.toContainEqual(expect.stringMatching(/\.test\.ts$/));

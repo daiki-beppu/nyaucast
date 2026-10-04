@@ -28,6 +28,7 @@ const toolNames = [
   "video_exclude_thumbnail",
   "video_generate_thumbnails",
   "video_status",
+  "video_write_post_draft",
 ];
 
 // 起動時の作業ディレクトリをチャンネルルートとして子プロセスの MCP サーバーを起動し、initialize まで済ませて use を動かす。

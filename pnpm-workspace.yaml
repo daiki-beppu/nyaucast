@@ -1,5 +1,6 @@
 allowBuilds:
   actionlint: true
+  core-js: false
   esbuild: true
   node-av: true
 pmOnFail: ignore

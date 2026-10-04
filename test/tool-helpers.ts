@@ -5,6 +5,7 @@ import { Effect, type FileSystem, Layer, type Path, Stream } from "effect";
 import type { Toolkit } from "effect/ai";
 import { AiError, Tool } from "effect/ai";
 
+import { DeclaredAccounts } from "../src/auth/declared-accounts.ts";
 import { BgmPool } from "../src/channel/bgm-pool.ts";
 import { CollectionIds } from "../src/collections/collection-ids.ts";
 import { CollectionDirectories } from "../src/collections/directories.ts";
@@ -100,6 +101,7 @@ export const withToolChannel = <A, E, R>(
           Layer.mergeAll(
             BgmPool.layer(channelRoot),
             CollectionDirectories.layer(channelRoot),
+            DeclaredAccounts.layer(channelRoot),
             options.collectionIds ?? CollectionIds.layer,
             ThumbnailFiles.layer(channelRoot),
             (options.videoFiles ?? VideoFiles.layer)(channelRoot),

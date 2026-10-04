@@ -7,6 +7,7 @@ import { Effect, Layer, Logger, Stdio } from "effect";
 import { McpProtocol, McpServer } from "effect/ai";
 
 import { ChannelAccounts } from "./auth/accounts.ts";
+import { DeclaredAccounts } from "./auth/declared-accounts.ts";
 import { CredentialStore } from "./auth/credential-store.ts";
 import { StaticSecrets } from "./auth/secrets.ts";
 import { BgmPool } from "./channel/bgm-pool.ts";
@@ -36,6 +37,7 @@ const mcpHandlers = NyaucastToolHandlers.pipe(
   Layer.provide(BgmPool.layer(channelRoot)),
   Layer.provide(CollectionDirectories.layer(channelRoot)),
   Layer.provide(CollectionIds.layer),
+  Layer.provide(DeclaredAccounts.layer(channelRoot)),
   Layer.provide(ChannelSettings.layer(channelRoot)),
   Layer.provide(VideoIds.layer),
   Layer.provide(thumbnailFiles),
