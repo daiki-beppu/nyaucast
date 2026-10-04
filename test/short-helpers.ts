@@ -40,7 +40,7 @@ const inputDefaults = {
   videoId: "V1",
 };
 
-/** explainer_write_short の入力。上書きしない項目は上の既定値。 */
+/** video_write_short の入力。上書きしない項目は上の既定値。 */
 export const shortInput = (overrides: ShortOverrides = {}) => {
   const input = { ...inputDefaults, ...overrides };
   return {
@@ -52,10 +52,10 @@ export const shortInput = (overrides: ShortOverrides = {}) => {
 };
 
 export const writeShort = (overrides: ShortOverrides = {}) =>
-  callTool("explainer_write_short", shortInput(overrides));
+  callTool("video_write_short", shortInput(overrides));
 
 export const withdrawShort = (number = 1, videoId = "V1") =>
-  callTool("explainer_withdraw_short", { number, videoId });
+  callTool("video_withdraw_short", { number, videoId });
 
 // ---- キー（動画 V1）----
 

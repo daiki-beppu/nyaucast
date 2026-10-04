@@ -4,7 +4,7 @@ import { pathToFileURL } from "node:url";
 
 import { NodeHttpClient, NodeRuntime, NodeServices, NodeStdio } from "@effect/platform-node";
 import { Effect, Layer, Logger, Stdio } from "effect";
-import { McpProtocol, McpServer } from "effect/ai";
+import { McpProtocol, McpServer, type Tool, type Toolkit } from "effect/ai";
 
 import { ChannelAccounts } from "./auth/accounts.ts";
 import { DeclaredAccounts } from "./auth/declared-accounts.ts";
@@ -18,7 +18,13 @@ import { LocalStore } from "./db/local-store.ts";
 import { nyaucastCli, version } from "./cli.ts";
 import { Chrome, chromeCacheDirectory } from "./lib/chrome.ts";
 import { InstagramAuth } from "./instagram/auth.ts";
-import { NyaucastToolHandlers, NyaucastToolkit, nyaucastInstructions } from "./mcp.ts";
+import {
+  CollectionToolHandlers,
+  CollectionToolkit,
+  ExplainerToolHandlers,
+  ExplainerToolkit,
+  nyaucastInstructions,
+} from "./mcp.ts";
 import { ThumbnailFiles } from "./thumbnails/thumbnail-files.ts";
 import { VideoFiles } from "./videos/video-files.ts";
 import { VideoIds } from "./videos/video-ids.ts";
@@ -33,31 +39,48 @@ const thumbnailFiles = ThumbnailFiles.layer(channelRoot);
 
 // MCP は stdout が JSON-RPC 専用。tool の handler と DB が整ってから stdio の server を起動する
 // （起動後すぐの tools/list が空にならないよう、tool の登録は server が読み始める前に終える）。
-const mcpHandlers = NyaucastToolHandlers.pipe(
-  Layer.provide(BgmPool.layer(channelRoot)),
-  Layer.provide(CollectionDirectories.layer(channelRoot)),
-  Layer.provide(CollectionIds.layer),
-  Layer.provide(DeclaredAccounts.layer(channelRoot)),
-  Layer.provide(ChannelSettings.layer(channelRoot)),
-  Layer.provide(VideoIds.layer),
-  Layer.provide(thumbnailFiles),
-  Layer.provide(Chrome.layer({ cacheDirectory: chromeCacheDirectory(homedir()) })),
-  Layer.provide(VideoFiles.layer(channelRoot)),
-  Layer.provide(StaticSecrets.layer({ configRoot })),
-  Layer.provide(NodeHttpClient.layerUndici),
-  Layer.provide(localStore),
-);
+const withMcpServices = <A, E, R>(handlers: Layer.Layer<A, E, R>) =>
+  handlers.pipe(
+    Layer.provide(BgmPool.layer(channelRoot)),
+    Layer.provide(CollectionDirectories.layer(channelRoot)),
+    Layer.provide(CollectionIds.layer),
+    Layer.provide(DeclaredAccounts.layer(channelRoot)),
+    Layer.provide(ChannelSettings.layer(channelRoot)),
+    Layer.provide(VideoIds.layer),
+    Layer.provide(thumbnailFiles),
+    Layer.provide(Chrome.layer({ cacheDirectory: chromeCacheDirectory(homedir()) })),
+    Layer.provide(VideoFiles.layer(channelRoot)),
+    Layer.provide(StaticSecrets.layer({ configRoot })),
+    Layer.provide(NodeHttpClient.layerUndici),
+    Layer.provide(localStore),
+  );
 
-const mcpServer = McpServer.toolkit(NyaucastToolkit).pipe(
-  Layer.provide(
-    McpServer.layerStdio({
-      instructions: nyaucastInstructions,
-      name: "nyaucast",
-      protocols: [McpProtocol.v2025_06_18],
-      version,
-    }).pipe(Layer.provideMerge(mcpHandlers)),
-  ),
-  Layer.provide(NodeStdio.layer),
+const mcpServerOf = <Tools extends Record<string, Tool.Any>, E, R>(
+  toolkit: Toolkit.Toolkit<Tools>,
+  handlers: Layer.Layer<Tool.HandlersFor<Tools>, E, R>,
+) =>
+  McpServer.toolkit(toolkit).pipe(
+    Layer.provide(
+      McpServer.layerStdio({
+        instructions: nyaucastInstructions,
+        name: "nyaucast",
+        protocols: [McpProtocol.v2025_06_18],
+        version,
+      }).pipe(Layer.provideMerge(withMcpServices(handlers))),
+    ),
+    Layer.provide(NodeStdio.layer),
+  );
+
+const explainerMcpServer = mcpServerOf(ExplainerToolkit, ExplainerToolHandlers);
+const collectionMcpServer = mcpServerOf(CollectionToolkit, CollectionToolHandlers);
+
+// 公開する tool は、起動したチャンネルの種類で決まる。種類は起動時にここで 1 回だけ読む。
+// 設定の無いチャンネルでは種類を決められないので、tools/list を答える前に起動が失敗する。
+const mcpServer = Layer.unwrap(
+  Effect.gen(function* () {
+    const kind = yield* (yield* ChannelSettings).kind;
+    return kind === "explainer" ? explainerMcpServer : collectionMcpServer;
+  }).pipe(Effect.provide(ChannelSettings.layer(channelRoot))),
 );
 
 const credentialStore = CredentialStore.layer({ credentialRoot: join(configRoot, "credentials") });

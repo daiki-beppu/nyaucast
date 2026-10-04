@@ -81,7 +81,7 @@ const noon = "2026-10-03T12:00:00.000Z";
 
 /** 動画 V1 の企画を書く（produce 区間の tool の前提）。 */
 export const recordPlan = (overrides: Record<string, unknown> = {}) =>
-  setClock(noon).pipe(Effect.andThen(callTool("explainer_write_plan", planInput(overrides))));
+  setClock(noon).pipe(Effect.andThen(callTool("video_write_plan", planInput(overrides))));
 
 const insertGateFact = (kind: "approval" | "rejection", videoId: string, at: string) =>
   Effect.gen(function* () {

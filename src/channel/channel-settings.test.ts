@@ -4,7 +4,7 @@ import { Effect, Layer } from "effect";
 
 import { explainerConfigWithBgm } from "../../test/bgm-helpers.ts";
 import { explainerConfigWithTheme, themeDeclaration } from "../../test/composition-helpers.ts";
-import { explainerConfig } from "../../test/explainer-helpers.ts";
+import { collectionConfig, explainerConfig } from "../../test/explainer-helpers.ts";
 import { temporaryDirectory, writeVideoConfig } from "../../test/helpers.ts";
 import { explainerConfigWithVoice, voiceDeclaration } from "../../test/narration-helpers.ts";
 import { explainerConfigWith, thumbnailType } from "../../test/thumbnail-config.ts";
@@ -21,6 +21,90 @@ const settingsOf = (config: string) =>
       Effect.provide(ChannelSettings.layer(channelRoot).pipe(Layer.provide(NodeServices.layer))),
     );
   });
+
+// kind は起動時に 1 回だけ読む（MCP が公開する tool の種類を決める）。explainer は tool が呼び出しのたびに読む解説動画の宣言。
+const channelOf = <A, E>(
+  config: string | undefined,
+  read: (settings: (typeof ChannelSettings)["Service"]) => Effect.Effect<A, E>,
+) =>
+  Effect.gen(function* () {
+    const channelRoot = yield* temporaryDirectory("nyaucast-channel-kind-");
+    if (config !== undefined) {
+      writeVideoConfig(channelRoot, config);
+    }
+    return yield* Effect.gen(function* () {
+      return yield* read(yield* ChannelSettings);
+    }).pipe(
+      Effect.provide(ChannelSettings.layer(channelRoot).pipe(Layer.provide(NodeServices.layer))),
+    );
+  });
+
+describe("ChannelSettings: the channel kind", () => {
+  it.effect("reads explainer from an explainer channel", () =>
+    Effect.gen(function* () {
+      assert.strictEqual(
+        yield* channelOf(explainerConfig, (settings) => settings.kind),
+        "explainer",
+      );
+    }),
+  );
+
+  it.effect("reads collection from a collection channel", () =>
+    Effect.gen(function* () {
+      assert.strictEqual(
+        yield* channelOf(collectionConfig, (settings) => settings.kind),
+        "collection",
+      );
+    }),
+  );
+
+  it.effect("fails with ChannelConfigNotFound when the channel has no video config", () =>
+    Effect.gen(function* () {
+      const failure = yield* Effect.flip(channelOf(undefined, (settings) => settings.kind));
+
+      assert.strictEqual(failure._tag, "ChannelConfigNotFound");
+    }),
+  );
+
+  it.effect("fails with InvalidChannelConfig when the video config is broken", () =>
+    Effect.gen(function* () {
+      const failure = yield* Effect.flip(channelOf("{ not json", (settings) => settings.kind));
+
+      assert.strictEqual(failure._tag, "InvalidChannelConfig");
+    }),
+  );
+});
+
+describe("ChannelSettings: the explainer declaration for the explainer tools", () => {
+  it.effect("reads the declaration of an explainer channel", () =>
+    Effect.gen(function* () {
+      const settings = yield* channelOf(explainerConfig, (declared) => declared.explainer);
+
+      assert.strictEqual(settings.kind, "explainer");
+      assert.strictEqual(settings.genre, "tech");
+    }),
+  );
+
+  it.effect("fails with ChannelConfigNotFound when the channel has no video config", () =>
+    Effect.gen(function* () {
+      const failure = yield* Effect.flip(channelOf(undefined, (settings) => settings.explainer));
+
+      assert.strictEqual(failure._tag, "ChannelConfigNotFound");
+    }),
+  );
+
+  it.effect(
+    "fails with InvalidChannelConfig, not NotExplainerChannel, for a collection channel",
+    () =>
+      Effect.gen(function* () {
+        const failure = yield* Effect.flip(
+          channelOf(collectionConfig, (settings) => settings.explainer),
+        );
+
+        assert.strictEqual(failure._tag, "InvalidChannelConfig");
+      }),
+  );
+});
 
 describe("ChannelSettings: the thumbnail type", () => {
   it.effect("reads the declared thumbnail type", () =>

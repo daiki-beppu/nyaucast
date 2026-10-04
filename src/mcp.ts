@@ -13,48 +13,75 @@ import type { CollectionIds } from "./collections/collection-ids.ts";
 import type { CollectionDirectories } from "./collections/directories.ts";
 import type { Chrome } from "./lib/chrome.ts";
 import type { ThumbnailFiles } from "./thumbnails/thumbnail-files.ts";
-import { CollectionStatusTool, collectionStatus } from "./tools/collection.status.ts";
-import { PlanCheckTitleTool, planCheckTitle } from "./tools/plan.checkTitle.ts";
 import {
-  ExplainerAssembleCompositionTool,
-  explainerAssembleComposition,
-} from "./tools/explainer.assembleComposition.ts";
+  CollectionVideoCheckTitleTool,
+  collectionVideoCheckTitle,
+} from "./tools/collection/video.checkTitle.ts";
 import {
-  ExplainerFetchTopicCandidatesTool,
-  explainerFetchTopicCandidates,
-} from "./tools/explainer.fetchTopicCandidates.ts";
+  CollectionVideoStatusTool,
+  collectionVideoStatus,
+} from "./tools/collection/video.status.ts";
 import {
-  ExplainerMixAudioTrackTool,
-  explainerMixAudioTrack,
-} from "./tools/explainer.mixAudioTrack.ts";
-import { ExplainerPreviewCutTool, explainerPreviewCut } from "./tools/explainer.previewCut.ts";
-import { ExplainerRenderCutTool, explainerRenderCut } from "./tools/explainer.renderCut.ts";
+  CollectionVideoWritePlanTool,
+  collectionVideoWritePlan,
+} from "./tools/collection/video.writePlan.ts";
 import {
-  ExplainerSynthesizeNarrationTool,
-  explainerSynthesizeNarration,
-} from "./tools/explainer.synthesizeNarration.ts";
+  ExplainerVideoAssembleCompositionTool,
+  explainerVideoAssembleComposition,
+} from "./tools/explainer/video.assembleComposition.ts";
 import {
-  ExplainerWriteDiagramTool,
-  explainerWriteDiagram,
-} from "./tools/explainer.writeDiagram.ts";
+  ExplainerVideoExcludeThumbnailTool,
+  explainerVideoExcludeThumbnail,
+} from "./tools/explainer/video.excludeThumbnail.ts";
 import {
-  ExplainerWithdrawShortTool,
-  explainerWithdrawShort,
-} from "./tools/explainer.withdrawShort.ts";
-import { ExplainerWritePlanTool, explainerWritePlan } from "./tools/explainer.writePlan.ts";
-import { ExplainerWriteScriptTool, explainerWriteScript } from "./tools/explainer.writeScript.ts";
-import { ExplainerWriteShortTool, explainerWriteShort } from "./tools/explainer.writeShort.ts";
-import { PlanInitTool, planInit } from "./tools/plan.init.ts";
+  ExplainerVideoFetchTopicCandidatesTool,
+  explainerVideoFetchTopicCandidates,
+} from "./tools/explainer/video.fetchTopicCandidates.ts";
 import {
-  VideoExcludeThumbnailTool,
-  videoExcludeThumbnail,
-} from "./tools/video.excludeThumbnail.ts";
+  ExplainerVideoGenerateThumbnailsTool,
+  explainerVideoGenerateThumbnails,
+} from "./tools/explainer/video.generateThumbnails.ts";
 import {
-  VideoGenerateThumbnailsTool,
-  videoGenerateThumbnails,
-} from "./tools/video.generateThumbnails.ts";
-import { VideoStatusTool, videoStatus } from "./tools/video.status.ts";
-import { VideoWritePostDraftTool, videoWritePostDraft } from "./tools/video.writePostDraft.ts";
+  ExplainerVideoMixAudioTrackTool,
+  explainerVideoMixAudioTrack,
+} from "./tools/explainer/video.mixAudioTrack.ts";
+import {
+  ExplainerVideoPreviewCutTool,
+  explainerVideoPreviewCut,
+} from "./tools/explainer/video.previewCut.ts";
+import {
+  ExplainerVideoRenderCutTool,
+  explainerVideoRenderCut,
+} from "./tools/explainer/video.renderCut.ts";
+import { ExplainerVideoStatusTool, explainerVideoStatus } from "./tools/explainer/video.status.ts";
+import {
+  ExplainerVideoSynthesizeNarrationTool,
+  explainerVideoSynthesizeNarration,
+} from "./tools/explainer/video.synthesizeNarration.ts";
+import {
+  ExplainerVideoWithdrawShortTool,
+  explainerVideoWithdrawShort,
+} from "./tools/explainer/video.withdrawShort.ts";
+import {
+  ExplainerVideoWriteDiagramTool,
+  explainerVideoWriteDiagram,
+} from "./tools/explainer/video.writeDiagram.ts";
+import {
+  ExplainerVideoWritePlanTool,
+  explainerVideoWritePlan,
+} from "./tools/explainer/video.writePlan.ts";
+import {
+  ExplainerVideoWritePostDraftTool,
+  explainerVideoWritePostDraft,
+} from "./tools/explainer/video.writePostDraft.ts";
+import {
+  ExplainerVideoWriteScriptTool,
+  explainerVideoWriteScript,
+} from "./tools/explainer/video.writeScript.ts";
+import {
+  ExplainerVideoWriteShortTool,
+  explainerVideoWriteShort,
+} from "./tools/explainer/video.writeShort.ts";
 import type { VideoFiles } from "./videos/video-files.ts";
 import type { VideoIds } from "./videos/video-ids.ts";
 
@@ -68,81 +95,88 @@ export const nyaucastInstructions =
   "Read it for the plan section (topic, plan, thumbnails, before the plan gate) and the produce " +
   "section (script, shorts, diagram, narration, render, preview).";
 
-// registry は置かない。tool 一覧は、ここで import した tool を並べるだけ。
-export const NyaucastToolkit = Toolkit.make(
-  PlanInitTool,
-  PlanCheckTitleTool,
-  CollectionStatusTool,
-  ExplainerFetchTopicCandidatesTool,
-  ExplainerWritePlanTool,
-  ExplainerWriteScriptTool,
-  ExplainerWriteShortTool,
-  ExplainerWithdrawShortTool,
-  ExplainerWriteDiagramTool,
-  ExplainerSynthesizeNarrationTool,
-  ExplainerAssembleCompositionTool,
-  ExplainerMixAudioTrackTool,
-  ExplainerRenderCutTool,
-  ExplainerPreviewCutTool,
-  VideoStatusTool,
-  VideoWritePostDraftTool,
-  VideoGenerateThumbnailsTool,
-  VideoExcludeThumbnailTool,
+// registry は置かない。tool 一覧は、チャンネルの種類ごとに、ここで import した tool を並べるだけ（どちらを公開するかは entry point が決める）。
+export const ExplainerToolkit = Toolkit.make(
+  ExplainerVideoFetchTopicCandidatesTool,
+  ExplainerVideoWritePlanTool,
+  ExplainerVideoWriteScriptTool,
+  ExplainerVideoWriteShortTool,
+  ExplainerVideoWithdrawShortTool,
+  ExplainerVideoWriteDiagramTool,
+  ExplainerVideoSynthesizeNarrationTool,
+  ExplainerVideoAssembleCompositionTool,
+  ExplainerVideoMixAudioTrackTool,
+  ExplainerVideoRenderCutTool,
+  ExplainerVideoPreviewCutTool,
+  ExplainerVideoStatusTool,
+  ExplainerVideoWritePostDraftTool,
+  ExplainerVideoGenerateThumbnailsTool,
+  ExplainerVideoExcludeThumbnailTool,
 );
 
-// handler の Layer。service の Layer は組み立てず、必要な service を要求するだけにする（合成は entry point）。
-export const NyaucastToolHandlers = NyaucastToolkit.toLayer(
-  Effect.gen(function* () {
-    const context = yield* Effect.context<
-      | BgmPool
-      | ChannelSettings
-      | Chrome
-      | ChildProcessSpawner.ChildProcessSpawner
-      | CollectionDirectories
-      | CollectionIds
-      | DeclaredAccounts
-      | FileSystem.FileSystem
-      | HttpClient.HttpClient
-      | Path.Path
-      | SqlClient.SqlClient
-      | StaticSecrets
-      | ThumbnailFiles
-      | VideoFiles
-      | VideoIds
-    >();
-    return NyaucastToolkit.of({
-      collection_status: (input) => collectionStatus(input).pipe(Effect.provideContext(context)),
-      explainer_assemble_composition: (input) =>
-        explainerAssembleComposition(input).pipe(Effect.provideContext(context)),
-      explainer_fetch_topic_candidates: (input) =>
-        explainerFetchTopicCandidates(input).pipe(Effect.provideContext(context)),
-      explainer_mix_audio_track: (input) =>
-        explainerMixAudioTrack(input).pipe(Effect.provideContext(context)),
-      explainer_preview_cut: (input) =>
-        explainerPreviewCut(input).pipe(Effect.provideContext(context)),
-      explainer_render_cut: (input) =>
-        explainerRenderCut(input).pipe(Effect.provideContext(context)),
-      explainer_synthesize_narration: (input) =>
-        explainerSynthesizeNarration(input).pipe(Effect.provideContext(context)),
-      explainer_withdraw_short: (input) =>
-        explainerWithdrawShort(input).pipe(Effect.provideContext(context)),
-      explainer_write_diagram: (input) =>
-        explainerWriteDiagram(input).pipe(Effect.provideContext(context)),
-      explainer_write_plan: (input) =>
-        explainerWritePlan(input).pipe(Effect.provideContext(context)),
-      explainer_write_script: (input) =>
-        explainerWriteScript(input).pipe(Effect.provideContext(context)),
-      explainer_write_short: (input) =>
-        explainerWriteShort(input).pipe(Effect.provideContext(context)),
-      plan_check_title: (input) => planCheckTitle(input).pipe(Effect.provideContext(context)),
-      plan_init: (input) => planInit(input).pipe(Effect.provideContext(context)),
-      video_exclude_thumbnail: (input) =>
-        videoExcludeThumbnail(input).pipe(Effect.provideContext(context)),
-      video_generate_thumbnails: (input) =>
-        videoGenerateThumbnails(input).pipe(Effect.provideContext(context)),
-      video_status: (input) => videoStatus(input).pipe(Effect.provideContext(context)),
-      video_write_post_draft: (input) =>
-        videoWritePostDraft(input).pipe(Effect.provideContext(context)),
-    });
-  }),
+export const CollectionToolkit = Toolkit.make(
+  CollectionVideoWritePlanTool,
+  CollectionVideoCheckTitleTool,
+  CollectionVideoStatusTool,
+);
+
+// handler が要求する service は、Layer を組むときに取った context で満たす。
+// service の Layer は組み立てず、必要な service を要求するだけにする（合成は entry point）。
+type ToolServices =
+  | BgmPool
+  | ChannelSettings
+  | Chrome
+  | ChildProcessSpawner.ChildProcessSpawner
+  | CollectionDirectories
+  | CollectionIds
+  | DeclaredAccounts
+  | FileSystem.FileSystem
+  | HttpClient.HttpClient
+  | Path.Path
+  | SqlClient.SqlClient
+  | StaticSecrets
+  | ThumbnailFiles
+  | VideoFiles
+  | VideoIds;
+
+const provideServices = Effect.map(
+  Effect.context<ToolServices>(),
+  (context) =>
+    <Input, Success, Failure>(
+      handler: (input: Input) => Effect.Effect<Success, Failure, ToolServices>,
+    ) =>
+    (input: Input) =>
+      handler(input).pipe(Effect.provideContext(context)),
+);
+
+export const ExplainerToolHandlers = ExplainerToolkit.toLayer(
+  Effect.map(provideServices, (provide) =>
+    ExplainerToolkit.of({
+      video_assemble_composition: provide(explainerVideoAssembleComposition),
+      video_exclude_thumbnail: provide(explainerVideoExcludeThumbnail),
+      video_fetch_topic_candidates: provide(explainerVideoFetchTopicCandidates),
+      video_generate_thumbnails: provide(explainerVideoGenerateThumbnails),
+      video_mix_audio_track: provide(explainerVideoMixAudioTrack),
+      video_preview_cut: provide(explainerVideoPreviewCut),
+      video_render_cut: provide(explainerVideoRenderCut),
+      video_status: provide(explainerVideoStatus),
+      video_synthesize_narration: provide(explainerVideoSynthesizeNarration),
+      video_withdraw_short: provide(explainerVideoWithdrawShort),
+      video_write_diagram: provide(explainerVideoWriteDiagram),
+      video_write_plan: provide(explainerVideoWritePlan),
+      video_write_post_draft: provide(explainerVideoWritePostDraft),
+      video_write_script: provide(explainerVideoWriteScript),
+      video_write_short: provide(explainerVideoWriteShort),
+    }),
+  ),
+);
+
+export const CollectionToolHandlers = CollectionToolkit.toLayer(
+  Effect.map(provideServices, (provide) =>
+    CollectionToolkit.of({
+      video_check_title: provide(collectionVideoCheckTitle),
+      video_status: provide(collectionVideoStatus),
+      video_write_plan: provide(collectionVideoWritePlan),
+    }),
+  ),
 );

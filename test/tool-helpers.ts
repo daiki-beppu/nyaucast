@@ -10,7 +10,12 @@ import { BgmPool } from "../src/channel/bgm-pool.ts";
 import { CollectionIds } from "../src/collections/collection-ids.ts";
 import { CollectionDirectories } from "../src/collections/directories.ts";
 import { Chrome, chromeCacheDirectory } from "../src/lib/chrome.ts";
-import { NyaucastToolHandlers, NyaucastToolkit } from "../src/mcp.ts";
+import {
+  CollectionToolHandlers,
+  CollectionToolkit,
+  ExplainerToolHandlers,
+  ExplainerToolkit,
+} from "../src/mcp.ts";
 import { ThumbnailFiles } from "../src/thumbnails/thumbnail-files.ts";
 import { VideoFiles } from "../src/videos/video-files.ts";
 import type { VideoIds } from "../src/videos/video-ids.ts";
@@ -18,50 +23,66 @@ import { fakeCodex, type FakeCodex } from "./codex-helpers.ts";
 import { withVideoChannel } from "./explainer-helpers.ts";
 import { fakeGemini, type FakeGemini } from "./thumbnail-helpers.ts";
 
-type Tools = Toolkit.Tools<typeof NyaucastToolkit>;
-
 /**
- * MCP の入口と同じ配線（`NyaucastToolHandlers`）を通して、tool を名前で呼ぶ。
+ * MCP の入口と同じ配線（種類ごとの `*ToolHandlers`）を通して、tool を名前で呼ぶ口を作る。
  * 入力は MCP が `handle` を呼ぶときと同じ decode options（strict な tool は未知のキーを拒否）で、tool の Schema にかけられる。
  * handler の Layer は呼び出しごとに組む。呼び出し側が与えた Clock などの service が handler に届く。
  */
-export const callTool = <Name extends keyof Tools>(
-  name: Name,
-  params: Tool.ParametersEncoded<Tools[Name]>,
-) =>
-  Effect.gen(function* () {
-    const toolkit = yield* NyaucastToolkit;
-    const strict = Tool.getStrictMode(NyaucastToolkit.tools[name]) === true;
-    const results = yield* toolkit.handle(name, params, undefined, {
-      errors: "all",
-      onExcessProperty: strict ? "error" : "ignore",
-    });
-    const last = yield* Stream.runLast(results);
-    if (last._tag === "None") {
-      return yield* Effect.die(`tool ${name} returned no result`);
-    }
-    // 宣言した失敗は failureMode "error" で error チャネルに流れるので、ここに届く結果は成功値。
-    if (last.value.isFailure) {
-      return yield* Effect.die(`tool ${name} returned a failure result in the success channel`);
-    }
-    return last.value.result as Tool.Success<Tools[Name]>;
-  }).pipe(Effect.provide(NyaucastToolHandlers));
+const toolCaller = <Tools extends Record<string, Tool.Any>, HandlerServices>(
+  toolkit: Toolkit.Toolkit<Tools>,
+  handlers: Layer.Layer<Tool.HandlersFor<Tools>, never, HandlerServices>,
+) => {
+  const call = <Name extends keyof Tools & string>(
+    name: Name,
+    params: Tool.ParametersEncoded<Tools[Name]>,
+  ) =>
+    Effect.gen(function* () {
+      const withHandlers = yield* toolkit;
+      const strict = Tool.getStrictMode(toolkit.tools[name] as Tool.Any) === true;
+      const results = yield* withHandlers.handle(name, params, undefined, {
+        errors: "all",
+        onExcessProperty: strict ? "error" : "ignore",
+      });
+      const last = yield* Stream.runLast(results);
+      if (last._tag === "None") {
+        return yield* Effect.die(`tool ${name} returned no result`);
+      }
+      // 宣言した失敗は failureMode "error" で error チャネルに流れるので、ここに届く結果は成功値。
+      if (last.value.isFailure) {
+        return yield* Effect.die(`tool ${name} returned a failure result in the success channel`);
+      }
+      return last.value.result as Tool.Success<Tools[Name]>;
+    }).pipe(Effect.provide(handlers));
 
-/**
- * 入力が tool の Schema で拒否されたときの理由の種別を返す（宣言した失敗や成功なら defect）。
- * 未知のキーの拒否は、tool の `Tool.Strict` の注記に連動する decode options で決まる。拒否されれば handler は動かない。
- */
-export const rejectionReason = <Name extends keyof Tools>(
-  name: Name,
-  params: Tool.ParametersEncoded<Tools[Name]>,
-) =>
-  Effect.flip(callTool(name, params)).pipe(
-    Effect.flatMap((failure) =>
-      AiError.isAiError(failure)
-        ? Effect.succeed(failure.reason._tag)
-        : Effect.die(`tool ${name} failed without an AI error: ${String(failure)}`),
-    ),
-  );
+  /**
+   * 入力が tool の Schema で拒否されたときの理由の種別を返す（宣言した失敗や成功なら defect）。
+   * 未知のキーの拒否は、tool の `Tool.Strict` の注記に連動する decode options で決まる。拒否されれば handler は動かない。
+   */
+  const rejection = <Name extends keyof Tools & string>(
+    name: Name,
+    params: Tool.ParametersEncoded<Tools[Name]>,
+  ) =>
+    Effect.flip(call(name, params)).pipe(
+      Effect.flatMap((failure) =>
+        AiError.isAiError(failure)
+          ? Effect.succeed(failure.reason._tag)
+          : Effect.die(`tool ${name} failed without an AI error: ${String(failure)}`),
+      ),
+    );
+
+  return { call, rejection };
+};
+
+const explainerCaller = toolCaller(ExplainerToolkit, ExplainerToolHandlers);
+const collectionCaller = toolCaller(CollectionToolkit, CollectionToolHandlers);
+
+/** 解説動画の MCP サーバーが公開する tool を名前で呼ぶ。 */
+export const callTool = explainerCaller.call;
+export const rejectionReason = explainerCaller.rejection;
+
+/** BGM 動画（collection）の MCP サーバーが公開する tool を名前で呼ぶ。 */
+export const callCollectionTool = collectionCaller.call;
+export const collectionRejectionReason = collectionCaller.rejection;
 
 export interface ToolChannelOptions {
   /** チャンネルの設定ファイル（config/channel/video.json）の内容。省略は書かない。 */
@@ -81,7 +102,7 @@ export interface ToolChannelOptions {
 }
 
 /**
- * `NyaucastToolHandlers` が要求する service をすべてテスト用に揃えて use を動かす。
+ * `ExplainerToolHandlers` と `CollectionToolHandlers` が要求する service をすべてテスト用に揃えて use を動かす。
  * 一時ディレクトリの実ファイルの libSQL、実ファイルの成果物の置き場、偽の HttpClient と静的シークレット、偽の子プロセス。
  * 外部への実通信と本物の子プロセスは起きない。
  */

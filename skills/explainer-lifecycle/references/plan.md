@@ -4,7 +4,7 @@
 
 ## 1. 題材を決める
 
-1. `explainer_fetch_topic_candidates` を呼ぶ。読み取り専用で、何も書かない。
+1. `video_fetch_topic_candidates` を呼ぶ。読み取り専用で、何も書かない。
    - `genre` と `hitPatterns` はチャンネルの宣言。企画の当たる型は、ここにあるキーから選ぶ。
    - `candidates` は登録したフィードの記事。すでに企画の主な出典になっている記事（やめた動画のものも含む）は出てこない。
    - `failedFeeds` に読めなかったフィードが出る。1 つ失敗しても呼び出しは失敗しない。
@@ -13,7 +13,7 @@
 
 ## 2. 企画を書く
 
-`explainer_write_plan` を呼ぶ。
+`video_write_plan` を呼ぶ。
 
 - `title`（タイトル案）、`points`（要点）、`sources`（出典。主な出典を先頭に。URL・記事タイトル・取得時刻だけで、本文は書かない）、`hitPattern`（宣言済みの当たる型のキー）。
 - `videoId` を省くと新しい動画ができ、返ってくる `videoId` がこの後すべての tool の入力になる。

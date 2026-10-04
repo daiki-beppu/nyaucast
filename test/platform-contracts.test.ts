@@ -241,7 +241,7 @@ describe("K1 three identical check surfaces", () => {
     expect(health["maxCrap"]).toBeLessThanOrEqual(30);
   });
 
-  // ADR-0005 決定 7: Chrome を使ってよいのは explainer_render_cut と explainer_preview_cut だけ（tool 名の列挙で限定する）
+  // ADR-0005 決定 7: Chrome を使ってよいのは video_render_cut と video_preview_cut だけ（tool 名の列挙で限定する）
   test("only the two Chrome tools and the wiring can import the Chrome supply", () => {
     const config = readFallowConfig();
     const boundaries = requireRecord(config["boundaries"], "boundaries");
@@ -257,8 +257,8 @@ describe("K1 three identical check surfaces", () => {
       expect.arrayContaining(["src/lib/chrome.ts", "src/lib/cdp.ts", "src/lib/chrome-pin.ts"]),
     );
     expect(zones.get("chrome-users"), fix).toEqual([
-      "src/tools/explainer.renderCut.ts",
-      "src/tools/explainer.previewCut.ts",
+      "src/tools/explainer/video.renderCut.ts",
+      "src/tools/explainer/video.previewCut.ts",
       "src/compositions/capture.ts",
     ]);
     expect(zones.get("wiring"), "Layer を組む entry point と handler の配線だけ").toEqual([

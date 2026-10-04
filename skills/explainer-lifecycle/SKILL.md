@@ -32,16 +32,16 @@ description: 解説動画の plan 区間（題材収集・企画・サムネイ�
 
 使う tool は次の順に並ぶ。collection（音楽チャンネル）用の tool は使わない。
 
-- plan: `explainer_fetch_topic_candidates` → `explainer_write_plan` → `video_generate_thumbnails` / `video_exclude_thumbnail` →［人間が `nyaucast video thumbnail`、判断して `nyaucast video produce`］
+- plan: `video_fetch_topic_candidates` → `video_write_plan` → `video_generate_thumbnails` / `video_exclude_thumbnail` →［人間が `nyaucast video thumbnail`、判断して `nyaucast video produce`］
 - produce:
-  - `explainer_write_script`
-  - → `explainer_write_short` / `explainer_withdraw_short`（ショートの候補）
-  - → `explainer_write_diagram`
-  - → `explainer_synthesize_narration`
-  - → `explainer_mix_audio_track`
-  - → `explainer_assemble_composition`
-  - → `explainer_render_cut`
-  - → `explainer_preview_cut`
+  - `video_write_script`
+  - → `video_write_short` / `video_withdraw_short`（ショートの候補）
+  - → `video_write_diagram`
+  - → `video_synthesize_narration`
+  - → `video_mix_audio_track`
+  - → `video_assemble_composition`
+  - → `video_render_cut`
+  - → `video_preview_cut`
 - どの区間でも: `video_status`
 
 ## ゲートの判断基準
@@ -60,7 +60,7 @@ description: 解説動画の plan 区間（題材収集・企画・サムネイ�
 3. 人間が承認すれば `nyaucast video produce <id>` を叩く（人間が叩く）。作らないなら `nyaucast video abandon <id>`。
 4. 承認の記録（`video_status` の `gateRecords`）を確かめてから produce 区間に入る。produce 区間の tool は、承認の前は `ProduceGateNotApproved` で失敗する。
 
-**不可逆**: 企画ゲートを承認すると、企画は固定される。承認の後は `explainer_write_plan` が `PlanAlreadyApproved` で拒否される。
+**不可逆**: 企画ゲートを承認すると、企画は固定される。承認の後は `video_write_plan` が `PlanAlreadyApproved` で拒否される。
 
 ### 公開ゲートの前（produce 区間の出口）
 
@@ -85,4 +85,4 @@ produce 区間は、人間が公開ゲートを判断できる状態を作った
 | produce 区間に入った後で企画を変えたい                           | 企画は書き換えられない。人間に `nyaucast video abandon <id>` を頼んで動画をやめ、**新しい動画を作る**           |
 | 作らないと決まった                                               | 人間に `nyaucast video abandon <id>` を頼む                                                                     |
 
-新しい動画を作るときの注意: `explainer_write_plan` は、主な出典が同じ（出典が無いときはタイトル案が同じ）動画があると、やめた動画も含めて、新しく作らず既存の動画を `created: false` で返す。1 つの題材から作る解説動画は 1 本に限るので、新しい動画は別の題材で作る。企画ゲートで NO-GO になった動画だけが、人間の `nyaucast video produce <id>` による承認し直しで再開できる。企画ゲートの承認の後にやめた動画（公開ゲートが NO-GO）の扱いは、公開ゲートの手順であり、この codec の範囲の外にある。
+新しい動画を作るときの注意: `video_write_plan` は、主な出典が同じ（出典が無いときはタイトル案が同じ）動画があると、やめた動画も含めて、新しく作らず既存の動画を `created: false` で返す。1 つの題材から作る解説動画は 1 本に限るので、新しい動画は別の題材で作る。企画ゲートで NO-GO になった動画だけが、人間の `nyaucast video produce <id>` による承認し直しで再開できる。企画ゲートの承認の後にやめた動画（公開ゲートが NO-GO）の扱いは、公開ゲートの手順であり、この codec の範囲の外にある。

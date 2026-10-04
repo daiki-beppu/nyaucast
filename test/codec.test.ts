@@ -21,8 +21,9 @@ const validFrontmatter = `---\nname: ${codecName}\ndescription: 解説動画を�
 
 describe("known names come from the real definitions", () => {
   test("tools, CLI paths and failure tags are collected", () => {
-    expect(known.tools.has("explainer_write_plan")).toBe(true);
+    expect(known.tools.has("video_write_plan")).toBe(true);
     expect(known.tools.has("video_status")).toBe(true);
+    expect(known.tools.has("video_check_title")).toBe(true);
     expect(known.cli.get("nyaucast video")).toBe(true);
     expect(known.cli.get("nyaucast video produce")).toBe(false);
     expect(known.cli.has("nyaucast video abandon")).toBe(true);
@@ -39,7 +40,7 @@ describe("known names come from the real definitions", () => {
 
 describe("MCP tool names", () => {
   test("existing names in prose and tables pass", () => {
-    const text = "`explainer_write_plan` で企画を書く。\n\n| tool |\n| --- |\n| video_status |\n";
+    const text = "`video_write_plan` で企画を書く。\n\n| tool |\n| --- |\n| video_status |\n";
     expect(checkToolNames(text, known.tools, known.literals)).toEqual([]);
   });
 
@@ -55,19 +56,19 @@ describe("MCP tool names", () => {
 
   test("a typo in prose and a dotted camelCase name are violations; look-alikes are not", () => {
     const text = [
-      "explainer_write_plann で企画を書く。",
-      "`explaimer_write_plan` と `expainer_write_plan` は接頭辞のタイポ。",
+      "video_write_plann で企画を書く。",
+      "`viedo_write_plan` と `vidoe_write_plan` は接頭辞のタイポ。",
       "foobar_generate_video を呼ぶ。`upload_video_now` も存在しない。",
-      "`explainer.writePlan` は agent から見える名前ではない。",
+      "`video.writePlan` は agent から見える名前ではない。",
       "`too_small` `not_16_9` `config/channel/video.json` `explainer-lifecycle`",
     ].join("\n");
     expect(checkToolNames(text, known.tools, known.literals).toSorted()).toEqual([
-      "expainer_write_plan",
-      "explaimer_write_plan",
-      "explainer.writePlan",
-      "explainer_write_plann",
       "foobar_generate_video",
       "upload_video_now",
+      "video.writePlan",
+      "video_write_plann",
+      "vidoe_write_plan",
+      "viedo_write_plan",
     ]);
   });
 });
@@ -161,7 +162,7 @@ describe("skills directory", () => {
 
   test("a clean codec has no violations", () => {
     withTemporaryDirectory("nyaucast-codec-clean-", (root) => {
-      writeCodec(root, "`explainer_write_plan` → `nyaucast video produce <id>`\n");
+      writeCodec(root, "`video_write_plan` → `nyaucast video produce <id>`\n");
       expect(checkCodecs(root, known)).toEqual([]);
     });
   });
@@ -187,12 +188,9 @@ describe("skills directory", () => {
     withTemporaryDirectory("nyaucast-codec-references-", (root) => {
       writeCodec(root, "");
       mkdirSync(join(root, codecName, "references"));
-      writeFileSync(
-        join(root, codecName, "references", "plan.md"),
-        "explainer_write_plann を呼ぶ。\n",
-      );
+      writeFileSync(join(root, codecName, "references", "plan.md"), "video_write_plann を呼ぶ。\n");
       expect(checkCodecs(root, known).map(({ kind, subject }) => ({ kind, subject }))).toEqual([
-        { kind: "tool", subject: "explainer_write_plann" },
+        { kind: "tool", subject: "video_write_plann" },
       ]);
     });
   });
@@ -214,7 +212,7 @@ describe("the shipped explainer-lifecycle codec", () => {
 
   test("tells the agent to ask a human for the approval commands and to abandon after approval", () => {
     const entry = readFileSync(join(skillsRootOfPackage, codecName, "SKILL.md"), "utf8");
-    expect(entry).toContain("explainer_write_plan");
+    expect(entry).toContain("video_write_plan");
     expect(entry).toContain("nyaucast video produce");
     expect(entry).toContain("nyaucast video abandon");
     expect(entry).toContain("force");

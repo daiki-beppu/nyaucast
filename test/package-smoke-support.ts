@@ -2,7 +2,8 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-import { withTemporaryDirectoryAsync } from "./helpers";
+import { explainerConfig } from "./explainer-helpers.ts";
+import { withTemporaryDirectoryAsync, writeVideoConfig } from "./helpers";
 import { createJsonRpcClient, requireRecord, stopChildProcess } from "./mcp-stdio-helpers";
 
 const packageRoot = resolve(import.meta.dirname, "..");
@@ -122,6 +123,8 @@ export async function inspectInstalledPackage(): Promise<PackageSmokeResult> {
     const manifest = readManifest();
     const consumer = join(directory, "consumer");
     mkdirSync(consumer);
+    // MCP は起動時に config/channel/video.json の kind で公開する tool を決めるので、消費側のチャンネルが解説動画だと宣言する。
+    writeVideoConfig(consumer, explainerConfig);
     writeFileSync(
       join(consumer, "package.json"),
       `${JSON.stringify({ name: "nyaucast-smoke-consumer", private: true })}\n`,

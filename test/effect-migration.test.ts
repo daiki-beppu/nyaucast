@@ -160,32 +160,48 @@ describe("full migration to Effect 4.0", () => {
       assert.deepStrictEqual(filesMatching(sources, /wireName/u), []);
     });
 
-    it("keeps one tool definition file and one test file per tool", () => {
-      const tools = readdirSync(join(packageRoot, "src", "tools"));
-      const definitions = tools.filter((name) => !name.endsWith(".test.ts"));
+    it("keeps one tool definition file and one test file per tool, in a directory per channel kind", () => {
+      const toolsRoot = join(packageRoot, "src", "tools");
+      const entries = readdirSync(toolsRoot, { withFileTypes: true });
+      assert.deepStrictEqual(
+        entries.filter((entry) => !entry.isDirectory()).map((entry) => entry.name),
+        [],
+      );
+      assert.deepStrictEqual(entries.map((entry) => entry.name).toSorted(), [
+        "collection",
+        "explainer",
+      ]);
 
-      for (const definition of definitions) {
-        assert.include(tools, definition.replace(/\.ts$/u, ".test.ts"));
-      }
-      assert.deepStrictEqual(definitions.toSorted(), [
-        "collection.status.ts",
-        "explainer.assembleComposition.ts",
-        "explainer.fetchTopicCandidates.ts",
-        "explainer.mixAudioTrack.ts",
-        "explainer.previewCut.ts",
-        "explainer.renderCut.ts",
-        "explainer.synthesizeNarration.ts",
-        "explainer.withdrawShort.ts",
-        "explainer.writeDiagram.ts",
-        "explainer.writePlan.ts",
-        "explainer.writeScript.ts",
-        "explainer.writeShort.ts",
-        "plan.checkTitle.ts",
-        "plan.init.ts",
-        "video.excludeThumbnail.ts",
-        "video.generateThumbnails.ts",
+      const definitionsOf = (kind: string) => {
+        const files = readdirSync(join(toolsRoot, kind));
+        const definitions = files.filter((name) => !name.endsWith(".test.ts"));
+        for (const definition of definitions) {
+          assert.include(files, definition.replace(/\.ts$/u, ".test.ts"));
+        }
+        return definitions.toSorted();
+      };
+
+      assert.deepStrictEqual(definitionsOf("collection"), [
+        "video.checkTitle.ts",
         "video.status.ts",
+        "video.writePlan.ts",
+      ]);
+      assert.deepStrictEqual(definitionsOf("explainer"), [
+        "video.assembleComposition.ts",
+        "video.excludeThumbnail.ts",
+        "video.fetchTopicCandidates.ts",
+        "video.generateThumbnails.ts",
+        "video.mixAudioTrack.ts",
+        "video.previewCut.ts",
+        "video.renderCut.ts",
+        "video.status.ts",
+        "video.synthesizeNarration.ts",
+        "video.withdrawShort.ts",
+        "video.writeDiagram.ts",
+        "video.writePlan.ts",
         "video.writePostDraft.ts",
+        "video.writeScript.ts",
+        "video.writeShort.ts",
       ]);
     });
   });
