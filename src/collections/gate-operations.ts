@@ -1,24 +1,63 @@
-import { Clock, Effect } from "effect";
+import { Effect, Schema } from "effect";
 
 import { requireCollection } from "../db/collections.ts";
-import { afterLatestFact } from "../db/fact-time.ts";
-import { getGateState, recordApproval, recordRejection, type Gate } from "../db/gates.ts";
+import {
+  getGateDecision,
+  hasCollectionApproval,
+  recordCollectionAbandonment,
+  recordCollectionDecision,
+  type Gate,
+} from "../db/gates.ts";
+import { inTransaction } from "../db/transaction.ts";
 
-interface GateOperationInput {
-  collectionId: string;
-  gate: Gate;
+class CollectionProduceNotApproved extends Schema.TaggedError<CollectionProduceNotApproved>()(
+  "CollectionProduceNotApproved",
+  { collectionId: Schema.String },
+) {}
+
+class CollectionPublishApproved extends Schema.TaggedError<CollectionPublishApproved>()(
+  "CollectionPublishApproved",
+  { collectionId: Schema.String },
+) {}
+
+interface GateOperationResult {
+  readonly collectionId: string;
+  readonly gate: Gate;
+  readonly recorded: boolean;
 }
 
-const gateOperation = (decision: "approved" | "rejected", record: typeof recordApproval) =>
-  Effect.fn("gateOperation")(function* (input: GateOperationInput) {
-    yield* requireCollection(input.collectionId);
-    const state = yield* getGateState(input.collectionId, input.gate);
-    const recorded = state.decision !== decision;
-    if (recorded) {
-      yield* record(input, afterLatestFact(yield* Clock.currentTimeMillis, state.latestTimestamp));
-    }
-    return { ...input, recorded };
-  });
+/** 企画ゲートを承認する。承認済みなら何も積まない。 */
+export const produceCollection = (collectionId: string) =>
+  inTransaction(
+    Effect.gen(function* () {
+      yield* requireCollection(collectionId);
+      const recorded = yield* recordCollectionDecision(collectionId, "produce", "approved");
+      return { collectionId, gate: "produce", recorded } satisfies GateOperationResult;
+    }),
+  );
 
-export const approveCollectionGate = gateOperation("approved", recordApproval);
-export const rejectCollectionGate = gateOperation("rejected", recordRejection);
+/** 公開ゲートを承認する。企画ゲートが承認済みであることが前提。承認済みなら何も積まない。 */
+export const publishCollection = (collectionId: string) =>
+  inTransaction(
+    Effect.gen(function* () {
+      yield* requireCollection(collectionId);
+      if ((yield* getGateDecision(collectionId, "produce")) !== "approved") {
+        return yield* new CollectionProduceNotApproved({ collectionId });
+      }
+      const recorded = yield* recordCollectionDecision(collectionId, "publish", "approved");
+      return { collectionId, gate: "publish", recorded } satisfies GateOperationResult;
+    }),
+  );
+
+/** collection をやめる。公開ゲートの承認がある collection はやめられない。やめたものには何も積まない。 */
+export const abandonCollection = (collectionId: string) =>
+  inTransaction(
+    Effect.gen(function* () {
+      yield* requireCollection(collectionId);
+      if (yield* hasCollectionApproval(collectionId, "publish")) {
+        return yield* new CollectionPublishApproved({ collectionId });
+      }
+      const abandoned = yield* recordCollectionAbandonment(collectionId);
+      return { collectionId, ...abandoned } satisfies GateOperationResult;
+    }),
+  );

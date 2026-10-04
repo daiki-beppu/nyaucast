@@ -132,33 +132,48 @@ export const recordApproval = recordGateFact("approval");
 export const recordRejection = recordGateFact("rejection");
 
 /**
- * 解説動画のゲートの判定が望む判定と違うときだけ、直前の事実より後の時刻で積む。積んだら true。
+ * ゲートの判定が望む判定と違うときだけ、直前の事実より後の時刻で積む。積んだら true。
  * 承認を NO-GO より後に積むことで、やめた動画を再開できる。
  */
-export const recordExplainerDecision = (
-  videoId: string,
-  gate: Gate,
-  decision: "approved" | "rejected",
-) =>
+const recordDecisionIn =
+  (tables: GateTables) => (subjectId: string, gate: Gate, decision: "approved" | "rejected") =>
+    Effect.gen(function* () {
+      const state = yield* gateStateIn(tables)(subjectId, gate);
+      if (state.decision === decision) {
+        return false;
+      }
+      const at = afterLatestFact(yield* Clock.currentTimeMillis, state.latestTimestamp);
+      const kind = decision === "approved" ? "approval" : "rejection";
+      yield* insertGateFact(tables, kind, subjectId, gate, at);
+      return true;
+    });
+
+export const recordExplainerDecision = recordDecisionIn(explainerTables);
+export const recordCollectionDecision = recordDecisionIn(collectionTables);
+
+// まだ承認されていない最初のゲートが、やめる対象になる。
+const abandonIn = (tables: GateTables) => (subjectId: string) =>
   Effect.gen(function* () {
-    const state = yield* gateStateIn(explainerTables)(videoId, gate);
-    if (state.decision === decision) {
-      return false;
-    }
-    const at = afterLatestFact(yield* Clock.currentTimeMillis, state.latestTimestamp);
-    const kind = decision === "approved" ? "approval" : "rejection";
-    yield* insertGateFact(explainerTables, kind, videoId, gate, at);
-    return true;
+    const produce = yield* gateStateIn(tables)(subjectId, "produce");
+    const gate: Gate = produce.decision === "approved" ? "publish" : "produce";
+    const recorded = yield* recordDecisionIn(tables)(subjectId, gate, "rejected");
+    return { gate, recorded };
   });
 
+export const recordExplainerAbandonment = abandonIn(explainerTables);
+export const recordCollectionAbandonment = abandonIn(collectionTables);
+
 /** 指定したゲートの承認が 1 件でもあるか。承認は取り消せない事実なので、NO-GO の有無は見ない。 */
-export const hasExplainerApproval = (videoId: string, gate: Gate) =>
+const hasApprovalIn = (tables: GateTables) => (subjectId: string, gate: Gate) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const rows =
-      yield* sql`SELECT video_id FROM explainer_approvals WHERE video_id = ${videoId} AND gate = ${gate} LIMIT 1`;
+      yield* sql`SELECT ${sql(tables.subjectColumn)} FROM ${sql(tables.approvals)} WHERE ${sql(tables.subjectColumn)} = ${subjectId} AND gate = ${gate} LIMIT 1`;
     return rows.length > 0;
   }).pipe(Effect.orDie);
+
+export const hasExplainerApproval = hasApprovalIn(explainerTables);
+export const hasCollectionApproval = hasApprovalIn(collectionTables);
 
 /** ゲート記録（承認・NO-GO の表の 1 行）。 */
 export const GateRecord = Schema.Struct({

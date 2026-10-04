@@ -1,7 +1,13 @@
 import { Console, Effect } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 
-import { abandonVideo, produceVideo } from "./gate-operations.ts";
+import { ChannelSettings } from "../channel/channel-settings.ts";
+import {
+  abandonCollection,
+  produceCollection,
+  publishCollection,
+} from "../collections/gate-operations.ts";
+import { abandonVideo, produceVideo, publishVideo } from "./gate-operations.ts";
 import { selectThumbnail } from "./thumbnail-selection.ts";
 
 const description = [
@@ -53,20 +59,54 @@ const gateCommand = <E, R>(
     ),
   ).pipe(Command.withDescription(description));
 
+interface GateResult {
+  readonly gate: string;
+  readonly recorded: boolean;
+  readonly videoId: string;
+}
+
+// どちらの動画のゲートを操作するかは、チャンネルの種類が決める。種類は呼び出しのたびに設定から読む。
+const byChannelKind =
+  <E1, R1, E2, R2>(operations: {
+    readonly collection: (
+      id: string,
+    ) => Effect.Effect<
+      { readonly collectionId: string; readonly gate: string; readonly recorded: boolean },
+      E1,
+      R1
+    >;
+    readonly explainer: (id: string) => Effect.Effect<GateResult, E2, R2>;
+  }) =>
+  (id: string) =>
+    Effect.gen(function* () {
+      if ((yield* (yield* ChannelSettings).kind) === "explainer") {
+        return yield* operations.explainer(id);
+      }
+      const { collectionId, gate, recorded } = yield* operations.collection(id);
+      return { gate, recorded, videoId: collectionId } satisfies GateResult;
+    });
+
 const produce = gateCommand(
   "produce",
   "企画ゲートを承認する。やめた動画はこの承認で再開する",
-  produceVideo,
+  byChannelKind({ collection: produceCollection, explainer: produceVideo }),
+  { already: "既に承認済みです", recorded: "承認を記録しました" },
+);
+
+const publish = gateCommand(
+  "publish",
+  "公開ゲートを承認する。企画ゲートの承認が前提",
+  byChannelKind({ collection: publishCollection, explainer: publishVideo }),
   { already: "既に承認済みです", recorded: "承認を記録しました" },
 );
 
 const abandon = gateCommand(
   "abandon",
   "動画をやめる。公開ゲートを承認した動画はやめられない",
-  abandonVideo,
+  byChannelKind({ collection: abandonCollection, explainer: abandonVideo }),
   { already: "既にやめています", recorded: "NO-GO を記録しました" },
 );
 
 export const videoCommand = Command.make("video").pipe(
-  Command.withSubcommands([thumbnail, produce, abandon]),
+  Command.withSubcommands([thumbnail, produce, publish, abandon]),
 );
