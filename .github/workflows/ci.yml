@@ -34,6 +34,12 @@ jobs:
           node-version-file: package.json
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      # composition のテストは、テーマのフォントに偽のバイト列を使うので、文字はシステムのフォントで描かれる。
+      # ランナーには日本語のフォントが無く、フックと字幕の日本語が描かれないので、Noto CJK を入れる。
+      - name: Install CJK fonts
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends fonts-noto-cjk
       # render と preview のテストは、本物の chrome-headless-shell を使う。ランナーに入っている Chrome は使わず、
       # src/lib/chrome-pin.ts が pin した版を鍵に cache して、ダウンロードを省く。
       - name: Read the pinned Chrome version

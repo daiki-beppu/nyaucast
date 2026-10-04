@@ -8,7 +8,17 @@ import {
   planInput,
   source,
 } from "../../test/explainer-helpers.ts";
+import { scriptScenes } from "../../test/composition-helpers.ts";
 import { accepts, publishedAdditionalProperties, setClock } from "../../test/helpers.ts";
+import { approveProduce, scriptInput } from "../../test/narration-helpers.ts";
+import {
+  crossSceneRange,
+  defaultHook,
+  paragraphRange,
+  shortScriptKey,
+  withdrawShort,
+  writeShort,
+} from "../../test/short-helpers.ts";
 import { callTool, rejectionReason, withToolChannel } from "../../test/tool-helpers.ts";
 import {
   insertCandidate,
@@ -59,6 +69,7 @@ describe("video.status: parameters and result", () => {
       },
       gateRecords: [],
       cuts: [],
+      shorts: [],
       thumbnails: { candidates: [], exclusions: [] },
       videoId: "V1",
     };
@@ -90,6 +101,7 @@ describe("video.status: parameters and result", () => {
     const status = {
       abandoned: false,
       cuts: [],
+      shorts: [],
       gateRecords: [],
       plan: { hitPattern: "shock", points: [], sources: [], title: "T", updatedAt: at },
       thumbnails: { candidates: [candidate], exclusions: [exclusion], selection },
@@ -114,6 +126,7 @@ describe("video.status: gate records in the result schema", () => {
     gateRecords: [{ gate: "produce", kind: "approval", recordedAt: noon }],
     plan: { hitPattern: "shock", points: [], sources: [], title: "T", updatedAt: noon },
     cuts: [],
+    shorts: [],
     thumbnails: { candidates: [], exclusions: [] },
     videoId: "V1",
   };
@@ -156,6 +169,7 @@ describe("video.status: reading a video", () => {
           gateRecords: [],
           plan: written.plan,
           cuts: [],
+          shorts: [],
           thumbnails: { candidates: [], exclusions: [] },
           videoId: written.videoId,
         });
@@ -318,6 +332,7 @@ describe("video.status: cuts", () => {
       ],
       gateRecords: [],
       plan: { hitPattern: "shock", points: [], sources: [], title: "T", updatedAt: noon },
+      shorts: [],
       thumbnails: { candidates: [], exclusions: [] },
       videoId: "V1",
     };
@@ -799,6 +814,130 @@ describe("video.status: gate records and the awaiting gate", () => {
 
         assert.isTrue(abandoned.abandoned);
         assert.isUndefined(abandoned.awaitingApproval);
+      }),
+    ),
+  );
+});
+
+describe("video.status: short candidates", () => {
+  const candidate = {
+    createdAt: noon,
+    hook: defaultHook,
+    number: 1,
+    range: crossSceneRange,
+    scriptKey: shortScriptKey(1),
+  };
+  const status = {
+    abandoned: false,
+    cuts: [],
+    gateRecords: [],
+    plan: { hitPattern: "shock", points: [], sources: [], title: "T", updatedAt: noon },
+    shorts: [candidate],
+    thumbnails: { candidates: [], exclusions: [] },
+    videoId: "V1",
+  };
+
+  it("describes the candidates it returns", () => {
+    assert.include(VideoStatusTool.description, "short");
+  });
+
+  it("accepts candidates with their range, hook, script key and time, and rejects action fields in them", () => {
+    assert.isTrue(accepts(VideoStatusTool.successSchema, status));
+    assert.isFalse(accepts(VideoStatusTool.successSchema, { ...status, shorts: undefined }));
+    for (const changed of [
+      { ...candidate, next: "render" },
+      { ...candidate, range: { ...candidate.range, command: "x" } },
+      { ...candidate, range: { ...candidate.range, start: { ...candidate.range.start, next: 1 } } },
+    ]) {
+      assert.isFalse(accepts(VideoStatusTool.successSchema, { ...status, shorts: [changed] }));
+    }
+  });
+
+  // 企画・承認・長尺の台本（シーン 1 は 2 段落、シーン 2 は 2 段落）を用意した動画 V1。
+  const inVideo = <A, E, R>(prefix: string, use: Effect.Effect<A, E, R>) =>
+    withToolChannel(prefix, { config: explainerConfig }, () =>
+      Effect.gen(function* () {
+        yield* setClock(noon);
+        yield* callTool("explainer_write_plan", planInput());
+        yield* approveProduce();
+        yield* callTool("explainer_write_script", scriptInput(scriptScenes));
+        return yield* use;
+      }),
+    );
+
+  it.effect("returns no candidates for a video without shorts", () =>
+    inVideo(
+      "nyaucast-video-status-shorts-none-",
+      Effect.gen(function* () {
+        assert.deepStrictEqual((yield* callTool("video_status", { videoId: "V1" })).shorts, []);
+      }),
+    ),
+  );
+
+  it.effect("returns the last version of each candidate, in ascending number order", () =>
+    inVideo(
+      "nyaucast-video-status-shorts-order-",
+      Effect.gen(function* () {
+        const later = "2026-10-04T05:00:00.000Z";
+        yield* writeShort({ hook: "二番目", number: 2 });
+        yield* writeShort({ hook: "一番目の初版", number: 1 });
+        yield* setClock(later);
+        yield* writeShort({
+          hook: "一番目の改訂",
+          number: 1,
+          range: paragraphRange([2, 1], [2, 2]),
+        });
+
+        const { shorts } = yield* callTool("video_status", { videoId: "V1" });
+
+        assert.deepStrictEqual(shorts, [
+          {
+            createdAt: later,
+            hook: "一番目の改訂",
+            number: 1,
+            range: paragraphRange([2, 1], [2, 2]),
+            scriptKey: shortScriptKey(1),
+          },
+          {
+            createdAt: noon,
+            hook: "二番目",
+            number: 2,
+            range: crossSceneRange,
+            scriptKey: shortScriptKey(2),
+          },
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("leaves a withdrawn candidate out, and the others in", () =>
+    inVideo(
+      "nyaucast-video-status-shorts-withdrawn-",
+      Effect.gen(function* () {
+        yield* writeShort({ number: 1 });
+        yield* writeShort({ number: 2 });
+        yield* withdrawShort(1);
+
+        const { shorts } = yield* callTool("video_status", { videoId: "V1" });
+
+        assert.deepStrictEqual(
+          shorts.map((short) => short.number),
+          [2],
+        );
+      }),
+    ),
+  );
+
+  it.effect("does not carry the candidates of another video", () =>
+    inVideo(
+      "nyaucast-video-status-shorts-other-video-",
+      Effect.gen(function* () {
+        const other = yield* callTool("explainer_write_plan", planInput({ title: "Another" }));
+        yield* writeShort({ number: 1 });
+
+        const { shorts } = yield* callTool("video_status", { videoId: other.videoId });
+
+        assert.deepStrictEqual(shorts, []);
       }),
     ),
   );

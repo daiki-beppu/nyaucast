@@ -15,10 +15,12 @@ import {
   openComposition,
   reseekMismatches,
 } from "../compositions/capture.ts";
-import { appendCutExport, lastCutExport, longCut } from "../db/explainer-cuts.ts";
+import { appendCutExport, lastCutExport } from "../db/explainer-cuts.ts";
+import { ShortCandidateNotFound } from "../db/explainer-shorts.ts";
 import { VideoNotFound } from "../db/explainer-videos.ts";
 import { ChromeUnavailable } from "../lib/chrome.ts";
 import { audioTrackKey } from "../videos/audio-track.ts";
+import { CutField, type CutRequest } from "../videos/cuts.ts";
 import { ProduceGateNotApproved } from "../videos/produce-gate.ts";
 import { type FileReader, VideoFiles } from "../videos/video-files.ts";
 
@@ -37,14 +39,15 @@ class EncodeFailed extends Schema.TaggedError<EncodeFailed>()("EncodeFailed", {
 
 export const ExplainerRenderCutTool = Tool.make("explainer_render_cut", {
   description: [
-    "Render the long cut of an explainer video to an mp4 (H.264 video and AAC audio, 30 fps): ",
-    "the composition (videos/<id>/compositions/long.html) is opened in a headless Chrome, every frame is captured by seeking to its time, ",
-    "and the frames are encoded together with the final audio track (videos/<id>/audio/track.wav). ",
+    "Render a cut of an explainer video (the long cut by default) to an mp4 (H.264 video and AAC audio, 30 fps): ",
+    "the composition of the cut (videos/<id>/compositions/<cut>.html) is opened in a headless Chrome, every frame is captured by seeking to its time, ",
+    "and the frames are encoded together with the final audio track of the cut (videos/<id>/audio/track.wav for the long cut, audio/<cut>.wav for a short). ",
     "The composition is checked against docs/reference/composition-contract.md first, and seeking again to the end of every segment must give the same picture as the first time. ",
-    "The mp4 is written to videos/<id>/cuts/long/long.mp4 and one export is recorded for the cut with the key, the composition hash and the render hash. ",
+    "The mp4 is written to videos/<id>/cuts/<cut>/<cut>.mp4 and one export is recorded for the cut with the key, the composition hash and the render hash. ",
     "An export whose render hash (composition, audio track and encoding settings) is unchanged and whose file exists is returned as it is, without recording another; force renders it again. ",
     "Requires the produce gate to be approved. ",
     "Fails with VideoNotFound for an unknown video, with ProduceGateNotApproved before the produce gate is approved, ",
+    "with ShortCandidateNotFound when the cut names a short candidate that was never written or is withdrawn, ",
     "with CompositionNotFound or AudioTrackNotFound when an input is missing, ",
     "with AudioTrackUnreadable when the audio track cannot be decoded, with EncodeFailed when the encoding fails part way, ",
     "with InvalidComposition (violations lists every broken rule) when the composition breaks the contract or its fps is not 30, ",
@@ -59,6 +62,7 @@ export const ExplainerRenderCutTool = Tool.make("explainer_render_cut", {
     NotExplainerChannel,
     VideoNotFound,
     ProduceGateNotApproved,
+    ShortCandidateNotFound,
     CompositionNotFound,
     AudioTrackNotFound,
     AudioTrackUnreadable,
@@ -68,6 +72,7 @@ export const ExplainerRenderCutTool = Tool.make("explainer_render_cut", {
     ChromeUnavailable,
   ]),
   parameters: Schema.Struct({
+    cut: CutField,
     force: Schema.optionalKey(Schema.Boolean).annotate({
       description: "Render the mp4 again even when its inputs are unchanged.",
     }),
@@ -96,23 +101,37 @@ const encoding = {
   videoCodec: "avc",
 } as const;
 
-const cutExportKey = (videoId: string) => `videos/${videoId}/cuts/${longCut}/long.mp4`;
+const cutExportKey = (videoId: string, cut: string) => `videos/${videoId}/cuts/${cut}/${cut}.mp4`;
 
 const renderKey = (compositionHash: string, trackHash: string) =>
   sha256(JSON.stringify([processVersion, compositionHash, trackHash, encoding]));
 
 // 音声トラックを 1 つのハンドルで開く。鍵の hash と、エンコードに使う音声が、同じ内容を指す。無ければ AudioTrackNotFound。
-const openTrack = (videoId: string) =>
+const openTrack = (videoId: string, cut: string) =>
   Effect.gen(function* () {
-    const reader = yield* (yield* VideoFiles).openReader(audioTrackKey(videoId));
+    const reader = yield* (yield* VideoFiles).openReader(audioTrackKey(videoId, cut));
     return Option.isSome(reader) ? reader.value : yield* new AudioTrackNotFound({ videoId });
   });
 
 // 鍵が一致する最後の書き出しがあり、ファイルも残っていれば再利用できる（ファイルが無ければ作り直して行を積む）。
-const reusableExport = (videoId: string, renderHash: string) =>
+// 書き出しが再利用できる条件: 鍵が一致し、ショートなら候補の最後の版（after）より新しい（ADR-0009: 書き出しは最後の版より新しい）。
+const isCurrentExport = (
+  last: { readonly createdAt: string; readonly renderHash: string },
+  renderHash: string,
+  after: string | undefined,
+) => last.renderHash === renderHash && (after === undefined || last.createdAt > after);
+
+// 鍵が一致する最後の書き出しがあり、ファイルも残っていれば再利用できる（ファイルが無ければ作り直して行を積む）。
+const reusableExport = (
+  videoId: string,
+  cut: string,
+  renderHash: string,
+  after: string | undefined,
+) =>
   Effect.gen(function* () {
-    const last = yield* lastCutExport(videoId, longCut);
-    if (Option.isNone(last) || last.value.renderHash !== renderHash) return Option.none();
+    const last = yield* lastCutExport(videoId, cut);
+    if (Option.isNone(last) || !isCurrentExport(last.value, renderHash, after))
+      return Option.none();
     return (yield* (yield* VideoFiles).exists(last.value.key)) ? last : Option.none();
   });
 
@@ -143,34 +162,32 @@ const renderMp4 = (videoId: string, composition: Uint8Array, key: string, track:
     }),
   );
 
-const renderCut = Effect.fn("explainer.renderCut")(function* ({
-  force,
-  videoId,
-}: {
-  readonly force?: boolean;
-  readonly videoId: string;
-}) {
-  const composition = yield* readCutComposition(videoId);
-  const track = yield* openTrack(videoId);
+const renderCut = Effect.fn("explainer.renderCut")(function* ({ cut, force, videoId }: CutRequest) {
+  const composition = yield* readCutComposition(videoId, cut);
+  const track = yield* openTrack(videoId, composition.cut);
   const renderHash = renderKey(composition.hash, yield* track.sha256);
-  const existing = force === true ? Option.none() : yield* reusableExport(videoId, renderHash);
+  const existing =
+    force === true
+      ? Option.none()
+      : yield* reusableExport(videoId, composition.cut, renderHash, composition.after);
   if (Option.isSome(existing)) {
     const { compositionHash, key } = existing.value;
-    return { compositionHash, cut: longCut, key, renderHash, rendered: false, videoId };
+    return { compositionHash, cut: composition.cut, key, renderHash, rendered: false, videoId };
   }
-  const key = cutExportKey(videoId);
+  const key = cutExportKey(videoId, composition.cut);
   // ファイル → 行の順に書く。行を積む前に落ちても、次の実行で作り直して行が積まれる。
   yield* renderMp4(videoId, composition.bytes, key, track);
   yield* appendCutExport({
+    after: composition.after,
     compositionHash: composition.hash,
-    cut: longCut,
+    cut: composition.cut,
     key,
     renderHash,
     videoId,
   });
   return {
     compositionHash: composition.hash,
-    cut: longCut,
+    cut: composition.cut,
     key,
     renderHash,
     rendered: true,
@@ -181,5 +198,5 @@ const renderCut = Effect.fn("explainer.renderCut")(function* ({
 // 同じ動画への並行する呼び出しが、同じ一時ファイルへ書いてぶつからず、同じ行を二重に積まないよう、直列にする。
 const renderLock = Semaphore.makeUnsafe(1);
 
-export const explainerRenderCut = (input: { readonly force?: boolean; readonly videoId: string }) =>
+export const explainerRenderCut = (input: CutRequest) =>
   renderLock.withPermits(1)(Effect.scoped(renderCut(input)));

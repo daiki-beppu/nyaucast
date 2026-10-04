@@ -36,8 +36,13 @@ import {
   ExplainerWriteDiagramTool,
   explainerWriteDiagram,
 } from "./tools/explainer.writeDiagram.ts";
+import {
+  ExplainerWithdrawShortTool,
+  explainerWithdrawShort,
+} from "./tools/explainer.withdrawShort.ts";
 import { ExplainerWritePlanTool, explainerWritePlan } from "./tools/explainer.writePlan.ts";
 import { ExplainerWriteScriptTool, explainerWriteScript } from "./tools/explainer.writeScript.ts";
+import { ExplainerWriteShortTool, explainerWriteShort } from "./tools/explainer.writeShort.ts";
 import { PlanInitTool, planInit } from "./tools/plan.init.ts";
 import {
   VideoExcludeThumbnailTool,
@@ -59,6 +64,8 @@ export const NyaucastToolkit = Toolkit.make(
   ExplainerFetchTopicCandidatesTool,
   ExplainerWritePlanTool,
   ExplainerWriteScriptTool,
+  ExplainerWriteShortTool,
+  ExplainerWithdrawShortTool,
   ExplainerWriteDiagramTool,
   ExplainerSynthesizeNarrationTool,
   ExplainerAssembleCompositionTool,
@@ -103,12 +110,16 @@ export const NyaucastToolHandlers = NyaucastToolkit.toLayer(
         explainerRenderCut(input).pipe(Effect.provideContext(context)),
       explainer_synthesize_narration: (input) =>
         explainerSynthesizeNarration(input).pipe(Effect.provideContext(context)),
+      explainer_withdraw_short: (input) =>
+        explainerWithdrawShort(input).pipe(Effect.provideContext(context)),
       explainer_write_diagram: (input) =>
         explainerWriteDiagram(input).pipe(Effect.provideContext(context)),
       explainer_write_plan: (input) =>
         explainerWritePlan(input).pipe(Effect.provideContext(context)),
       explainer_write_script: (input) =>
         explainerWriteScript(input).pipe(Effect.provideContext(context)),
+      explainer_write_short: (input) =>
+        explainerWriteShort(input).pipe(Effect.provideContext(context)),
       plan_check_title: (input) => planCheckTitle(input).pipe(Effect.provideContext(context)),
       plan_init: (input) => planInit(input).pipe(Effect.provideContext(context)),
       video_exclude_thumbnail: (input) =>

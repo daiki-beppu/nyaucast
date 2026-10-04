@@ -7,12 +7,15 @@ import {
   InvalidChannelConfig,
   NotExplainerChannel,
 } from "../channel/channel-settings.ts";
+import { ShortCandidateNotFound } from "../db/explainer-shorts.ts";
 import { VideoNotFound, requireLatestPlan } from "../db/explainer-videos.ts";
 import { InvalidDiagrams, reviewDiagram } from "../diagrams/diagram.ts";
 import { writeDiagramFile } from "../diagrams/diagram-files.ts";
 import { splitPhrases } from "../narration/phrases.ts";
 import { InvalidReadingMarkup, ParagraphTooLong } from "../scripts/script.ts";
 import { InvalidScriptFile, ScriptNotFound, readScript } from "../scripts/script-files.ts";
+import { Ordinal } from "../shorts/short-candidate.ts";
+import { resolveShortTarget } from "../videos/cuts.ts";
 import { ProduceGateNotApproved, requireProduceApproval } from "../videos/produce-gate.ts";
 
 class SceneNotFound extends Schema.TaggedError<SceneNotFound>()("SceneNotFound", {
@@ -27,11 +30,12 @@ export const ExplainerWriteDiagramTool = Tool.make("explainer_write_diagram", {
     "The vocabulary is data-beat (the element appears at a position), data-enter (fade, slide or pop; needs data-beat), data-from (left, right, top or bottom; only with data-enter slide) and data-dim (the element dims at a position, after its data-beat). " +
     "Only one element moves at a position. Subtitles are drawn by the assembler, never by the diagram. " +
     "The diagram is checked against the saved script and every violation is listed at once; nothing is written when there is one. " +
+    "With short, the diagram belongs to the dedicated short of that candidate: it is checked against the dedicated script and written to videos/<id>/shorts/<short>/scenes/. " +
     "Writing a scene again replaces its diagram. The diagram is the agent's input and is never deleted. " +
     "Requires the produce gate to be approved. " +
     "Fails with VideoNotFound for an unknown video, with ProduceGateNotApproved before the produce gate is approved, " +
     "with ScriptNotFound or InvalidScriptFile for the saved script, with InvalidReadingMarkup or ParagraphTooLong when the saved script no longer passes the checks of explainer_write_script, " +
-    "with SceneNotFound when the script has no such scene, and with InvalidDiagrams (videoId and violations, each with scene and rule) for the violations of the diagram. " +
+    "with SceneNotFound when the script has no such scene, with ShortCandidateNotFound when short names a candidate that was never written or is withdrawn, and with InvalidDiagrams (videoId and violations, each with scene and rule) for the violations of the diagram. " +
     "Returns the key of the written file.",
   failure: Schema.Union([
     ChannelConfigNotFound,
@@ -44,6 +48,7 @@ export const ExplainerWriteDiagramTool = Tool.make("explainer_write_diagram", {
     InvalidReadingMarkup,
     ParagraphTooLong,
     SceneNotFound,
+    ShortCandidateNotFound,
     InvalidDiagrams,
   ]),
   parameters: Schema.Struct({
@@ -51,6 +56,12 @@ export const ExplainerWriteDiagramTool = Tool.make("explainer_write_diagram", {
     scene: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThan(0)).annotate({
       description: "Scene number, numbered from 1.",
     }),
+    short: Schema.optionalKey(
+      Ordinal.annotate({
+        description:
+          "Candidate number of a dedicated short, to write its diagram instead of the long cut's.",
+      }),
+    ),
     videoId: Schema.String.annotate({ description: "Video ID returned by explainer_write_plan." }),
   }),
   success: Schema.Struct({
@@ -63,16 +74,19 @@ export const ExplainerWriteDiagramTool = Tool.make("explainer_write_diagram", {
 export const explainerWriteDiagram = Effect.fn("explainer.writeDiagram")(function* ({
   html,
   scene,
+  short,
   videoId,
 }: {
   readonly html: string;
   readonly scene: number;
+  readonly short?: number;
   readonly videoId: string;
 }) {
   yield* (yield* ChannelSettings).requireExplainer;
   yield* requireLatestPlan(videoId);
   yield* requireProduceApproval(videoId);
-  const paragraphs = (yield* readScript(videoId)).filter((paragraph) => paragraph.scene === scene);
+  const target = yield* resolveShortTarget(videoId, short);
+  const paragraphs = (yield* readScript(target)).filter((paragraph) => paragraph.scene === scene);
   if (paragraphs.length === 0) {
     return yield* new SceneNotFound({ scene, videoId });
   }
@@ -81,6 +95,6 @@ export const explainerWriteDiagram = Effect.fn("explainer.writeDiagram")(functio
   if (violations.length > 0) {
     return yield* new InvalidDiagrams({ videoId, violations });
   }
-  const key = yield* writeDiagramFile(videoId, scene, html);
+  const key = yield* writeDiagramFile(target, scene, html);
   return { key, scene, videoId };
 });

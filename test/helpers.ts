@@ -130,6 +130,8 @@ export const selectAll = (
     | "explainer_cut_previews"
     | "explainer_plans"
     | "explainer_rejections"
+    | "explainer_short_versions"
+    | "explainer_short_withdrawals"
     | "explainer_thumbnail_candidates"
     | "explainer_thumbnail_exclusions"
     | "explainer_thumbnail_rejections"

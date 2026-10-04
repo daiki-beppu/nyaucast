@@ -61,6 +61,6 @@ export const explainerWriteScript = Effect.fn("explainer.writeScript")(function*
   yield* requireLatestPlan(videoId);
   yield* requireProduceApproval(videoId);
   const paragraphs = yield* parseScript(scenes);
-  const key = yield* writeScriptFile(videoId, scenes);
+  const key = yield* writeScriptFile({ videoId }, scenes);
   return { key, paragraphs: paragraphs.length, scenes: scenes.length, videoId };
 });

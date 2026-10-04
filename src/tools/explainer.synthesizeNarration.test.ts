@@ -36,6 +36,15 @@ import {
   type FakeGemini,
   type FakeReply,
 } from "../../test/thumbnail-helpers.ts";
+import {
+  dedicatedScript,
+  paragraphRange,
+  shortNarrationDirectory,
+  shortTimingKey,
+  shortTrackKey,
+  withdrawShort,
+  writeShort,
+} from "../../test/short-helpers.ts";
 import { callTool, rejectionReason, withToolChannel } from "../../test/tool-helpers.ts";
 import { maxParagraphReadingCharacters } from "../scripts/script.ts";
 import { ExplainerSynthesizeNarrationTool } from "./explainer.synthesizeNarration.ts";
@@ -866,6 +875,192 @@ describe("explainer.synthesizeNarration: what has to exist before the provider i
         assert.strictEqual(failure._tag, "ParagraphTooLong");
         assert.strictEqual(gemini.calls.length, 0);
         assert.isFalse(channelFileExists(channelRoot, narrationDirectory));
+      }),
+    );
+  });
+});
+
+// ---- 専用ショートのナレーション（#550）----
+// 契約（この issue の計画 C6・C8）:
+//   パラメータに short?（候補の番号）が増える。付けると、台本は長尺ではなく専用ショートの台本（shorts/<n>/script.json）で、
+//   成果物は shorts/<n>/narration/{track.wav,timing.json}。長尺のナレーションは読まず、書き換えない。
+//   候補が無い・取り下げ済みなら ShortCandidateNotFound（プロバイダーは呼ばない）。
+
+// 長尺の台本はシーン 1 つ・段落 1 つ。
+const onlyParagraph = paragraphRange([1, 1], [1, 1]);
+
+const synthesizeShort = (short = 1, extra: { force?: boolean } = {}) =>
+  callTool("explainer_synthesize_narration", { short, videoId: "V1", ...extra });
+
+const readShortTiming = (channelRoot: string) =>
+  JSON.parse(new TextDecoder().decode(readChannelFile(channelRoot, shortTimingKey(1)))) as Timing;
+
+describe("explainer.synthesizeNarration: the dedicated short's narration", () => {
+  const schema = ExplainerSynthesizeNarrationTool.parametersSchema;
+
+  it("accepts an optional short number, and rejects what is not a positive safe integer", () => {
+    assert.isTrue(accepts(schema, { short: 1, videoId: "V1" }));
+    assert.isTrue(accepts(schema, { force: true, short: 2, videoId: "V1" }));
+    for (const short of [0, -1, 1.5, 9_007_199_254_740_992, "1"]) {
+      assert.isFalse(accepts(schema, { short, videoId: "V1" }));
+    }
+  });
+
+  it("describes the short failure tag", () => {
+    assert.include(ExplainerSynthesizeNarrationTool.description, "ShortCandidateNotFound");
+  });
+
+  it.effect("synthesizes the dedicated script into the short's narration directory", () => {
+    const gemini = fakeGemini([speech(2), speech(3)]);
+    return inChannel("nyaucast-narration-short-write-", { gemini }, (channelRoot) =>
+      Effect.gen(function* () {
+        yield* writeScript([["長尺の台本です。"]]);
+        yield* writeShort({ range: onlyParagraph });
+
+        const result = yield* synthesizeShort();
+
+        assert.strictEqual(result.trackKey, shortTrackKey(1));
+        assert.strictEqual(result.timingKey, shortTimingKey(1));
+        assert.strictEqual(result.videoId, "V1");
+        assert.strictEqual(gemini.calls.length, 2);
+        assert.include(gemini.calls[0]?.prompt ?? "", dedicatedScript[0][0]);
+        assert.include(gemini.calls[1]?.prompt ?? "", dedicatedScript[1][0]);
+        const timing = readShortTiming(channelRoot);
+        assert.deepStrictEqual(
+          timing.paragraphs.map((paragraph) => [paragraph.scene, paragraph.paragraph]),
+          [
+            [1, 1],
+            [2, 1],
+          ],
+        );
+        assert.deepStrictEqual(
+          timing.paragraphs.flatMap((paragraph) => paragraph.phrases.map((phrase) => phrase.text)),
+          [dedicatedScript[0][0], dedicatedScript[1][0]],
+        );
+        const track = readWav(readChannelFile(channelRoot, shortTrackKey(1)));
+        assert.strictEqual(track.sampleRate, sampleRate);
+        assert.closeTo(track.samples.length / sampleRate, timing.durationSeconds, 1e-9);
+        assert.isFalse(channelFileExists(channelRoot, trackKey));
+        assert.isFalse(channelFileExists(channelRoot, timingKey));
+      }),
+    );
+  });
+
+  it.effect("leaves the long narration as it is", () => {
+    const gemini = fakeGemini([speech(2), speech(2), speech(3)]);
+    return inChannel("nyaucast-narration-short-and-long-", { gemini }, (channelRoot) =>
+      Effect.gen(function* () {
+        yield* writeScript([["長尺の台本です。"]]);
+        yield* synthesize();
+        const longTrack = readChannelFile(channelRoot, trackKey);
+        const longTiming = readChannelFile(channelRoot, timingKey);
+        yield* writeShort({ range: onlyParagraph });
+
+        yield* synthesizeShort();
+
+        assert.deepStrictEqual(readChannelFile(channelRoot, trackKey), longTrack);
+        assert.deepStrictEqual(readChannelFile(channelRoot, timingKey), longTiming);
+      }),
+    );
+  });
+
+  it.effect("does not call the provider again for an unchanged dedicated script", () => {
+    const gemini = fakeGemini([speech(2), speech(3)]);
+    return inChannel("nyaucast-narration-short-again-", { gemini }, (channelRoot) =>
+      Effect.gen(function* () {
+        yield* writeScript([["長尺の台本です。"]]);
+        yield* writeShort({ range: onlyParagraph });
+        yield* synthesizeShort();
+        const track = readChannelFile(channelRoot, shortTrackKey(1));
+
+        yield* synthesizeShort();
+
+        assert.strictEqual(gemini.calls.length, 2);
+        assert.deepStrictEqual(readChannelFile(channelRoot, shortTrackKey(1)), track);
+      }),
+    );
+  });
+
+  it.effect("keeps each candidate's narration in its own directory", () => {
+    const gemini = fakeGemini([speech(2), speech(2), speech(2)]);
+    return inChannel("nyaucast-narration-short-two-", { gemini }, (channelRoot) =>
+      Effect.gen(function* () {
+        yield* writeScript([["長尺の台本です。"]]);
+        yield* writeShort({ number: 1, range: onlyParagraph });
+        yield* writeShort({ number: 2, range: onlyParagraph, scenes: [["二つ目の候補の台本。"]] });
+
+        yield* synthesizeShort(1);
+        yield* synthesizeShort(2);
+
+        assert.isTrue(channelFileExists(channelRoot, shortTrackKey(1)));
+        assert.isTrue(channelFileExists(channelRoot, shortTrackKey(2)));
+        assert.strictEqual(readShortTiming(channelRoot).paragraphs.length, 2);
+        assert.strictEqual(
+          (
+            JSON.parse(
+              new TextDecoder().decode(readChannelFile(channelRoot, shortTimingKey(2))),
+            ) as Timing
+          ).paragraphs.length,
+          1,
+        );
+        assert.notStrictEqual(shortNarrationDirectory(1), shortNarrationDirectory(2));
+      }),
+    );
+  });
+
+  it.effect(
+    "fails with ShortCandidateNotFound for a number that was never written, without calling the provider",
+    () => {
+      const gemini = fakeGemini([speech(2)]);
+      return inChannel("nyaucast-narration-short-no-candidate-", { gemini }, (channelRoot) =>
+        Effect.gen(function* () {
+          yield* writeScript([["長尺の台本です。"]]);
+
+          const failure = yield* Effect.flip(synthesizeShort(1));
+
+          assert.strictEqual(failure._tag, "ShortCandidateNotFound");
+          assert.strictEqual(failureFacts(failure)["videoId"], "V1");
+          assert.strictEqual(failureFacts(failure)["number"], 1);
+          assert.strictEqual(gemini.calls.length, 0);
+          assert.isFalse(channelFileExists(channelRoot, shortNarrationDirectory(1)));
+        }),
+      );
+    },
+  );
+
+  it.effect(
+    "fails with ShortCandidateNotFound for a withdrawn candidate, without calling the provider",
+    () => {
+      const gemini = fakeGemini([speech(2)]);
+      return inChannel("nyaucast-narration-short-withdrawn-", { gemini }, (channelRoot) =>
+        Effect.gen(function* () {
+          yield* writeScript([["長尺の台本です。"]]);
+          yield* writeShort({ range: onlyParagraph });
+          yield* withdrawShort(1);
+
+          const failure = yield* Effect.flip(synthesizeShort(1));
+
+          assert.strictEqual(failure._tag, "ShortCandidateNotFound");
+          assert.strictEqual(gemini.calls.length, 0);
+          assert.isFalse(channelFileExists(channelRoot, shortNarrationDirectory(1)));
+        }),
+      );
+    },
+  );
+
+  it.effect("fails with ProduceGateNotApproved after a NO-GO, without calling the provider", () => {
+    const gemini = fakeGemini([speech(2)]);
+    return inChannel("nyaucast-narration-short-rejected-", { gemini }, (channelRoot) =>
+      Effect.gen(function* () {
+        yield* writeScript([["長尺の台本です。"]]);
+        yield* writeShort({ range: onlyParagraph });
+        yield* rejectProduce();
+
+        const failure = yield* Effect.flip(synthesizeShort(1));
+
+        assert.strictEqual(failure._tag, "ProduceGateNotApproved");
+        assert.strictEqual(gemini.calls.length, 0);
+        assert.isFalse(channelFileExists(channelRoot, shortNarrationDirectory(1)));
       }),
     );
   });

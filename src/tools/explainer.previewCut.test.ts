@@ -10,7 +10,21 @@ import {
   setClock,
 } from "../../test/helpers.ts";
 import { explainerConfig } from "../../test/explainer-helpers.ts";
-import { recordPlan, rejectProduce, tableRowCounts } from "../../test/narration-helpers.ts";
+import {
+  recordPlan,
+  rejectProduce,
+  scriptInput,
+  tableRowCounts,
+} from "../../test/narration-helpers.ts";
+import { scriptScenes } from "../../test/composition-helpers.ts";
+import {
+  clipCut,
+  cutCompositionKey,
+  cutPreviewKey,
+  dedicatedCut,
+  withdrawShort,
+  writeShort,
+} from "../../test/short-helpers.ts";
 import {
   centerPixel,
   colorByCallCount,
@@ -27,12 +41,16 @@ import {
   writeComposition,
   writeTrack,
 } from "../../test/render-helpers.ts";
-import { channelFileExists, readChannelFile } from "../../test/thumbnail-helpers.ts";
+import {
+  channelFileExists,
+  readChannelFile,
+  writeChannelFile,
+} from "../../test/thumbnail-helpers.ts";
 import { callTool, rejectionReason, withToolChannel } from "../../test/tool-helpers.ts";
 import { ExplainerPreviewCutTool } from "./explainer.previewCut.ts";
 
 // 契約（この issue の計画 D1・D5・D6・D8〜D11）:
-//   tool 名 explainer_preview_cut、パラメータ { videoId, force? }（長尺の `long` 固定）。
+//   tool 名 explainer_preview_cut、パラメータ { videoId, cut?, force? }（cut は "long" か "short-<n>-clip" / "short-<n>-dedicated"。省略は "long"）。
 //   成功値 { cut: "long", compositionHash, frames: [{ key, segment }], previewed, videoId }（segment は 1 始まり）。
 //   frames[i] は segment i+1 の終わる直前のフレームの PNG。キーは videos/<id>/cuts/long/previews/<compositionHash>/<segment>.png。
 //   事実 explainer_cut_previews の行は、実際に撮ったときだけ積む。音声トラックは要らない。
@@ -86,7 +104,6 @@ describe("explainer.previewCut: parameters", () => {
     assert.isTrue(accepts(schema, { force: false, videoId: "V1" }));
     assert.isFalse(accepts(schema, {}));
     assert.isFalse(accepts(schema, { videoId: "V1", force: 1 }));
-    assert.isFalse(accepts(schema, { cut: "long", videoId: "V1" }));
     assert.strictEqual(publishedAdditionalProperties(ExplainerPreviewCutTool), false);
   });
 
@@ -460,7 +477,7 @@ describe("explainer.previewCut: preconditions", () => {
     withComposition("nyaucast-preview-unknown-key-", () =>
       Effect.gen(function* () {
         assert.strictEqual(
-          yield* rejectionReason("explainer_preview_cut", { cut: "long", videoId: "V1" } as never),
+          yield* rejectionReason("explainer_preview_cut", { fps: 60, videoId: "V1" } as never),
           "ToolParameterValidationError",
         );
         assert.deepStrictEqual(yield* previewRows, []);
@@ -527,6 +544,197 @@ describe("explainer.previewCut: preconditions", () => {
           assert.strictEqual(failure._tag, "NotExplainerChannel");
         }),
     ),
+  );
+});
+
+// ---- ショートのカット（#550）----
+// 契約（この issue の計画 C7・C8）:
+//   パラメータに cut?（"long" か "short-<n>-clip" / "short-<n>-dedicated"）が増える。省略は "long"。
+//   ショートのカットは compositions/<cut>.html を開き、プレビューは cuts/<cut>/previews/<hash>/<segment>.png に置く。
+//   事実 explainer_cut_previews の行には、そのカットの名前が入る。候補が無い・取り下げ済みなら ShortCandidateNotFound。
+
+const previewCut = (cut: string, extra: { force?: boolean } = {}) =>
+  callTool("explainer_preview_cut", { cut, videoId: "V1", ...extra });
+
+const writeCutComposition = (channelRoot: string, cut: string, html = compositionHtml()) =>
+  writeChannelFile(channelRoot, cutCompositionKey(cut), new TextEncoder().encode(html));
+
+// 企画・承認・長尺の台本・候補 1 を用意した動画 V1（composition は置かない）。
+const withShort = <A, E, R>(prefix: string, use: (channelRoot: string) => Effect.Effect<A, E, R>) =>
+  inVideo(prefix, (channelRoot) =>
+    Effect.gen(function* () {
+      yield* callTool("explainer_write_script", scriptInput(scriptScenes));
+      yield* writeShort();
+      yield* setClock(noon);
+      return yield* use(channelRoot);
+    }),
+  );
+
+describe("explainer.previewCut: the cut parameter", () => {
+  const schema = ExplainerPreviewCutTool.parametersSchema;
+
+  it.each(["long", "short-1-clip", "short-1-dedicated", "short-12-clip", "short-100-dedicated"])(
+    "accepts the cut %j",
+    (cut) => {
+      assert.isTrue(accepts(schema, { cut, videoId: "V1" }));
+      assert.isTrue(accepts(schema, { cut, force: true, videoId: "V1" }));
+    },
+  );
+
+  it.each([
+    "short-01-clip",
+    "short-0-clip",
+    "short-1-vertical",
+    "short-1.5-clip",
+    "short--1-clip",
+    "Long",
+    "short-1-clip ",
+    "",
+  ])("does not accept the cut %j", (cut) => {
+    assert.isFalse(accepts(schema, { cut, videoId: "V1" }));
+  });
+
+  it("describes the short failure tag", () => {
+    assert.include(ExplainerPreviewCutTool.description, "ShortCandidateNotFound");
+  });
+
+  it.effect(
+    "previews the long cut for the cut long, as when the cut is omitted",
+    () =>
+      withComposition("nyaucast-preview-cut-long-", () =>
+        Effect.gen(function* () {
+          const result = yield* previewCut("long");
+
+          assert.strictEqual(result.cut, "long");
+          assert.strictEqual(firstKey(result), previewKey(result.compositionHash, 1));
+        }),
+      ),
+    slow,
+  );
+});
+
+describe("explainer.previewCut: the two cuts of a short candidate", () => {
+  it.effect(
+    "records one preview for each of short-1-clip and short-1-dedicated, with the frames under each cut's directory",
+    () =>
+      withShort("nyaucast-preview-short-two-cuts-", (channelRoot) =>
+        Effect.gen(function* () {
+          writeCutComposition(channelRoot, clipCut(1));
+          writeCutComposition(channelRoot, dedicatedCut(1));
+
+          const clip = yield* previewCut(clipCut(1));
+          const dedicated = yield* previewCut(dedicatedCut(1));
+
+          assert.strictEqual(clip.cut, clipCut(1));
+          assert.strictEqual(dedicated.cut, dedicatedCut(1));
+          assert.isTrue(clip.previewed);
+          assert.isTrue(dedicated.previewed);
+          assert.deepStrictEqual(
+            clip.frames.map((frame) => frame.key),
+            [1, 2].map((segment) => cutPreviewKey(clipCut(1), clip.compositionHash, segment)),
+          );
+          assert.deepStrictEqual(
+            dedicated.frames.map((frame) => frame.key),
+            [1, 2].map((segment) =>
+              cutPreviewKey(dedicatedCut(1), dedicated.compositionHash, segment),
+            ),
+          );
+          for (const frame of [...clip.frames, ...dedicated.frames]) {
+            assert.isTrue(channelFileExists(channelRoot, frame.key));
+          }
+          assert.deepStrictEqual(
+            (yield* previewRows).map((row) => [row.cut, row.video_id, row.composition_hash]),
+            [
+              [clipCut(1), "V1", clip.compositionHash],
+              [dedicatedCut(1), "V1", dedicated.compositionHash],
+            ],
+          );
+          assert.isFalse(channelFileExists(channelRoot, previewKey(clip.compositionHash, 1)));
+        }),
+      ),
+    slow,
+  );
+
+  it.effect("reads the composition of the cut, not the long composition", () =>
+    withShort("nyaucast-preview-short-composition-", (channelRoot) =>
+      Effect.gen(function* () {
+        writeComposition(channelRoot, compositionHtml());
+
+        const failure = yield* Effect.flip(previewCut(clipCut(1)));
+
+        assert.strictEqual(failure._tag, "CompositionNotFound");
+        assert.strictEqual((yield* previewRows).length, 0);
+      }),
+    ),
+  );
+
+  it.effect(
+    "returns the existing preview of a cut for the same composition, and one cut does not reuse the other's",
+    () =>
+      withShort("nyaucast-preview-short-again-", (channelRoot) =>
+        Effect.gen(function* () {
+          writeCutComposition(channelRoot, clipCut(1));
+          writeCutComposition(channelRoot, dedicatedCut(1));
+          yield* previewCut(clipCut(1));
+
+          const again = yield* previewCut(clipCut(1));
+          const other = yield* previewCut(dedicatedCut(1));
+
+          assert.isFalse(again.previewed);
+          assert.isTrue(other.previewed);
+          assert.strictEqual((yield* previewRows).length, 2);
+        }),
+      ),
+    slow,
+  );
+
+  it.effect(
+    "fails with ShortCandidateNotFound for a number that was never written, and records nothing",
+    () =>
+      withShort("nyaucast-preview-short-no-candidate-", (channelRoot) =>
+        Effect.gen(function* () {
+          writeCutComposition(channelRoot, clipCut(2));
+
+          const failure = yield* Effect.flip(previewCut(clipCut(2)));
+
+          assert.strictEqual(failure._tag, "ShortCandidateNotFound");
+          assert.strictEqual(failureFacts(failure)["videoId"], "V1");
+          assert.strictEqual(failureFacts(failure)["number"], 2);
+          assert.strictEqual((yield* previewRows).length, 0);
+        }),
+      ),
+  );
+
+  it.effect("fails with ShortCandidateNotFound for a withdrawn candidate, for both cuts", () =>
+    withShort("nyaucast-preview-short-withdrawn-", (channelRoot) =>
+      Effect.gen(function* () {
+        writeCutComposition(channelRoot, clipCut(1));
+        writeCutComposition(channelRoot, dedicatedCut(1));
+        yield* withdrawShort(1);
+
+        for (const cut of [clipCut(1), dedicatedCut(1)]) {
+          const failure = yield* Effect.flip(previewCut(cut));
+          assert.strictEqual(failure._tag, "ShortCandidateNotFound");
+        }
+        assert.strictEqual((yield* previewRows).length, 0);
+      }),
+    ),
+  );
+
+  it.effect(
+    "fails with ProduceGateNotApproved for a short after a NO-GO, and records nothing",
+    () =>
+      withShort("nyaucast-preview-short-rejected-", (channelRoot) =>
+        Effect.gen(function* () {
+          writeCutComposition(channelRoot, clipCut(1));
+          yield* rejectProduce();
+
+          const failure = yield* Effect.flip(previewCut(clipCut(1)));
+
+          assert.strictEqual(failure._tag, "ProduceGateNotApproved");
+          assert.strictEqual((yield* previewRows).length, 0);
+        }),
+      ),
   );
 });
 

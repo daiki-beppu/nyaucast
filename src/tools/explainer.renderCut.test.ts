@@ -12,7 +12,23 @@ import {
   publishedAdditionalProperties,
   setClock,
 } from "../../test/helpers.ts";
-import { recordPlan, rejectProduce, tableRowCounts } from "../../test/narration-helpers.ts";
+import {
+  recordPlan,
+  rejectProduce,
+  scriptInput,
+  tableRowCounts,
+} from "../../test/narration-helpers.ts";
+import { scriptScenes } from "../../test/composition-helpers.ts";
+import {
+  clipCut,
+  cutAudioKey,
+  cutCompositionKey,
+  shortCutExportKey,
+  versionRows,
+  dedicatedCut,
+  withdrawShort,
+  writeShort,
+} from "../../test/short-helpers.ts";
 import {
   colorByCallCount,
   compositionHtml,
@@ -28,14 +44,18 @@ import {
   writeComposition,
   writeTrack,
 } from "../../test/render-helpers.ts";
-import { channelFileExists, readChannelFile } from "../../test/thumbnail-helpers.ts";
+import {
+  channelFileExists,
+  readChannelFile,
+  writeChannelFile,
+} from "../../test/thumbnail-helpers.ts";
 import { callTool, rejectionReason, withToolChannel } from "../../test/tool-helpers.ts";
 import { explainerConfig } from "../../test/explainer-helpers.ts";
 import { VideoFiles } from "../videos/video-files.ts";
 import { ExplainerRenderCutTool } from "./explainer.renderCut.ts";
 
 // 契約（この issue の計画 D1・D3〜D9）:
-//   tool 名 explainer_render_cut、パラメータ { videoId, force? }（cut 引数は持たない。長尺の `long` 固定）。
+//   tool 名 explainer_render_cut、パラメータ { videoId, cut?, force? }（cut は "long" か "short-<n>-clip" / "short-<n>-dedicated"。省略は "long"）。
 //   成功値 { cut: "long", compositionHash, key, renderHash, rendered, videoId }。
 //   成果物は videos/<id>/cuts/long/long.mp4。事実 explainer_cut_exports の行は、実際に作ったときだけ積む。
 //   失敗のタグ: CompositionNotFound / AudioTrackNotFound / InvalidComposition{violations} / NondeterministicComposition{seconds} /
@@ -94,7 +114,6 @@ describe("explainer.renderCut: parameters", () => {
     assert.isTrue(accepts(schema, { force: true, videoId: "V1" }));
     assert.isFalse(accepts(schema, {}));
     assert.isFalse(accepts(schema, { videoId: "V1", force: "yes" }));
-    assert.isFalse(accepts(schema, { cut: "long", videoId: "V1" }));
     assert.isFalse(accepts(schema, { next: "publish", videoId: "V1" }));
     assert.strictEqual(publishedAdditionalProperties(ExplainerRenderCutTool), false);
   });
@@ -590,7 +609,7 @@ describe("explainer.renderCut: preconditions", () => {
   it.effect("rejects an unknown key at the tool boundary and writes nothing", () =>
     withInputs("nyaucast-render-unknown-key-", () =>
       Effect.gen(function* () {
-        const request = { cut: "long", videoId: "V1" };
+        const request = { fps: 60, videoId: "V1" };
 
         assert.strictEqual(
           yield* rejectionReason("explainer_render_cut", request as never),
@@ -701,5 +720,312 @@ describe("explainer.renderCut: preconditions", () => {
         }),
       ),
     slow,
+  );
+});
+
+// ---- ショートのカット（#550）----
+// 契約（この issue の計画 C7・C8）:
+//   パラメータに cut?（"long" か "short-<n>-clip" / "short-<n>-dedicated"）が増える。省略は "long"。
+//   ショートのカットは compositions/<cut>.html と audio/<cut>.wav（長尺の最終トラックではない）から、cuts/<cut>/<cut>.mp4 を書く。
+//   事実 explainer_cut_exports の行には、そのカットの名前が入る。1 つの候補から 2 つのカットの行が積まれる。
+//   候補が無い・取り下げ済みなら ShortCandidateNotFound。composition か音声が無ければ CompositionNotFound / AudioTrackNotFound。
+
+// 縦型 mp4 の要約（コーデック・寸法・長さ。長さは 0.1 秒に丸める）。
+const verticalMp4Summary = async (channelRoot: string, key: string) => {
+  const mp4 = await readMp4(channelRoot, key);
+  return {
+    codecs: [mp4.video?.codec, mp4.audio?.codec],
+    seconds: Math.round(mp4.duration * 10) / 10,
+    size: [mp4.video?.displayWidth, mp4.video?.displayHeight],
+  };
+};
+
+const renderCut = (cut: string, extra: { force?: boolean } = {}) =>
+  callTool("explainer_render_cut", { cut, videoId: "V1", ...extra });
+
+// 縦型（180x320）の小さな composition。
+const verticalHtml = () => compositionHtml({ height: 320, width: 180 });
+
+const writeCutInputs = (channelRoot: string, cut: string, html = verticalHtml()) => {
+  writeChannelFile(channelRoot, cutCompositionKey(cut), new TextEncoder().encode(html));
+  writeChannelFile(channelRoot, cutAudioKey(cut), trackWav());
+};
+
+// 企画・承認・長尺の台本・候補 1 を用意した動画 V1（composition と音声は置かない）。
+const withShort = <A, E, R>(prefix: string, use: (channelRoot: string) => Effect.Effect<A, E, R>) =>
+  inVideo(prefix, (channelRoot) =>
+    Effect.gen(function* () {
+      yield* callTool("explainer_write_script", scriptInput(scriptScenes));
+      yield* writeShort();
+      yield* setClock(noon);
+      return yield* use(channelRoot);
+    }),
+  );
+
+describe("explainer.renderCut: the cut parameter", () => {
+  const schema = ExplainerRenderCutTool.parametersSchema;
+
+  it.each([
+    "long",
+    "short-1-clip",
+    "short-1-dedicated",
+    "short-12-clip",
+    "short-100-dedicated",
+    "short-9007199254740991-clip",
+  ])("accepts the cut %j", (cut) => {
+    assert.isTrue(accepts(schema, { cut, videoId: "V1" }));
+    assert.isTrue(accepts(schema, { cut, force: true, videoId: "V1" }));
+  });
+
+  it.each([
+    "short-01-clip",
+    "short-0-clip",
+    "short-1-vertical",
+    "short-1.5-clip",
+    "short-9007199254740992-clip",
+    "short-9999999999999999-dedicated",
+    "short--1-clip",
+    "Long",
+    "short-1-clip ",
+    "",
+  ])("does not accept the cut %j", (cut) => {
+    assert.isFalse(accepts(schema, { cut, videoId: "V1" }));
+  });
+
+  it("describes the short failure tag", () => {
+    assert.include(ExplainerRenderCutTool.description, "ShortCandidateNotFound");
+  });
+
+  it.effect(
+    "renders the long cut for the cut long, as when the cut is omitted",
+    () =>
+      withInputs("nyaucast-render-cut-long-", () =>
+        Effect.gen(function* () {
+          const result = yield* renderCut("long");
+
+          assert.strictEqual(result.cut, "long");
+          assert.strictEqual(result.key, cutExportKey);
+          assert.deepStrictEqual(
+            (yield* exportRows).map((row) => row.cut),
+            ["long"],
+          );
+        }),
+      ),
+    slow,
+  );
+});
+
+describe("explainer.renderCut: the two cuts of a short candidate", () => {
+  it.effect(
+    "records one export for each of short-1-clip and short-1-dedicated, with an mp4 of the composition's size under each cut's directory",
+    () =>
+      withShort("nyaucast-render-short-two-cuts-", (channelRoot) =>
+        Effect.gen(function* () {
+          writeCutInputs(channelRoot, clipCut(1));
+          writeCutInputs(channelRoot, dedicatedCut(1));
+
+          const clip = yield* renderCut(clipCut(1));
+          const dedicated = yield* renderCut(dedicatedCut(1));
+
+          assert.strictEqual(clip.cut, clipCut(1));
+          assert.strictEqual(clip.key, shortCutExportKey(clipCut(1)));
+          assert.strictEqual(dedicated.cut, dedicatedCut(1));
+          assert.strictEqual(dedicated.key, shortCutExportKey(dedicatedCut(1)));
+          assert.isTrue(clip.rendered);
+          assert.isTrue(dedicated.rendered);
+          const rows = yield* exportRows;
+          assert.deepStrictEqual(
+            rows.map((row) => [row.cut, row.key, row.video_id]),
+            [
+              [clipCut(1), shortCutExportKey(clipCut(1)), "V1"],
+              [dedicatedCut(1), shortCutExportKey(dedicatedCut(1)), "V1"],
+            ],
+          );
+          assert.strictEqual(rows[0]?.composition_hash, clip.compositionHash);
+          assert.strictEqual(rows[1]?.render_hash, dedicated.renderHash);
+          for (const key of [clip.key, dedicated.key]) {
+            assert.isTrue(channelFileExists(channelRoot, key));
+            assert.deepStrictEqual(
+              yield* Effect.promise(() => verticalMp4Summary(channelRoot, key)),
+              {
+                codecs: ["avc", "aac"],
+                seconds: 1,
+                size: [180, 320],
+              },
+            );
+          }
+          assert.isFalse(channelFileExists(channelRoot, cutExportKey));
+        }),
+      ),
+    slow,
+  );
+
+  it.effect(
+    "records an export of a short later than the last version of its candidate, even at the same clock time",
+    () =>
+      withShort("nyaucast-render-short-after-version-", (channelRoot) =>
+        Effect.gen(function* () {
+          writeCutInputs(channelRoot, clipCut(1));
+          const [version] = yield* versionRows;
+          const versionTime = String(version?.["created_at"]);
+          yield* setClock(versionTime);
+
+          yield* renderCut(clipCut(1));
+
+          const [row] = yield* exportRows;
+          assert.isTrue((row?.created_at ?? "") > versionTime);
+        }),
+      ),
+    slow,
+  );
+
+  it.effect(
+    "renders again when the candidate was written after the last export, even if the files are unchanged",
+    () =>
+      withShort("nyaucast-render-short-stale-", (channelRoot) =>
+        Effect.gen(function* () {
+          writeCutInputs(channelRoot, dedicatedCut(1));
+          yield* renderCut(dedicatedCut(1));
+          yield* writeShort({ hook: "新しいフック" });
+
+          const again = yield* renderCut(dedicatedCut(1));
+
+          const versions = yield* versionRows;
+          const lastVersion = String(versions[versions.length - 1]?.["created_at"]);
+          const rows = yield* exportRows;
+          assert.isTrue(again.rendered);
+          assert.strictEqual(rows.length, 2);
+          assert.isTrue((rows[1]?.created_at ?? "") > lastVersion);
+        }),
+      ),
+    slow,
+  );
+
+  it.effect(
+    "reports both cuts in the video's status, in name order",
+    () =>
+      withShort("nyaucast-render-short-status-", (channelRoot) =>
+        Effect.gen(function* () {
+          writeCutInputs(channelRoot, dedicatedCut(1));
+          writeCutInputs(channelRoot, clipCut(1));
+          yield* renderCut(dedicatedCut(1));
+          yield* renderCut(clipCut(1));
+
+          const status = yield* callTool("video_status", { videoId: "V1" });
+
+          assert.deepStrictEqual(
+            status.cuts.map((cut) => [cut.cut, cut.lastExport?.key]),
+            [
+              [clipCut(1), shortCutExportKey(clipCut(1))],
+              [dedicatedCut(1), shortCutExportKey(dedicatedCut(1))],
+            ],
+          );
+        }),
+      ),
+    slow,
+  );
+
+  it.effect(
+    "returns the existing export of a cut for the same input, and one cut does not reuse the other's",
+    () =>
+      withShort("nyaucast-render-short-again-", (channelRoot) =>
+        Effect.gen(function* () {
+          writeCutInputs(channelRoot, clipCut(1));
+          writeCutInputs(channelRoot, dedicatedCut(1));
+          const first = yield* renderCut(clipCut(1));
+
+          const again = yield* renderCut(clipCut(1));
+          const other = yield* renderCut(dedicatedCut(1));
+
+          assert.strictEqual(again.rendered, false);
+          assert.strictEqual(again.key, first.key);
+          assert.isTrue(other.rendered);
+          assert.strictEqual((yield* exportRows).length, 2);
+        }),
+      ),
+    slow,
+  );
+
+  it.effect("reads the audio of the cut, not the final track of the long cut", () =>
+    withShort("nyaucast-render-short-audio-", (channelRoot) =>
+      Effect.gen(function* () {
+        writeChannelFile(
+          channelRoot,
+          cutCompositionKey(clipCut(1)),
+          new TextEncoder().encode(verticalHtml()),
+        );
+        writeTrack(channelRoot);
+
+        const failure = yield* Effect.flip(renderCut(clipCut(1)));
+
+        assert.strictEqual(failure._tag, "AudioTrackNotFound");
+        assert.strictEqual((yield* exportRows).length, 0);
+        assert.isFalse(channelFileExists(channelRoot, shortCutExportKey(clipCut(1))));
+      }),
+    ),
+  );
+
+  it.effect("reads the composition of the cut, not the long composition", () =>
+    withShort("nyaucast-render-short-composition-", (channelRoot) =>
+      Effect.gen(function* () {
+        writeComposition(channelRoot, compositionHtml());
+        writeChannelFile(channelRoot, cutAudioKey(clipCut(1)), trackWav());
+
+        const failure = yield* Effect.flip(renderCut(clipCut(1)));
+
+        assert.strictEqual(failure._tag, "CompositionNotFound");
+        assert.strictEqual((yield* exportRows).length, 0);
+      }),
+    ),
+  );
+
+  it.effect(
+    "fails with ShortCandidateNotFound for a number that was never written, and records nothing",
+    () =>
+      withShort("nyaucast-render-short-no-candidate-", (channelRoot) =>
+        Effect.gen(function* () {
+          writeCutInputs(channelRoot, clipCut(2));
+
+          const failure = yield* Effect.flip(renderCut(clipCut(2)));
+
+          assert.strictEqual(failure._tag, "ShortCandidateNotFound");
+          assert.strictEqual(failureFacts(failure)["videoId"], "V1");
+          assert.strictEqual(failureFacts(failure)["number"], 2);
+          assert.strictEqual((yield* exportRows).length, 0);
+          assert.isFalse(channelFileExists(channelRoot, shortCutExportKey(clipCut(2))));
+        }),
+      ),
+  );
+
+  it.effect("fails with ShortCandidateNotFound for a withdrawn candidate, for both cuts", () =>
+    withShort("nyaucast-render-short-withdrawn-", (channelRoot) =>
+      Effect.gen(function* () {
+        writeCutInputs(channelRoot, clipCut(1));
+        writeCutInputs(channelRoot, dedicatedCut(1));
+        yield* withdrawShort(1);
+
+        for (const cut of [clipCut(1), dedicatedCut(1)]) {
+          const failure = yield* Effect.flip(renderCut(cut));
+          assert.strictEqual(failure._tag, "ShortCandidateNotFound");
+        }
+        assert.strictEqual((yield* exportRows).length, 0);
+      }),
+    ),
+  );
+
+  it.effect(
+    "fails with ProduceGateNotApproved for a short after a NO-GO, and records nothing",
+    () =>
+      withShort("nyaucast-render-short-rejected-", (channelRoot) =>
+        Effect.gen(function* () {
+          writeCutInputs(channelRoot, clipCut(1));
+          yield* rejectProduce();
+
+          const failure = yield* Effect.flip(renderCut(clipCut(1)));
+
+          assert.strictEqual(failure._tag, "ProduceGateNotApproved");
+          assert.strictEqual((yield* exportRows).length, 0);
+        }),
+      ),
   );
 });
