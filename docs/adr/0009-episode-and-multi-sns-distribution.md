@@ -190,7 +190,7 @@ nyaucast はこれまで、音楽チャンネルの collection を YouTube へ�
 - 公開前の一次確認は #459〜#461 で済ませた。残っている未確認は、X の課金の明細と、Meta が R2 の署名付き URL を受け付けるかの 2 つである（改訂 2026-10-04 / #537）。
 - ナレーションの既定は Gemini TTS（`gemini-3.8-flash-lite-tts`）に決めた（#462）。ElevenLabs の日本語ナレーションは v0.2 で扱う（#483。改訂 2026-10-04 / #537）。
 - ツール名は再帰的頭字語の方針に沿って nyaucast へ改めた（#438 / #446）。
-- 決定 7 により、collection の CLI と人間の語彙にずれが残る（`collection reject <gate>`、ゲートの前後関係の未強制）。collection を BGM 動画として `video` に統合する作業は v0.2 以降に回す。
+- 決定 7 により、BGM 動画（collection）のゲートの CLI は `nyaucast video produce | publish | abandon <id>` に統合した（#487）。`nyaucast collection` は廃止し、`publish` は企画ゲートの承認を前提とする。
 - 決定 8 により、文言の誤字は画像生成の偶然で出る。候補を複数作ることと、agent による足切りで吸収する。
 - 決定 7 の「ゲートを動詞で叩く」と「差し戻しは記録しない」の組み合わせにより、作り直しの手順は `explainer-lifecycle` codec が持つ。
 - 決定 3 の TikTok の改訂により、v0.1 では TikTok のショート向けの書き出しを実地で確かめない。9:16 のカットは YouTube のショート・Instagram のリール・X で確かめる。

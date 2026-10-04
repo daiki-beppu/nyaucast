@@ -12,7 +12,7 @@ import {
   collectionRejectionReason,
   withToolChannel,
 } from "../../../test/tool-helpers.ts";
-import { rejectCollectionGate } from "../../collections/gate-operations.ts";
+import { abandonCollection } from "../../collections/gate-operations.ts";
 import { CollectionVideoStatusTool } from "./video.status.ts";
 
 const collectionId = "01JCOLLECTION00000000000000";
@@ -35,7 +35,7 @@ describe("video.status", () => {
       Effect.gen(function* () {
         yield* insertCollection({ id: collectionId, title: "Night Drive" });
         yield* setClock("2026-09-02T00:00:00.000Z");
-        yield* rejectCollectionGate({ collectionId, gate: "produce" });
+        yield* abandonCollection(collectionId);
 
         assert.deepStrictEqual(yield* callCollectionTool("video_status", { collectionId }), {
           collectionId,

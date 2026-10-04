@@ -27,6 +27,8 @@ describe("known names come from the real definitions", () => {
     expect(known.cli.get("nyaucast video")).toBe(true);
     expect(known.cli.get("nyaucast video produce")).toBe(false);
     expect(known.cli.has("nyaucast video abandon")).toBe(true);
+    expect(known.cli.has("nyaucast video publish")).toBe(true);
+    expect(known.cli.has("nyaucast collection")).toBe(false);
     expect(known.cli.has("nyaucast video thumbnail")).toBe(true);
     expect(known.cli.has("nyaucast auth status")).toBe(true);
     // 複数行の定義も拾う
@@ -92,15 +94,15 @@ describe("CLI commands", () => {
 
   test("unknown subcommands are violations in inline code, prose and an unclosed fence", () => {
     const text = [
-      "`nyaucast video prodce <id>` と `nyaucast video publish <id>`。",
-      "地の文の nyaucast video publsh を叩く。",
+      "`nyaucast video prodce <id>` と `nyaucast video upload <id>`。",
+      "地の文の nyaucast video uplaod を叩く。",
       "```sh",
       "nyaucast vido produce V1",
     ].join("\n");
     expect(checkCliCommands(text, known.cli).toSorted()).toEqual([
       "nyaucast video prodce",
-      "nyaucast video publish",
-      "nyaucast video publsh",
+      "nyaucast video uplaod",
+      "nyaucast video upload",
       "nyaucast vido",
     ]);
   });

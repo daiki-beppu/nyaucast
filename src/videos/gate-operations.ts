@@ -6,6 +6,7 @@ import { requireLatestPlan } from "../db/explainer-videos.ts";
 import {
   getExplainerGateDecision,
   hasExplainerApproval,
+  recordExplainerAbandonment,
   recordExplainerDecision,
   type Gate,
 } from "../db/gates.ts";
@@ -19,6 +20,11 @@ class ThumbnailSelectionRequired extends Schema.TaggedError<ThumbnailSelectionRe
 
 class VideoPublishApproved extends Schema.TaggedError<VideoPublishApproved>()(
   "VideoPublishApproved",
+  { videoId: Schema.String },
+) {}
+
+class VideoPublishNotImplemented extends Schema.TaggedError<VideoPublishNotImplemented>()(
+  "VideoPublishNotImplemented",
   { videoId: Schema.String },
 ) {}
 
@@ -53,21 +59,14 @@ export const produceVideo = (videoId: string) =>
     return yield* inTransaction(produceInTransaction(videoId));
   });
 
-// まだ承認されていない最初のゲートが、やめる対象になる。
-const gateToAbandon = (videoId: string) =>
-  getExplainerGateDecision(videoId, "produce").pipe(
-    Effect.map((decision): Gate => (decision === "approved" ? "publish" : "produce")),
-  );
-
 const abandonInTransaction = (videoId: string) =>
   Effect.gen(function* () {
     yield* requireLatestPlan(videoId);
     if (yield* hasExplainerApproval(videoId, "publish")) {
       return yield* new VideoPublishApproved({ videoId });
     }
-    const gate = yield* gateToAbandon(videoId);
-    const recorded = yield* recordExplainerDecision(videoId, gate, "rejected");
-    return { gate, recorded, videoId } satisfies GateOperationResult;
+    const abandoned = yield* recordExplainerAbandonment(videoId);
+    return { ...abandoned, videoId } satisfies GateOperationResult;
   });
 
 /** 動画をやめる。公開ゲートの承認がある動画はやめられない。やめた動画には何も積まない。 */
@@ -75,4 +74,11 @@ export const abandonVideo = (videoId: string) =>
   Effect.gen(function* () {
     yield* (yield* ChannelSettings).requireExplainer;
     return yield* inTransaction(abandonInTransaction(videoId));
+  });
+
+/** 解説動画の公開ゲート。対話で投稿を作る本体はまだない。 */
+export const publishVideo = (videoId: string) =>
+  Effect.gen(function* () {
+    yield* (yield* ChannelSettings).requireExplainer;
+    return yield* new VideoPublishNotImplemented({ videoId });
   });

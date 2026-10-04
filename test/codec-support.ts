@@ -6,7 +6,7 @@ import { parse } from "yaml";
 
 import { nyaucastCommand } from "../src/cli.ts";
 import { CollectionToolkit, ExplainerToolkit } from "../src/mcp.ts";
-import { unusedAuthLayer, unusedLocalStoreLayer, unusedVideoLayer } from "./helpers.ts";
+import { unusedAuthLayer, unusedVideoLayer } from "./helpers.ts";
 
 const packageRoot = resolve(import.meta.dirname, "..");
 
@@ -41,7 +41,6 @@ export const knownCliTree = (): CliTree => {
   const tree = new Map<string, boolean>();
   const root = nyaucastCommand({
     auth: unusedAuthLayer,
-    localStore: unusedLocalStoreLayer,
     mcpServer: Layer.empty,
     video: unusedVideoLayer,
   });
