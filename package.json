@@ -13,6 +13,7 @@
   "files": [
     "dist",
     "bin",
+    "skills",
     "NOTICE"
   ],
   "type": "module",
