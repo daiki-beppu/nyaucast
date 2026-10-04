@@ -19,7 +19,7 @@ YouTube チャンネル運営を自動化するツールキット。skill に蓄
 
 「良かれと思って足すと規約違反になる」ものだけ挙げる。全体は `docs/adr/0001-thin-architecture.md`。
 
-- **registry を置かない** — tool 一覧は entry point のフラットな import 配列だけ
+- **registry を置かない** — tool 一覧は entry point のフラットな import 配列だけ（チャンネルの種類ごとに 1 本。ADR-0009 決定 7）
 - **コードは全面 Effect 4.0 で書く**（決定 3・5・9）— エラーは `Schema.TaggedError` の型付きの失敗として持ち、adapter 境界で変換する。手書きの Result 型・createService フレームは導入しない。Layer を組んで `runMain` を呼ぶのは entry point の 1 か所だけ。Effect の API は v3 と大きく違うので、書く前に `node_modules/effect/AGENTS.md` を読む
 - **1 MCP tool = 実装 1 ファイル + テスト 1 ファイル** — Effect Schema・description・handler を tool 定義ファイルに同居させる
 - adapter は MCP (primary) と CLI (`nyaucast <cmd>`) の 2 本。ここに業務ロジックを書かない
@@ -41,7 +41,7 @@ YouTube チャンネル運営を自動化するツールキット。skill に蓄
 
 ## v0.1.0 のスコープ
 
-ゲートは first-party の解説動画チャンネルで解説動画 lifecycle を 1 周させ（題材収集 → 企画 → 台本・図解 → 音声 → 描画 → 投稿 → 公開後運用）、YouTube・Instagram・X の 3 SNS へ公開するまでを dogfood 完走すること（ADR-0009）。`explainer-lifecycle` codec と `distribution` codec は v0.1 の中心成果物とする。**それ以外（音楽チャンネルでの collection lifecycle 1 周 / 自チャンネル実績分析 / dashboard / Remotion / 上記 2 つ以外の codec）は v0.2 以降**に 1 リリース 1 テーマで直列に積む。スコープを広げる提案は issue 化して先送りする。
+ゲートは first-party の解説動画チャンネルで解説動画 lifecycle を 1 周させ（題材収集 → 企画 → 台本・図解 → 音声 → 描画 → 投稿 → 公開後運用）、YouTube・Instagram・X の 3 SNS へ公開するまでを dogfood 完走すること（ADR-0009）。`explainer-lifecycle` codec と `distribution` codec は v0.1 の中心成果物とする。**それ以外（音楽チャンネルでの collection lifecycle 1 周 / 自チャンネル実績分析 / dashboard / Remotion / 上記 2 つ以外の codec）は v0.2 以降**に 1 リリース 1 テーマで直列に積む。スコープを広げる提案は issue 化して先送りする。例外として、BGM 動画（collection）を `video` の CLI と MCP tool に統合する作業（#487）は v0.1 の期間に入れる。リリースゲートは変えない。
 
 ## Agent 向けドキュメント
 

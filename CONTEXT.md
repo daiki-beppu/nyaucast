@@ -44,15 +44,15 @@ _Avoid_: BYO アプリ
 ## アーキテクチャ
 
 **MCP tool**:
-nyaucast が expose する型付き操作。agent (Claude Code / Codex 等) が直接呼ぶ第一級インターフェース。primitive tool (細粒度) 1 層と、local store への読み口で構成される (ADR-0007)。設計ベンチマーク: [html2pptx.app](https://html2pptx.app/) の Skill + MCP tool + REST 3 層。ドット表記 (`video.generateThumbnails`) が正書で、実装ファイル名もこの形 (`src/tools/<domain>.<name>.ts`)。MCP protocol 上の wire 名はドットをアンダースコアへ、camelCase を snake_case へ変換した `video_generate_thumbnails` 形式（Claude API の tool 名制約 `^[a-zA-Z0-9_-]{1,64}$` にドットが含まれないため）。
+nyaucast が expose する型付き操作。agent (Claude Code / Codex 等) が直接呼ぶ第一級インターフェース。primitive tool (細粒度) 1 層と、local store への読み口で構成される (ADR-0007)。設計ベンチマーク: [html2pptx.app](https://html2pptx.app/) の Skill + MCP tool + REST 3 層。ドット表記 (`video.generateThumbnails`) が正書で、実装ファイル名もこの形。MCP protocol 上の wire 名はドットをアンダースコアへ、camelCase を snake_case へ変換した `video_generate_thumbnails` 形式（Claude API の tool 名制約 `^[a-zA-Z0-9_-]{1,64}$` にドットが含まれないため）。
 _Avoid_: API endpoint, command (MCP tool は MCP protocol で expose される typed operation)、wire 名にドットを使うこと
 
 **primitive tool**:
-単一操作を行う細粒度の MCP tool。`plan.init` / `explainer.writePlan` / `video.generateThumbnails` 等。knowledge codec を読んだ agent がこれを順に呼んで動画の lifecycle を進める。関門は各 tool の事前条件が持ち、すべての tool が冪等 (実体があれば作らず返す) + 明示的な再生成手段を備える (ADR-0007)。
+単一操作を行う細粒度の MCP tool。`video.writePlan` / `video.status` / `video.generateThumbnails` 等。MCP サーバーは、チャンネルの種類（解説動画か BGM 動画か）の tool だけを公開するので、同じ名前の tool が種類ごとに別の中身を持つことがある (ADR-0009 決定 7)。knowledge codec を読んだ agent がこれを順に呼んで動画の lifecycle を進める。関門は各 tool の事前条件が持ち、すべての tool が冪等 (実体があれば作らず返す) + 明示的な再生成手段を備える (ADR-0007)。
 _Avoid_: workflow tool (粗粒度の MCP tool を置く設計は ADR-0007 で廃止した。区間を歩くのは codec を読んだ agent であり、tool ではない)
 
 **ゲート承認**:
-動画の GO/NO-GO ゲートを人間が越えた記録。次の区間名を動詞にした CLI（解説動画は `nyaucast video produce <id>` / `nyaucast video publish <id>`、collection は `nyaucast collection produce <id>` / `nyaucast collection publish <id>`）を**人間が叩いた事実そのもの**が承認であり、`approve` という独立操作は存在しない。書き込みは CLI 専用 (agent は書けない)、読み取りは MCP に開く (ADR-0007)。
+動画の GO/NO-GO ゲートを人間が越えた記録。次の区間名を動詞にした CLI（解説動画は `nyaucast video produce <id>` / `nyaucast video publish <id>`、BGM 動画も同じ `nyaucast video produce <id>` / `nyaucast video publish <id>` で、チャンネルの種類がどちらの動画かを決める）を**人間が叩いた事実そのもの**が承認であり、`approve` という独立操作は存在しない。書き込みは CLI 専用 (agent は書けない)、読み取りは MCP に開く (ADR-0007)。
 _Avoid_: approve, 承認フロー (独立した承認操作は作らない。起動 = 承認)
 
 **knowledge codec**:
@@ -64,7 +64,7 @@ core の MCP tool を各プロトコルへ橋渡しする薄いラッパ。MCP a
 _Avoid_: thin client, thin wrapper (同一概念。canonical は adapter)
 
 **tracer**:
-アーキテクチャ規約 (ADR-0001) を確定させるために最初に end-to-end で通す垂直スライス。collection の plan 区間（`plan.init` で collection を作り local store に書く → `plan.checkTitle` → `collection.status` で read model を読む）が該当 — データ 4 分類と read model の設計を最初に実地検証できるため。
+アーキテクチャ規約 (ADR-0001) を確定させるために最初に end-to-end で通す垂直スライス。BGM 動画の plan 区間（BGM 動画を作り local store に書く → タイトルを検査する → read model で状態を読む。当時の tool 名は `plan.init` / `plan.checkTitle` / `collection.status`）が該当 — データ 4 分類と read model の設計を最初に実地検証できるため。
 _Avoid_: PoC (PoC は撤退判定用の別物)
 
 ## 設定・データ形式
@@ -112,13 +112,13 @@ benchmark 対象チャンネルの直近動画のうち、config の再生数閾
 _Avoid_: バズ動画 (バイラル性を含意する)、ヒット動画
 
 **collection**:
-1 本の YouTube 動画としてまとめられる楽曲群とその成果物一式。動画の種類のうち BGM 動画に当たる。v0.1 の間は collection の名で扱い、動画への統合は v0.2 以降に行う。
-_Avoid_: アルバム, プレイリスト (collection は YouTube 動画単位の制作物であり、音楽配信のアルバムや YouTube playlist とは別概念)
+BGM 動画を指すコード上の識別子（チャンネルの種類 `collection`、codec 名 `collection-lifecycle` など）。MCP tool のドメインは種類をまたいで `video.*` で、tool の名前には種類を書かない。解説動画に対する `explainer` と同じ位置づけで、用語の正書は「BGM 動画」。
+_Avoid_: 文章で制作物を指すときに collection と書くこと（識別子以外では「BGM 動画」と書く）
 
 **collection lifecycle**:
 collection の制作フロー。人間の GO/NO-GO ゲートで 3 区間に分かれる:
 `TTP 収集・分析 → 企画 →[GO/NO-GO]→ サムネ生成 →[GO/NO-GO]→ 音源生成 → MIX/マスタリング → 動画生成 → upload → 公開後運用`。
-ゲート 1 (企画後): 「作る / 作らない」。ゲート 2 (サムネ後): 「出す / 出さない」。各区間は人間のゲート承認 (`nyaucast collection <gate> <id>`) で区切られ、区間を歩くのは knowledge codec を読んだ agent (ADR-0007)。区間名は plan (TTP 収集・分析→企画) / produce (サムネ生成) / publish (音源生成→MIX/マスタリング→動画生成→upload→公開後運用)。
+ゲート 1 (企画後): 「作る / 作らない」。ゲート 2 (サムネ後): 「出す / 出さない」。各区間は人間のゲート承認 (`nyaucast video <gate> <id>`) で区切られ、区間を歩くのは knowledge codec を読んだ agent (ADR-0007)。区間名は plan (TTP 収集・分析→企画) / produce (サムネ生成) / publish (音源生成→MIX/マスタリング→動画生成→upload→公開後運用)。
 _Avoid_: pipeline, workflow (lifecycle は collection 固有の制作工程を指す。汎用の概念ではない)
 
 **master（マスター音源）**:
@@ -185,7 +185,8 @@ _Avoid_: コンテンツ（投稿や素材まで含みうる）
 _Avoid_: エピソード（旧称）、動画ファイル（それはカット）
 
 **BGM 動画**:
-音楽チャンネルの動画。今の collection を指す。
+音楽チャンネルの動画。1 本の YouTube 動画としてまとめられる楽曲群とその成果物一式。コード上の識別子は `collection`。
+_Avoid_: アルバム, プレイリスト (YouTube 動画単位の制作物であり、音楽配信のアルバムや YouTube playlist とは別概念)
 
 **カット**:
 解説動画から書き出した 1 本の動画ファイル。種類は長尺・切り抜きショート・専用ショートの 3 つ。
