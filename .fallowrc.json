@@ -25,7 +25,8 @@
     "stale-suppressions": "error",
     "require-suppression-reason": "error",
     "unused-catalog-entries": "error",
-    "unused-dependency-overrides": "error"
+    "unused-dependency-overrides": "error",
+    "boundary-violation": "error"
   },
   "duplicates": {
     "enabled": true,
@@ -44,5 +45,47 @@
     "maxUnitSize": 60,
     "suggestInlineSuppression": false,
     "ignore": ["test/package-smoke-support.ts", "test/fixtures/**"]
+  },
+  "boundaries": {
+    "zones": [
+      {
+        "name": "chrome",
+        "patterns": ["src/lib/chrome.ts", "src/lib/cdp.ts", "src/lib/chrome-pin.ts"]
+      },
+      {
+        "name": "chrome-users",
+        "patterns": [
+          "src/tools/explainer.renderCut.ts",
+          "src/tools/explainer.previewCut.ts",
+          "src/compositions/capture.ts"
+        ]
+      },
+      {
+        "name": "wiring",
+        "patterns": ["src/index.ts", "src/mcp.ts"]
+      },
+      {
+        "name": "core",
+        "patterns": ["src/**"]
+      }
+    ],
+    "rules": [
+      {
+        "from": "chrome",
+        "allow": ["core"]
+      },
+      {
+        "from": "chrome-users",
+        "allow": ["core", "chrome"]
+      },
+      {
+        "from": "wiring",
+        "allow": ["core", "chrome-users", "chrome"]
+      },
+      {
+        "from": "core",
+        "allow": ["core", "chrome-users"]
+      }
+    ]
   }
 }

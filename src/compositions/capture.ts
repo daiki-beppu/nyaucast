@@ -169,8 +169,13 @@ const captureAt = (page: ChromePage, seconds: number) =>
     return new Uint8Array(Buffer.from(shot.data, "base64"));
   });
 
+// 描画は composition のファイル 1 枚で決まる。図解の契約の検査に漏れがあっても外部の状態に依存しないよう、ネットワークの要求を止める。
+const blockedUrls = ["http://*", "https://*", "ws://*", "wss://*"];
+
 const loadFile = (page: ChromePage, file: string) =>
   Effect.gen(function* () {
+    yield* page.connection.send("Network.enable", {}, page.sessionId);
+    yield* page.connection.send("Network.setBlockedURLs", { urls: blockedUrls }, page.sessionId);
     const loaded = yield* page.connection.expect("Page.loadEventFired", page.sessionId);
     yield* page.connection.send("Page.navigate", { url: `file://${file}` }, page.sessionId);
     yield* loaded;

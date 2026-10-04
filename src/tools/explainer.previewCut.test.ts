@@ -1,3 +1,5 @@
+import { createServer } from "node:http";
+
 import { assert, describe, it } from "@effect/vitest";
 import { Effect } from "effect";
 
@@ -733,5 +735,56 @@ describe("explainer.previewCut: the two cuts of a short candidate", () => {
           assert.strictEqual((yield* previewRows).length, 0);
         }),
       ),
+  );
+});
+
+// 外部への要求が届いたかを数える、ループバックの HTTP サーバー。スコープが終わると閉じる。
+const countingServer = Effect.acquireRelease(
+  Effect.promise(
+    () =>
+      new Promise<{ readonly close: () => void; readonly hits: string[]; readonly port: number }>(
+        (resolve) => {
+          const hits: string[] = [];
+          const server = createServer((request, response) => {
+            hits.push(request.url ?? "");
+            response.end();
+          });
+          server.listen(0, "127.0.0.1", () => {
+            const address = server.address();
+            const port = typeof address === "object" && address !== null ? address.port : 0;
+            resolve({ close: () => server.close(), hits, port });
+          });
+        },
+      ),
+  ),
+  (server) => Effect.sync(server.close),
+);
+
+describe("explainer.previewCut: the network while drawing", () => {
+  it.effect(
+    "sends no request outside the composition file, from an element or from a script",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const server = yield* countingServer;
+          const origin = `http://127.0.0.1:${server.port}`;
+          const html = compositionHtml({
+            seekBody: `fetch("${origin}/fetch").catch(() => {}); document.body.style.background = "rgb(0,0,0)";`,
+          }).replace("<body>", `<body><img src="${origin}/img.png">`);
+
+          yield* withComposition(
+            "nyaucast-preview-network-",
+            () =>
+              Effect.gen(function* () {
+                const result = yield* preview();
+
+                assert.strictEqual(result.previewed, true);
+                assert.deepStrictEqual(server.hits, []);
+              }),
+            html,
+          );
+        }),
+      ),
+    slow,
   );
 });
