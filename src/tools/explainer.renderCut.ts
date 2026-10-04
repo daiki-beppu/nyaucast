@@ -7,7 +7,12 @@ import {
   InvalidChannelConfig,
   NotExplainerChannel,
 } from "../channel/channel-settings.ts";
-import { CompositionNotFound, readCutComposition, sha256 } from "../compositions/composition.ts";
+import {
+  CompositionNotFound,
+  CompositionStale,
+  readCutComposition,
+  sha256,
+} from "../compositions/composition.ts";
 import {
   InvalidComposition,
   NondeterministicComposition,
@@ -48,7 +53,8 @@ export const ExplainerRenderCutTool = Tool.make("explainer_render_cut", {
     "Requires the produce gate to be approved. ",
     "Fails with VideoNotFound for an unknown video, with ProduceGateNotApproved before the produce gate is approved, ",
     "with ShortCandidateNotFound when the cut names a short candidate that was never written or is withdrawn, ",
-    "with CompositionNotFound or AudioTrackNotFound when an input is missing, ",
+    "with CompositionNotFound or AudioTrackNotFound when an input is missing, " +
+      "with CompositionStale for a short whose candidate was rewritten after the composition was assembled, ",
     "with AudioTrackUnreadable when the audio track cannot be decoded, with EncodeFailed when the encoding fails part way, ",
     "with InvalidComposition (violations lists every broken rule) when the composition breaks the contract or its fps is not 30, ",
     "with NondeterministicComposition (seconds lists the times that differed) when seeking is not a pure function of the time, ",
@@ -64,6 +70,7 @@ export const ExplainerRenderCutTool = Tool.make("explainer_render_cut", {
     ProduceGateNotApproved,
     ShortCandidateNotFound,
     CompositionNotFound,
+    CompositionStale,
     AudioTrackNotFound,
     AudioTrackUnreadable,
     EncodeFailed,

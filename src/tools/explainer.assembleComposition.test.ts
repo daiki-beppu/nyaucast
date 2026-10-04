@@ -1736,19 +1736,26 @@ describe("explainer.assembleComposition: the composition of a dedicated short", 
     300_000,
   );
 
-  it.effect("does not show the hook, and is not affected by it", () =>
-    withDedicated("nyaucast-composition-dedicated-hook-", (channelRoot) =>
-      Effect.gen(function* () {
-        const first = yield* assembleCut(dedicatedCut(1));
-        yield* writeShort({ hook: "別のフック" });
+  it.effect(
+    "does not show the hook; a new version of the candidate assembles it again with only the version changed",
+    () =>
+      withDedicated("nyaucast-composition-dedicated-hook-", (channelRoot) =>
+        Effect.gen(function* () {
+          const first = yield* assembleCut(dedicatedCut(1));
+          const before = readCutHtml(channelRoot, dedicatedCut(1));
+          yield* writeShort({ hook: "別のフック" });
 
-        const again = yield* assembleCut(dedicatedCut(1));
+          const again = yield* assembleCut(dedicatedCut(1));
 
-        assert.notInclude(readCutHtml(channelRoot, dedicatedCut(1)), "別のフック");
-        assert.isFalse(again.assembled);
-        assert.strictEqual(again.hash, first.hash);
-      }),
-    ),
+          const after = readCutHtml(channelRoot, dedicatedCut(1));
+          const withoutVersion = (html: string) =>
+            html.replace(/<meta name="nyaucast-(?:short-version|composition-hash)"[^>]*>/gu, "");
+          assert.notInclude(after, "別のフック");
+          assert.isTrue(again.assembled);
+          assert.notStrictEqual(again.hash, first.hash);
+          assert.strictEqual(withoutVersion(after), withoutVersion(before));
+        }),
+      ),
   );
 
   it.effect("is assembled again when a dedicated diagram changes", () =>
