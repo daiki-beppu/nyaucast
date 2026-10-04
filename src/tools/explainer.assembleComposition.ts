@@ -10,7 +10,7 @@ import {
   NotExplainerChannel,
   type Theme,
 } from "../channel/channel-settings.ts";
-import { compositionFileKey } from "../compositions/composition.ts";
+import { compositionFileKey, shortVersionMeta } from "../compositions/composition.ts";
 import { ShortCandidateNotFound, type ShortCandidate } from "../db/explainer-shorts.ts";
 import { VideoNotFound, requireLatestPlan } from "../db/explainer-videos.ts";
 import {
@@ -536,12 +536,14 @@ const planCut = (videoId: string, target: CutTarget, table: TimingTable) =>
 interface CompositionParts {
   readonly fonts: readonly EmbeddedFont[];
   readonly hash: string;
+  /** ショートなら、組み立てに使った候補の版（作成時刻）。 */
+  readonly shortVersion: string | undefined;
   readonly plan: CutPlan;
   readonly reviewed: Reviewed;
   readonly theme: Theme;
 }
 
-const buildHtml = ({ fonts, hash, plan, reviewed, theme }: CompositionParts) => {
+const buildHtml = ({ fonts, hash, plan, reviewed, shortVersion, theme }: CompositionParts) => {
   const numbering: Numbering = { next: 0 };
   const specs: MotionSpec[][] = [];
   const scenes = reviewed.scenes.map(({ input, nodes }) => {
@@ -583,6 +585,7 @@ const buildHtml = ({ fonts, hash, plan, reviewed, theme }: CompositionParts) => 
     "<head>",
     '<meta charset="utf-8">',
     `<meta name="nyaucast-composition-hash" content="${hash}">`,
+    ...(shortVersion === undefined ? [] : [shortVersionMeta(shortVersion)]),
     `<style>${themeCss(theme, fonts)}${plan.layout.css}</style>`,
     "</head>",
     "<body>",
@@ -608,7 +611,8 @@ const sha256 = (value: string | Uint8Array) => createHash("sha256").update(value
 
 /**
  * 図解群・タイミング表・テーマ（フォントのバイト列を含む）・レイアウトのハッシュ。
- * 切り抜きは、範囲とフックも含める。長尺と専用は何も足さないので、長尺の鍵は変わらない。
+ * 切り抜きは、範囲とフックも含める。ショートは候補の版も含める（版が変われば組み立て直し、meta の版を新しくする）。
+ * 長尺は何も足さないので、長尺の鍵は変わらない。
  */
 const freshnessKey = (
   plan: CutPlan,
@@ -616,6 +620,7 @@ const freshnessKey = (
   fonts: readonly EmbeddedFont[],
   timingBytes: Uint8Array,
   diagrams: readonly (string | undefined)[],
+  shortVersion: string | undefined,
 ) =>
   sha256(
     JSON.stringify([
@@ -634,6 +639,7 @@ const freshnessKey = (
       sha256(timingBytes),
       diagrams,
       ...(plan.extras === undefined ? [] : [plan.extras]),
+      ...(shortVersion === undefined ? [] : [shortVersion]),
     ]),
   );
 
@@ -714,12 +720,13 @@ export const explainerAssembleComposition = Effect.fn("explainer.assembleComposi
   }
   const { diagrams, reviewed } = yield* reviewSources(videoId, source, plan.scenes);
   const fonts = yield* readFonts(theme);
-  const hash = freshnessKey(plan, theme, fonts, timingBytes, diagrams);
+  const shortVersion = target.kind === "long" ? undefined : target.version.createdAt;
+  const hash = freshnessKey(plan, theme, fonts, timingBytes, diagrams, shortVersion);
   const key = compositionFileKey(videoId, target.cut);
   if (force !== true && Option.contains(yield* existingHash(key), hash)) {
     return { assembled: false, hash, key, videoId };
   }
-  const html = buildHtml({ fonts, hash, plan, reviewed, theme });
+  const html = buildHtml({ fonts, hash, plan, reviewed, shortVersion, theme });
   yield* (yield* VideoFiles).write(key, new TextEncoder().encode(html));
   return { assembled: true, hash, key, videoId };
 });

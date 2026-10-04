@@ -1,5 +1,6 @@
 import { Effect } from "effect";
 
+import { shortVersionMeta } from "../src/compositions/composition.ts";
 import { selectAll } from "./helpers.ts";
 import { callTool } from "./tool-helpers.ts";
 
@@ -90,3 +91,19 @@ export const shortFactCounts = Effect.gen(function* () {
 export const statusShorts = callTool("video_status", { videoId: "V1" }).pipe(
   Effect.map((status) => status.shorts),
 );
+
+/**
+ * 手で書いた composition に、組み立てと同じく候補の最後の版の meta を入れる（動画 V1）。
+ * render と preview は、この版が候補の最後の版と同じときだけ動く。候補が無ければそのまま返す。
+ */
+export const stampShortVersion = (cut: string, html: string) =>
+  Effect.gen(function* () {
+    const number = Number(/^short-(\d+)-/u.exec(cut)?.[1] ?? Number.NaN);
+    const versions = (yield* selectAll("explainer_short_versions")).filter(
+      (row) => row["video_id"] === "V1" && Number(row["number"]) === number,
+    );
+    const latest = versions.at(-1)?.["created_at"];
+    return typeof latest === "string"
+      ? html.replace("<head>", `<head>${shortVersionMeta(latest)}`)
+      : html;
+  });

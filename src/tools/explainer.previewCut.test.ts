@@ -22,6 +22,7 @@ import {
   cutCompositionKey,
   cutPreviewKey,
   dedicatedCut,
+  stampShortVersion,
   withdrawShort,
   writeShort,
 } from "../../test/short-helpers.ts";
@@ -557,7 +558,11 @@ const previewCut = (cut: string, extra: { force?: boolean } = {}) =>
   callTool("explainer_preview_cut", { cut, videoId: "V1", ...extra });
 
 const writeCutComposition = (channelRoot: string, cut: string, html = compositionHtml()) =>
-  writeChannelFile(channelRoot, cutCompositionKey(cut), new TextEncoder().encode(html));
+  stampShortVersion(cut, html).pipe(
+    Effect.map((stamped) =>
+      writeChannelFile(channelRoot, cutCompositionKey(cut), new TextEncoder().encode(stamped)),
+    ),
+  );
 
 // 企画・承認・長尺の台本・候補 1 を用意した動画 V1（composition は置かない）。
 const withShort = <A, E, R>(prefix: string, use: (channelRoot: string) => Effect.Effect<A, E, R>) =>
@@ -619,8 +624,8 @@ describe("explainer.previewCut: the two cuts of a short candidate", () => {
     () =>
       withShort("nyaucast-preview-short-two-cuts-", (channelRoot) =>
         Effect.gen(function* () {
-          writeCutComposition(channelRoot, clipCut(1));
-          writeCutComposition(channelRoot, dedicatedCut(1));
+          yield* writeCutComposition(channelRoot, clipCut(1));
+          yield* writeCutComposition(channelRoot, dedicatedCut(1));
 
           const clip = yield* previewCut(clipCut(1));
           const dedicated = yield* previewCut(dedicatedCut(1));
@@ -673,8 +678,8 @@ describe("explainer.previewCut: the two cuts of a short candidate", () => {
     () =>
       withShort("nyaucast-preview-short-again-", (channelRoot) =>
         Effect.gen(function* () {
-          writeCutComposition(channelRoot, clipCut(1));
-          writeCutComposition(channelRoot, dedicatedCut(1));
+          yield* writeCutComposition(channelRoot, clipCut(1));
+          yield* writeCutComposition(channelRoot, dedicatedCut(1));
           yield* previewCut(clipCut(1));
 
           const again = yield* previewCut(clipCut(1));
@@ -693,7 +698,7 @@ describe("explainer.previewCut: the two cuts of a short candidate", () => {
     () =>
       withShort("nyaucast-preview-short-no-candidate-", (channelRoot) =>
         Effect.gen(function* () {
-          writeCutComposition(channelRoot, clipCut(2));
+          yield* writeCutComposition(channelRoot, clipCut(2));
 
           const failure = yield* Effect.flip(previewCut(clipCut(2)));
 
@@ -708,8 +713,8 @@ describe("explainer.previewCut: the two cuts of a short candidate", () => {
   it.effect("fails with ShortCandidateNotFound for a withdrawn candidate, for both cuts", () =>
     withShort("nyaucast-preview-short-withdrawn-", (channelRoot) =>
       Effect.gen(function* () {
-        writeCutComposition(channelRoot, clipCut(1));
-        writeCutComposition(channelRoot, dedicatedCut(1));
+        yield* writeCutComposition(channelRoot, clipCut(1));
+        yield* writeCutComposition(channelRoot, dedicatedCut(1));
         yield* withdrawShort(1);
 
         for (const cut of [clipCut(1), dedicatedCut(1)]) {
@@ -726,7 +731,7 @@ describe("explainer.previewCut: the two cuts of a short candidate", () => {
     () =>
       withShort("nyaucast-preview-short-rejected-", (channelRoot) =>
         Effect.gen(function* () {
-          writeCutComposition(channelRoot, clipCut(1));
+          yield* writeCutComposition(channelRoot, clipCut(1));
           yield* rejectProduce();
 
           const failure = yield* Effect.flip(previewCut(clipCut(1)));
@@ -735,6 +740,29 @@ describe("explainer.previewCut: the two cuts of a short candidate", () => {
           assert.strictEqual((yield* previewRows).length, 0);
         }),
       ),
+  );
+});
+
+describe("explainer.previewCut: a composition older than the candidate", () => {
+  it.effect(
+    "refuses a short whose candidate was written again after the composition was assembled",
+    () =>
+      withShort("nyaucast-preview-short-stale-", (channelRoot) =>
+        Effect.gen(function* () {
+          yield* writeCutComposition(channelRoot, clipCut(1));
+          yield* previewCut(clipCut(1));
+          yield* writeShort({ hook: "新しいフック" });
+
+          const stale = yield* Effect.flip(previewCut(clipCut(1)));
+
+          assert.deepStrictEqual(failureFacts(stale), {
+            _tag: "CompositionStale",
+            cut: clipCut(1),
+            videoId: "V1",
+          });
+        }),
+      ),
+    slow,
   );
 });
 
