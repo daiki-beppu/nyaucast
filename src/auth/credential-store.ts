@@ -10,11 +10,11 @@ import {
   requireChannel,
 } from "./account-key.ts";
 
-class CredentialSaveFailed extends Schema.TaggedError<CredentialSaveFailed>()(
+export class CredentialSaveFailed extends Schema.TaggedError<CredentialSaveFailed>()(
   "CredentialSaveFailed",
   accountFacts,
 ) {}
-class CredentialUnreadable extends Schema.TaggedError<CredentialUnreadable>()(
+export class CredentialUnreadable extends Schema.TaggedError<CredentialUnreadable>()(
   "CredentialUnreadable",
   accountFacts,
 ) {}

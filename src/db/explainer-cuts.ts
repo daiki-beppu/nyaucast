@@ -17,7 +17,7 @@ const CutExport = Schema.Struct({
   key: Schema.String,
   renderHash: Schema.String,
 });
-type CutExport = typeof CutExport.Type;
+export type CutExport = typeof CutExport.Type;
 
 const CutPreview = Schema.Struct({
   compositionHash: Schema.String,

@@ -43,6 +43,7 @@ const ThumbnailSelection = Schema.Struct({
   round: Schema.Finite,
   selectedAt: Schema.String,
 });
+export type ThumbnailSelection = typeof ThumbnailSelection.Type;
 
 /** read model が返すサムネイルの事実。選択が無ければ selection のキーが無い。 */
 export const ThumbnailFacts = Schema.Struct({
@@ -89,6 +90,20 @@ export const insertRow = (table: string, row: Record<string, number | string>) =
     const sql = yield* SqlClient.SqlClient;
     yield* sql`INSERT INTO ${sql(table)} ${sql.insert(row)}`;
   }).pipe(Effect.orDie);
+
+const ReturnedId = Schema.Struct({ id: Schema.Finite });
+
+/**
+ * 条件つきの `INSERT ... RETURNING id` の戻り行から id を得る。戻り行が無ければ None
+ * （投稿の試行の原子的な獲得のように、条件を満たさず 1 行も入らなかったことを表す）。
+ * 後から最新の行を読み直すのではなく、この書き込みの結果だけを使う。
+ */
+export const insertReturningId = (statement: Effect.Effect<ReadonlyArray<unknown>, unknown>) =>
+  statement.pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(ReturnedId))),
+    Effect.map((rows) => Option.fromNullishOr(rows[0]).pipe(Option.map((row) => row.id))),
+    Effect.orDie,
+  );
 
 const listCandidates = (videoId: string) =>
   Effect.gen(function* () {

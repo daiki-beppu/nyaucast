@@ -4,7 +4,11 @@ import { Effect, Layer } from "effect";
 
 import { explainerConfigWithBgm } from "../../test/bgm-helpers.ts";
 import { explainerConfigWithTheme, themeDeclaration } from "../../test/composition-helpers.ts";
-import { collectionConfig, explainerConfig } from "../../test/explainer-helpers.ts";
+import {
+  collectionConfig,
+  explainerConfig,
+  explainerConfigWithDistribution,
+} from "../../test/explainer-helpers.ts";
 import { temporaryDirectory, writeVideoConfig } from "../../test/helpers.ts";
 import { explainerConfigWithVoice, voiceDeclaration } from "../../test/narration-helpers.ts";
 import { explainerConfigWith, thumbnailType } from "../../test/thumbnail-config.ts";
@@ -500,5 +504,54 @@ describe("ChannelSettings: the BGM declaration", () => {
           volumeDb: -12,
         });
       }),
+  );
+});
+
+// 許容時間（既定 60 分）。SNS ごとに分けない 1 つの設定（issue #553 の決定 4、ADR-0009 決定 9）。
+describe("ChannelSettings: the distribution declaration (how late a due post may run)", () => {
+  it.effect("defaults the tolerance to 60 minutes when distribution is not declared at all", () =>
+    Effect.gen(function* () {
+      const settings = yield* settingsOf(explainerConfig);
+
+      assert.deepStrictEqual<unknown>(settings.distribution, { toleranceMinutes: 60 });
+    }),
+  );
+
+  it.effect("defaults the tolerance to 60 minutes when distribution is declared empty", () =>
+    Effect.gen(function* () {
+      const settings = yield* settingsOf(explainerConfigWithDistribution({}));
+
+      assert.deepStrictEqual<unknown>(settings.distribution, { toleranceMinutes: 60 });
+    }),
+  );
+
+  it.effect("reads an override of the tolerance", () =>
+    Effect.gen(function* () {
+      const settings = yield* settingsOf(explainerConfigWithDistribution({ toleranceMinutes: 30 }));
+
+      assert.deepStrictEqual<unknown>(settings.distribution, { toleranceMinutes: 30 });
+    }),
+  );
+
+  it.effect.each([0, -1, 1.5, "60", null] as const)(
+    "fails with InvalidChannelConfig when the tolerance is %j",
+    (toleranceMinutes) =>
+      Effect.gen(function* () {
+        const failure = yield* Effect.flip(
+          settingsOf(explainerConfigWithDistribution({ toleranceMinutes })),
+        );
+
+        assert.strictEqual(failure._tag, "InvalidChannelConfig");
+      }),
+  );
+
+  it.effect("does not let the declaration override anything but the tolerance", () =>
+    Effect.gen(function* () {
+      const settings = yield* settingsOf(
+        explainerConfigWithDistribution({ perPlatformToleranceMinutes: { youtube: 0 } }),
+      );
+
+      assert.deepStrictEqual<unknown>(settings.distribution, { toleranceMinutes: 60 });
+    }),
   );
 });

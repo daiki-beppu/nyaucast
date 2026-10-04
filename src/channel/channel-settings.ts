@@ -77,8 +77,19 @@ const Bgm = Schema.Struct({
 });
 export type Bgm = typeof Bgm.Type;
 
+// 配信の設定（issue #553 の決定 4、ADR-0009 決定 9）。許容時間は SNS ごとに分けない 1 つの値。
+const defaultToleranceMinutes = 60;
+const Distribution = Schema.Struct({
+  toleranceMinutes: PositiveInteger.pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(defaultToleranceMinutes)),
+  ),
+});
+
 const ExplainerSettings = Schema.Struct({
   bgm: Schema.optionalKey(Bgm),
+  distribution: Distribution.pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed({ toleranceMinutes: defaultToleranceMinutes })),
+  ),
   feeds: Schema.Array(Feed).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
   genre: Schema.String,
   hitPatterns: Schema.Record(Schema.String, Schema.Struct({ description: Schema.String })),

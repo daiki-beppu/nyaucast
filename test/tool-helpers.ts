@@ -5,6 +5,7 @@ import { Effect, type FileSystem, Layer, type Path, Stream } from "effect";
 import type { Toolkit } from "effect/ai";
 import { AiError, Tool } from "effect/ai";
 
+import { CredentialStore } from "../src/auth/credential-store.ts";
 import { DeclaredAccounts } from "../src/auth/declared-accounts.ts";
 import { BgmPool } from "../src/channel/bgm-pool.ts";
 import { CollectionIds } from "../src/collections/collection-ids.ts";
@@ -21,6 +22,7 @@ import { VideoFiles } from "../src/videos/video-files.ts";
 import type { VideoIds } from "../src/videos/video-ids.ts";
 import { fakeCodex, type FakeCodex } from "./codex-helpers.ts";
 import { withVideoChannel } from "./explainer-helpers.ts";
+import { temporaryDirectory } from "./helpers.ts";
 import { fakeGemini, type FakeGemini } from "./thumbnail-helpers.ts";
 
 /**
@@ -114,28 +116,32 @@ export const withToolChannel = <A, E, R>(
   withVideoChannel(
     prefix,
     options.config,
-    (channelRoot) => {
-      const gemini = options.gemini ?? fakeGemini([]);
-      const codex = options.codex ?? fakeCodex();
-      return use(channelRoot).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            BgmPool.layer(channelRoot),
-            CollectionDirectories.layer(channelRoot),
-            DeclaredAccounts.layer(channelRoot),
-            options.collectionIds ?? CollectionIds.layer,
-            ThumbnailFiles.layer(channelRoot),
-            (options.videoFiles ?? VideoFiles.layer)(channelRoot),
-            gemini.http,
-            gemini.secrets,
-            codex.layer,
-            // 本物の Chrome。偽の子プロセス（codex）とは別の spawner で動く。
-            Chrome.layer({ cacheDirectory: chromeCacheDirectory(homedir()) }).pipe(
-              Layer.provide(NodeServices.layer),
+    (channelRoot) =>
+      Effect.gen(function* () {
+        const gemini = options.gemini ?? fakeGemini([]);
+        const codex = options.codex ?? fakeCodex();
+        // トークンの置き場はチャンネルルートの外（本番と同じで、公開ゲートの承認と混じらない）。
+        const credentialRoot = yield* temporaryDirectory(`${prefix}credentials-`);
+        return yield* use(channelRoot).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              BgmPool.layer(channelRoot),
+              CollectionDirectories.layer(channelRoot),
+              CredentialStore.layer({ credentialRoot }).pipe(Layer.provide(NodeServices.layer)),
+              DeclaredAccounts.layer(channelRoot),
+              options.collectionIds ?? CollectionIds.layer,
+              ThumbnailFiles.layer(channelRoot),
+              (options.videoFiles ?? VideoFiles.layer)(channelRoot),
+              gemini.http,
+              gemini.secrets,
+              codex.layer,
+              // 本物の Chrome。偽の子プロセス（codex）とは別の spawner で動く。
+              Chrome.layer({ cacheDirectory: chromeCacheDirectory(homedir()) }).pipe(
+                Layer.provide(NodeServices.layer),
+              ),
             ),
           ),
-        ),
-      );
-    },
+        );
+      }),
     options.videoIds,
   );

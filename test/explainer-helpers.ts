@@ -12,6 +12,13 @@ export const explainerConfig = JSON.stringify({
 
 export const collectionConfig = JSON.stringify({ kind: "collection" });
 
+/** 解説動画のチャンネルの設定。distribution が undefined なら「distribution」を書かない（既定値に委ねる）。 */
+export const explainerConfigWithDistribution = (distribution?: Record<string, unknown>) =>
+  JSON.stringify({
+    ...(JSON.parse(explainerConfig) as Record<string, unknown>),
+    ...(distribution === undefined ? {} : { distribution }),
+  });
+
 /** 呼ぶたびに V1, V2, ... を返す VideoIds。 */
 const sequentialVideoIds = Layer.effect(
   VideoIds,

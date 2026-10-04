@@ -1,7 +1,7 @@
 import { Effect, Schema } from "effect";
 import twitterText from "twitter-text";
 
-import { platforms } from "../auth/account-key.ts";
+import { type Platform, platforms } from "../auth/account-key.ts";
 
 /** 投稿文。YouTube はタイトルと説明（タグは持たない）、Instagram と X は本文。 */
 export const PostText = Schema.Union([
@@ -14,6 +14,29 @@ export const PostText = Schema.Union([
   Schema.Struct({ platform: Schema.Literal("x"), text: Schema.String }),
 ]);
 export type PostText = typeof PostText.Type;
+
+/**
+ * 投稿文を列（title/description/body の snake_case 相当）から組み立てる。書くときに YouTube は
+ * title と description、それ以外は body を必ず入れるので、欠けた行は表が壊れている（die）。
+ * `explainer_post_drafts` と `explainer_posts` の両方の読み出しが参照する唯一の所有者。
+ */
+export const postTextFromColumns = (columns: {
+  readonly body: string | null;
+  readonly description: string | null;
+  readonly platform: Platform;
+  readonly title: string | null;
+}): Effect.Effect<PostText> =>
+  Effect.gen(function* () {
+    if (columns.platform === "youtube") {
+      const { description, title } = columns;
+      if (title !== null && description !== null) {
+        return { description, platform: columns.platform, title };
+      }
+    } else if (columns.body !== null) {
+      return { platform: columns.platform, text: columns.body };
+    }
+    return yield* Effect.die(`a ${columns.platform} row misses its post text`);
+  });
 
 // 失敗は、タグと事実（どの SNS のどの欄がどの規則を破ったか）だけを持つ。
 export class InvalidPostText extends Schema.TaggedError<InvalidPostText>()("InvalidPostText", {

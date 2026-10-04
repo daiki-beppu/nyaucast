@@ -2,7 +2,7 @@ import { Clock, Effect, Option, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 
 import { platforms } from "../auth/account-key.ts";
-import { PostText } from "../posts/post-text.ts";
+import { PostText, postTextFromColumns } from "../posts/post-text.ts";
 import { insertRow, queryRows } from "./explainer-thumbnails.ts";
 import type { ShortCandidate } from "./explainer-shorts.ts";
 import { afterLatestFact } from "./fact-time.ts";
@@ -29,27 +29,13 @@ const DraftRow = Schema.Struct({
   title: Schema.NullOr(Schema.String),
 });
 
-const postOf = (row: typeof DraftRow.Type): Effect.Effect<PostText> =>
-  Effect.gen(function* () {
-    // 書くときに YouTube は title と description、それ以外は body を必ず入れるので、欠けた行は表が壊れている。
-    if (row.platform === "youtube") {
-      const { description, title } = row;
-      if (title !== null && description !== null) {
-        return { description, platform: row.platform, title };
-      }
-    } else if (row.body !== null) {
-      return { platform: row.platform, text: row.body };
-    }
-    return yield* Effect.die(`explainer_post_drafts: a ${row.platform} row misses its post text`);
-  });
-
 const draftOf = (row: typeof DraftRow.Type): Effect.Effect<PostDraft> =>
   Effect.gen(function* () {
     return {
       accountId: row.account_id,
       createdAt: row.created_at,
       platform: row.platform,
-      post: yield* postOf(row),
+      post: yield* postTextFromColumns(row),
       scheduledAt: row.scheduled_at,
       ...(row.short_number === null ? {} : { short: row.short_number }),
     };
