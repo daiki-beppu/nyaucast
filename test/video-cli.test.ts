@@ -7,8 +7,8 @@ import { Command } from "effect/cli";
 import { SqlClient } from "effect/sql";
 import { TestConsole } from "effect/testing";
 
-import { explainerWritePlan } from "../src/tools/explainer.writePlan.ts";
-import { videoStatus } from "../src/tools/video.status.ts";
+import { explainerVideoWritePlan } from "../src/tools/explainer/video.writePlan.ts";
+import { explainerVideoStatus } from "../src/tools/explainer/video.status.ts";
 import { ThumbnailFiles } from "../src/thumbnails/thumbnail-files.ts";
 import { videoCommand } from "../src/videos/cli.ts";
 import {
@@ -79,7 +79,7 @@ const candidateRows = selectAll("explainer_thumbnail_candidates").pipe(
 // 動画 V1 を企画し、生成の候補 1-1・1-2 と、回 2 の候補 2-1 を行として持たせる。
 const seedVideo = Effect.gen(function* () {
   yield* setClock(noon);
-  yield* explainerWritePlan(planInput());
+  yield* explainerVideoWritePlan(planInput());
   yield* insertCandidate({ number: 1, round: 1, videoId: "V1" });
   yield* insertCandidate({ number: 2, round: 1, videoId: "V1" });
   yield* insertCandidate({ number: 1, round: 2, videoId: "V1" });
@@ -114,7 +114,7 @@ describe("nyaucast video thumbnail <id> <candidate>", () => {
 
         yield* runVideo(["thumbnail", "V1", "1-2"]);
 
-        const status = yield* videoStatus({ videoId: "V1" });
+        const status = yield* explainerVideoStatus({ videoId: "V1" });
         assert.strictEqual(status.thumbnails.selection?.key, "videos/V1/thumbnails/1-2.jpg");
         assert.strictEqual(status.thumbnails.selection?.round, 1);
         assert.strictEqual(status.thumbnails.selection?.number, 2);
@@ -145,7 +145,7 @@ describe("nyaucast video thumbnail <id> <candidate>", () => {
           const times = rows.map((row) => row.selectedAt);
           assert.deepStrictEqual(times, times.toSorted());
           assert.strictEqual(new Set(times).size, 3);
-          const status = yield* videoStatus({ videoId: "V1" });
+          const status = yield* explainerVideoStatus({ videoId: "V1" });
           assert.strictEqual(status.thumbnails.selection?.selectedAt, times[2]);
           assert.strictEqual(status.thumbnails.selection?.key, "videos/V1/thumbnails/1-1.jpg");
         }),
@@ -161,7 +161,7 @@ describe("nyaucast video thumbnail <id> <candidate>", () => {
 
           yield* runVideo(["thumbnail", "V1", "1-1"]);
 
-          const status = yield* videoStatus({ videoId: "V1" });
+          const status = yield* explainerVideoStatus({ videoId: "V1" });
           assert.isTrue((status.thumbnails.selection?.selectedAt ?? "") > status.plan.updatedAt);
         }),
       ),
@@ -227,7 +227,7 @@ describe("nyaucast video thumbnail <id> <candidate>", () => {
     inChannel("nyaucast-video-cli-not-found-", () =>
       Effect.gen(function* () {
         yield* seedVideo;
-        yield* explainerWritePlan(planInput({ title: "Why cats knead" }));
+        yield* explainerVideoWritePlan(planInput({ title: "Why cats knead" }));
         yield* insertCandidate({ number: 5, round: 1, videoId: "V2" });
 
         const missing = yield* runVideo(["thumbnail", "V1", "3-3"]);
@@ -303,7 +303,7 @@ describe("nyaucast video thumbnail <id> --file <path>", () => {
       inChannel("nyaucast-video-cli-file-", (channelRoot) =>
         Effect.gen(function* () {
           yield* setClock(noon);
-          yield* explainerWritePlan(planInput());
+          yield* explainerVideoWritePlan(planInput());
           yield* insertCandidate({ number: 1, round: 1, videoId: "V1" });
           yield* insertCandidate({ number: 2, round: 1, videoId: "V1" });
           const earlierBody = Uint8Array.from([1, 2, 3]);
@@ -338,7 +338,7 @@ describe("nyaucast video thumbnail <id> --file <path>", () => {
           );
           assert.strictEqual(logs.length, 1);
           assert.include(logs[0], key);
-          const status = yield* videoStatus({ videoId: "V1" });
+          const status = yield* explainerVideoStatus({ videoId: "V1" });
           assert.strictEqual(status.thumbnails.selection?.key, key);
         }),
       ),
@@ -348,7 +348,7 @@ describe("nyaucast video thumbnail <id> --file <path>", () => {
     inChannel("nyaucast-video-cli-file-first-", (channelRoot) =>
       Effect.gen(function* () {
         yield* setClock(noon);
-        yield* explainerWritePlan(planInput());
+        yield* explainerVideoWritePlan(planInput());
         writeChannelFile(channelRoot, "incoming/mine.png", solidPng(1280, 720));
         const file = join(channelRoot, "incoming", "mine.png");
 
@@ -523,7 +523,7 @@ describe("nyaucast video produce <id>", () => {
         Effect.gen(function* () {
           yield* seedAwaitingVideo;
           yield* setClock(later);
-          yield* explainerWritePlan(planInput({ title: "Revised", videoId: "V1" }));
+          yield* explainerVideoWritePlan(planInput({ title: "Revised", videoId: "V1" }));
 
           const stale = yield* runVideo(["produce", "V1"]);
 
@@ -602,7 +602,7 @@ describe("nyaucast video abandon <id>", () => {
           assert.strictEqual((yield* gateRows("explainer_approvals")).length, 0);
           assert.strictEqual(logs.length, 1);
           assert.notInclude(logs[0], "してください");
-          const status = yield* videoStatus({ videoId: "V1" });
+          const status = yield* explainerVideoStatus({ videoId: "V1" });
           assert.isTrue(status.abandoned);
           assert.isUndefined(status.awaitingApproval);
           assert.deepStrictEqual(
@@ -621,7 +621,7 @@ describe("nyaucast video abandon <id>", () => {
         const { outcome } = yield* runVideo(["abandon", "V1"]);
 
         assert.strictEqual(outcome._tag, "Success");
-        assert.isTrue((yield* videoStatus({ videoId: "V1" })).abandoned);
+        assert.isTrue((yield* explainerVideoStatus({ videoId: "V1" })).abandoned);
       }),
     ),
   );
@@ -646,7 +646,7 @@ describe("nyaucast video abandon <id>", () => {
       Effect.gen(function* () {
         yield* seedAwaitingVideo;
         yield* runVideo(["abandon", "V1"]);
-        assert.isTrue((yield* videoStatus({ videoId: "V1" })).abandoned);
+        assert.isTrue((yield* explainerVideoStatus({ videoId: "V1" })).abandoned);
 
         const resumed = yield* runVideo(["produce", "V1"]);
 
@@ -656,7 +656,7 @@ describe("nyaucast video abandon <id>", () => {
         assert.strictEqual(rejectedAt.length, 1);
         assert.strictEqual(approvedAt.length, 1);
         assert.isTrue(approvedAt[0]! > rejectedAt[0]!);
-        const status = yield* videoStatus({ videoId: "V1" });
+        const status = yield* explainerVideoStatus({ videoId: "V1" });
         assert.isFalse(status.abandoned);
         assert.isUndefined(status.awaitingApproval);
       }),
@@ -677,7 +677,7 @@ describe("nyaucast video abandon <id>", () => {
           rejections.map((row) => row.gate),
           ["publish"],
         );
-        assert.isTrue((yield* videoStatus({ videoId: "V1" })).abandoned);
+        assert.isTrue((yield* explainerVideoStatus({ videoId: "V1" })).abandoned);
       }),
     ),
   );
@@ -694,7 +694,7 @@ describe("nyaucast video abandon <id>", () => {
         assert.strictEqual(failure._tag, "VideoPublishApproved");
         assert.strictEqual(failureFacts(failure)["videoId"], "V1");
         assert.strictEqual((yield* gateRows("explainer_rejections")).length, 0);
-        assert.isFalse((yield* videoStatus({ videoId: "V1" })).abandoned);
+        assert.isFalse((yield* explainerVideoStatus({ videoId: "V1" })).abandoned);
       }),
     ),
   );

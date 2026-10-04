@@ -53,7 +53,7 @@ const readComposition = (videoId: string, cut: string) =>
  */
 export const readCutComposition = (videoId: string, cut: string | undefined) =>
   Effect.gen(function* () {
-    yield* (yield* ChannelSettings).requireExplainer;
+    yield* (yield* ChannelSettings).explainer;
     yield* requireLatestPlan(videoId);
     yield* requireProduceApproval(videoId);
     const target = yield* resolveCut(videoId, cut);

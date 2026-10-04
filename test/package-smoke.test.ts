@@ -17,24 +17,21 @@ describe("K3 package smoke", () => {
     } = await inspectInstalledPackage();
 
     expect(toolNames.toSorted()).toEqual([
-      "collection_status",
-      "explainer_assemble_composition",
-      "explainer_fetch_topic_candidates",
-      "explainer_mix_audio_track",
-      "explainer_preview_cut",
-      "explainer_render_cut",
-      "explainer_synthesize_narration",
-      "explainer_withdraw_short",
-      "explainer_write_diagram",
-      "explainer_write_plan",
-      "explainer_write_script",
-      "explainer_write_short",
-      "plan_check_title",
-      "plan_init",
+      "video_assemble_composition",
       "video_exclude_thumbnail",
+      "video_fetch_topic_candidates",
       "video_generate_thumbnails",
+      "video_mix_audio_track",
+      "video_preview_cut",
+      "video_render_cut",
       "video_status",
+      "video_synthesize_narration",
+      "video_withdraw_short",
+      "video_write_diagram",
+      "video_write_plan",
       "video_write_post_draft",
+      "video_write_script",
+      "video_write_short",
     ]);
     expect(localDatabaseCreated).toBe(true);
     // codec は tarball に入り、下流の相対 symlink（.claude → .agents → node_modules）越しに読める

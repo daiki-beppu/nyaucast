@@ -56,8 +56,8 @@
       {
         "name": "chrome-users",
         "patterns": [
-          "src/tools/explainer.renderCut.ts",
-          "src/tools/explainer.previewCut.ts",
+          "src/tools/explainer/video.renderCut.ts",
+          "src/tools/explainer/video.previewCut.ts",
           "src/compositions/capture.ts"
         ]
       },

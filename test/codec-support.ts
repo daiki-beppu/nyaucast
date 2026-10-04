@@ -5,7 +5,7 @@ import { Layer } from "effect";
 import { parse } from "yaml";
 
 import { nyaucastCommand } from "../src/cli.ts";
-import { NyaucastToolkit } from "../src/mcp.ts";
+import { CollectionToolkit, ExplainerToolkit } from "../src/mcp.ts";
 import { unusedAuthLayer, unusedLocalStoreLayer, unusedVideoLayer } from "./helpers.ts";
 
 const packageRoot = resolve(import.meta.dirname, "..");
@@ -22,7 +22,7 @@ export type CliTree = ReadonlyMap<string, boolean>;
 // ---- 既知の集合（出どころは実物の Toolkit・root Command・source） ----
 
 export const knownToolNames = (): ReadonlySet<string> =>
-  new Set(Object.keys(NyaucastToolkit.tools));
+  new Set([...Object.keys(ExplainerToolkit.tools), ...Object.keys(CollectionToolkit.tools)]);
 
 type AnyCommand = ReturnType<typeof nyaucastCommand>;
 

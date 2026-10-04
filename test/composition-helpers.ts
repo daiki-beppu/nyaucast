@@ -76,7 +76,7 @@ interface TimingTable {
   }[];
 }
 
-/** explainer_synthesize_narration が書いたタイミング表を、そのまま読む（期待値の出所）。 */
+/** video_synthesize_narration が書いたタイミング表を、そのまま読む（期待値の出所）。 */
 export const readTimingFile = (channelRoot: string) =>
   JSON.parse(new TextDecoder().decode(readChannelFile(channelRoot, timingKey))) as TimingTable;
 

@@ -12,10 +12,9 @@ export class InvalidChannelConfig extends Schema.TaggedError<InvalidChannelConfi
   { issue: Schema.String, path: Schema.String },
 ) {}
 
-export class NotExplainerChannel extends Schema.TaggedError<NotExplainerChannel>()(
-  "NotExplainerChannel",
-  { kind: Schema.String },
-) {}
+class NotExplainerChannel extends Schema.TaggedError<NotExplainerChannel>()("NotExplainerChannel", {
+  kind: Schema.String,
+}) {}
 
 const PositiveInteger = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThan(0));
 
@@ -95,14 +94,27 @@ const VideoChannelSettings = Schema.fromJsonString(
   Schema.Union([ExplainerSettings, Schema.Struct({ kind: Schema.Literal("collection") })]),
 );
 const decodeSettings = Schema.decodeUnknownEffect(VideoChannelSettings);
+const decodeExplainerSettings = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(ExplainerSettings),
+);
 
 /**
  * チャンネルの動画の種類と、解説動画の宣言（ジャンル・当たる型）。
- * 設定は呼び出しのたびに読む。Layer を作るときには読まないので、設定の無いチャンネルでも MCP は起動できる。
+ * 設定は呼び出しのたびに読む。`kind` は MCP の起動時に 1 回だけ読み、公開する tool の種類を決める。
  */
 export class ChannelSettings extends Context.Service<
   ChannelSettings,
   {
+    readonly kind: Effect.Effect<
+      "explainer" | "collection",
+      ChannelConfigNotFound | InvalidChannelConfig
+    >;
+    /** 解説動画の tool が読む。種類が解説動画でなければ InvalidChannelConfig（tool は種類を見分けない）。 */
+    readonly explainer: Effect.Effect<
+      ExplainerSettings,
+      ChannelConfigNotFound | InvalidChannelConfig
+    >;
+    /** CLI が読む。種類が解説動画でなければ NotExplainerChannel。 */
     readonly requireExplainer: Effect.Effect<
       ExplainerSettings,
       ChannelConfigNotFound | InvalidChannelConfig | NotExplainerChannel
@@ -118,27 +130,41 @@ export class ChannelSettings extends Context.Service<
         const configPath = path.join(channelRoot, "config", "channel", "video.json");
         const relativePath = "config/channel/video.json";
 
-        const read = Effect.gen(function* () {
+        const readText = Effect.gen(function* () {
           if (!(yield* fileSystem.exists(configPath).pipe(Effect.orDie))) {
             return yield* new ChannelConfigNotFound({ path: relativePath });
           }
-          const text = yield* fileSystem.readFileString(configPath).pipe(Effect.orDie);
-          return yield* decodeSettings(text).pipe(
-            Effect.mapError(
-              (error) => new InvalidChannelConfig({ issue: error.message, path: relativePath }),
+          return yield* fileSystem.readFileString(configPath).pipe(Effect.orDie);
+        });
+
+        const read = <A>(
+          decode: (text: string) => Effect.Effect<A, { readonly message: string }>,
+        ) =>
+          readText.pipe(
+            Effect.flatMap((text) =>
+              decode(text).pipe(
+                Effect.mapError(
+                  (error) => new InvalidChannelConfig({ issue: error.message, path: relativePath }),
+                ),
+              ),
             ),
           );
-        });
+
+        const settings = read(decodeSettings);
 
         const requireExplainer = Effect.gen(function* () {
-          const settings = yield* read;
-          if (settings.kind !== "explainer") {
-            return yield* new NotExplainerChannel({ kind: settings.kind });
+          const declared = yield* settings;
+          if (declared.kind !== "explainer") {
+            return yield* new NotExplainerChannel({ kind: declared.kind });
           }
-          return settings;
+          return declared;
         });
 
-        return ChannelSettings.of({ requireExplainer });
+        return ChannelSettings.of({
+          explainer: read(decodeExplainerSettings),
+          kind: settings.pipe(Effect.map((declared) => declared.kind)),
+          requireExplainer,
+        });
       }),
     );
   }

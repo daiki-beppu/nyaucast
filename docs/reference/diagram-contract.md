@@ -1,6 +1,6 @@
 # Diagram contract — 解説動画の図解
 
-解説動画の**図解**の契約の正書。図解は agent が書く入力で、シーンごとに 1 枚（演出の時刻を台本上の位置で宣言し、秒も script も持たない HTML の断片）。`explainer_write_diagram` が検証して `videos/{videoId}/diagrams/{scene}.html`（専用ショートは `short` を付けて `videos/{videoId}/shorts/{n}/scenes/{scene}.html`）に書き、`explainer_assemble_composition` が検査し直して、タイミング表・字幕・テーマ・`window.__hf` を加えた composition（`docs/reference/composition-contract.md`）にする。語彙と規則は `src/diagrams/diagram.ts` の定数で、本書はそれを写す（食い違ったらコードの定数が正で、本書を直す）。決定の出所は ADR-0005 決定 12 と ADR-0009 決定 11・14。
+解説動画の**図解**の契約の正書。図解は agent が書く入力で、シーンごとに 1 枚（演出の時刻を台本上の位置で宣言し、秒も script も持たない HTML の断片）。`video_write_diagram` が検証して `videos/{videoId}/diagrams/{scene}.html`（専用ショートは `short` を付けて `videos/{videoId}/shorts/{n}/scenes/{scene}.html`）に書き、`video_assemble_composition` が検査し直して、タイミング表・字幕・テーマ・`window.__hf` を加えた composition（`docs/reference/composition-contract.md`）にする。語彙と規則は `src/diagrams/diagram.ts` の定数で、本書はそれを写す（食い違ったらコードの定数が正で、本書を直す）。決定の出所は ADR-0005 決定 12 と ADR-0009 決定 11・14。
 
 ## 形式
 
@@ -87,7 +87,7 @@
 
 - 長尺の図解は `videos/{videoId}/diagrams/{scene}.html`、専用ショートの図解は `videos/{videoId}/shorts/{n}/scenes/{scene}.html`（② agent が書く入力。tool は消さない）。同じシーンに書き直すと置き換わる。専用ショートの図解は、長尺の台本ではなく、その候補の専用の台本（`videos/{videoId}/shorts/{n}/script.json`）の段落・句で検査する
 - composition は `videos/{videoId}/compositions/{cut}.html`（③ 生成成果物。local store に行を持たない）。`{cut}` は `long`・`short-{n}-clip`・`short-{n}-dedicated`。鮮度の鍵（図解群・タイミング表・テーマ（フォントのバイト列を含む）・レイアウトのハッシュ。切り抜きは範囲とフックを加える）を `<meta name="nyaucast-composition-hash">` に持ち、一致すれば既存を返す。`force` で作り直す
-- レイアウト（`explainer_assemble_composition` の定数）: 長尺は 1920x1080。専用ショートは 1080x1920 の全面に図解を置き、下の帯に字幕を出す（専用ナレーションのタイミング表から作る）。切り抜きは 1080x1920 で、範囲の段落を持つシーンの長尺の図解を、中央の 16:9 の枠（1080x607.5、長尺の舞台を 0.5625 倍）に置き、上の帯にフック（エスケープしたテキスト、読み上げない）、下の帯に範囲の字幕を出す。時刻は長尺のタイミング表を範囲の開始秒だけずらす（範囲より前に現れた要素は最初から見える）
+- レイアウト（`video_assemble_composition` の定数）: 長尺は 1920x1080。専用ショートは 1080x1920 の全面に図解を置き、下の帯に字幕を出す（専用ナレーションのタイミング表から作る）。切り抜きは 1080x1920 で、範囲の段落を持つシーンの長尺の図解を、中央の 16:9 の枠（1080x607.5、長尺の舞台を 0.5625 倍）に置き、上の帯にフック（エスケープしたテキスト、読み上げない）、下の帯に範囲の字幕を出す。時刻は長尺のタイミング表を範囲の開始秒だけずらす（範囲より前に現れた要素は最初から見える）
 - ショートは 60 秒まで。切り抜きは範囲の長さ（最初の段落の頭から最後の段落の終わり）、専用はナレーションの長さが超えたら `ShortTooLong`
 
 ## Related

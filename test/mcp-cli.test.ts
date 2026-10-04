@@ -5,36 +5,38 @@ import { join, resolve } from "node:path";
 
 import { describe, expect, test } from "@effect/vitest";
 
-import { withTemporaryDirectoryAsync } from "./helpers";
+import { collectionConfig, explainerConfig } from "./explainer-helpers.ts";
+import { withTemporaryDirectoryAsync, writeVideoConfig } from "./helpers";
 import { createJsonRpcClient, requireRecord, stopChildProcess } from "./mcp-stdio-helpers";
 
 const packageRoot = resolve(import.meta.dirname, "..");
 
-const toolNames = [
-  "collection_status",
-  "explainer_assemble_composition",
-  "explainer_fetch_topic_candidates",
-  "explainer_mix_audio_track",
-  "explainer_preview_cut",
-  "explainer_render_cut",
-  "explainer_synthesize_narration",
-  "explainer_withdraw_short",
-  "explainer_write_diagram",
-  "explainer_write_plan",
-  "explainer_write_script",
-  "explainer_write_short",
-  "plan_check_title",
-  "plan_init",
+const explainerToolNames = [
+  "video_assemble_composition",
   "video_exclude_thumbnail",
+  "video_fetch_topic_candidates",
   "video_generate_thumbnails",
+  "video_mix_audio_track",
+  "video_preview_cut",
+  "video_render_cut",
   "video_status",
+  "video_synthesize_narration",
+  "video_withdraw_short",
+  "video_write_diagram",
+  "video_write_plan",
   "video_write_post_draft",
+  "video_write_script",
+  "video_write_short",
 ];
 
+const collectionToolNames = ["video_check_title", "video_status", "video_write_plan"];
+
 // 起動時の作業ディレクトリをチャンネルルートとして子プロセスの MCP サーバーを起動し、initialize まで済ませて use を動かす。
-// ここは stdio の JSON-RPC と entry point の配線だけを見る。tool の業務の振る舞いは src/tools/*.test.ts が確かめる。
+// ここは stdio の JSON-RPC と entry point の配線だけを見る。tool の業務の振る舞いは src/tools/**/*.test.ts が確かめる。
+// 公開する tool は起動時の config/channel/video.json の kind で決まるので、config を書いてから起動する。
 const withMcpServer = (
   prefix: string,
+  config: string,
   use: (
     channelRoot: string,
     client: ReturnType<typeof createJsonRpcClient>,
@@ -42,6 +44,7 @@ const withMcpServer = (
   ) => Promise<void>,
 ) =>
   withTemporaryDirectoryAsync(prefix, async (channelRoot) => {
+    writeVideoConfig(channelRoot, config);
     const server = spawn(
       process.execPath,
       [
@@ -73,31 +76,75 @@ const withMcpServer = (
     }
   });
 
-describe("nyaucast mcp", () => {
-  test("lists every tool", async () => {
-    await withMcpServer("nyaucast-mcp-list-", async (_channelRoot, client, initialized) => {
-      expect(requireRecord(initialized["serverInfo"], "serverInfo")["name"]).toBe("nyaucast");
+const listToolNames = async (client: ReturnType<typeof createJsonRpcClient>) => {
+  client.writeMessage({ id: 2, jsonrpc: "2.0", method: "tools/list", params: {} });
+  const listed = requireRecord((await client.responseFor(2)).result, "tools/list result");
+  const tools = listed["tools"];
+  if (!Array.isArray(tools)) {
+    throw new TypeError("tools/list result must contain tools");
+  }
+  return tools.map((tool) => {
+    const name = requireRecord(tool, "tool")["name"];
+    if (typeof name !== "string") {
+      throw new TypeError("each tool must contain a string name");
+    }
+    return name;
+  });
+};
 
-      client.writeMessage({ id: 2, jsonrpc: "2.0", method: "tools/list", params: {} });
-      const listed = requireRecord((await client.responseFor(2)).result, "tools/list result");
-      const tools = listed["tools"];
-      if (!Array.isArray(tools)) {
-        throw new TypeError("tools/list result must contain tools");
-      }
-      const names = tools.map((tool) => {
-        const name = requireRecord(tool, "tool")["name"];
-        if (typeof name !== "string") {
-          throw new TypeError("each tool must contain a string name");
-        }
-        return name;
+describe("nyaucast mcp", () => {
+  test("lists exactly the explainer tools for an explainer channel", async () => {
+    await withMcpServer(
+      "nyaucast-mcp-list-explainer-",
+      explainerConfig,
+      async (_channelRoot, client, initialized) => {
+        expect(requireRecord(initialized["serverInfo"], "serverInfo")["name"]).toBe("nyaucast");
+
+        expect((await listToolNames(client)).toSorted()).toEqual(explainerToolNames);
+      },
+    );
+  });
+
+  test("lists exactly the collection tools for a collection channel", async () => {
+    await withMcpServer(
+      "nyaucast-mcp-list-collection-",
+      collectionConfig,
+      async (_channelRoot, client) => {
+        expect((await listToolNames(client)).toSorted()).toEqual(collectionToolNames);
+      },
+    );
+  });
+
+  test("does not start when the channel has no video config, because the tool list cannot be decided", async () => {
+    await withTemporaryDirectoryAsync("nyaucast-mcp-noconfig-", async (channelRoot) => {
+      const server = spawn(
+        process.execPath,
+        [
+          "--conditions=nyaucast-source",
+          "--experimental-strip-types",
+          join(packageRoot, "bin", "nyaucast.js"),
+          "mcp",
+        ],
+        { cwd: channelRoot, env: process.env, stdio: "pipe" },
+      );
+      let stderr = "";
+      server.stderr.setEncoding("utf8");
+      server.stderr.on("data", (chunk: string) => {
+        stderr += chunk;
       });
-      expect(names.toSorted()).toEqual(toolNames);
+      server.stdin.end();
+
+      const [code] = await once(server, "exit");
+
+      expect(code).not.toBe(0);
+      expect(stderr).toContain("ChannelConfigNotFound");
     });
   });
 
   test("tells the client which codec to read, within 512 characters", async () => {
     await withMcpServer(
       "nyaucast-mcp-instructions-",
+      explainerConfig,
       async (_channelRoot, _client, initialized) => {
         const instructions = initialized["instructions"];
         expect(typeof instructions).toBe("string");
@@ -110,12 +157,12 @@ describe("nyaucast mcp", () => {
   });
 
   test("answers one tool call from the startup working directory", async () => {
-    await withMcpServer("nyaucast-mcp-call-", async (channelRoot, client) => {
+    await withMcpServer("nyaucast-mcp-call-", collectionConfig, async (channelRoot, client) => {
       client.writeMessage({
         id: 2,
         jsonrpc: "2.0",
         method: "tools/call",
-        params: { arguments: { title: "Night Drive" }, name: "plan_check_title" },
+        params: { arguments: { title: "Night Drive" }, name: "video_check_title" },
       });
 
       expect(
@@ -126,12 +173,12 @@ describe("nyaucast mcp", () => {
   });
 
   test("returns a typed failure as an MCP error result", async () => {
-    await withMcpServer("nyaucast-mcp-failure-", async (_channelRoot, client) => {
+    await withMcpServer("nyaucast-mcp-failure-", collectionConfig, async (_channelRoot, client) => {
       client.writeMessage({
         id: 2,
         jsonrpc: "2.0",
         method: "tools/call",
-        params: { arguments: { title: `${"😀".repeat(50)}a` }, name: "plan_check_title" },
+        params: { arguments: { title: `${"😀".repeat(50)}a` }, name: "video_check_title" },
       });
 
       const result = requireRecord((await client.responseFor(2)).result, "tools/call error result");
