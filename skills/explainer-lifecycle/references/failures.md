@@ -101,14 +101,15 @@ tool と CLI は、失敗を安定した識別子（型付きのエラーのタ�
 
 ## 描画
 
-| タグ                          | 意味と手順                                                                                                                                                                         |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `CompositionNotFound`         | composition が無い。`explainer_assemble_composition` を先に呼び、頭から歩き直す                                                                                                    |
-| `InvalidComposition`          | composition が契約を破っている（違反が列挙される）。図解を直して `explainer_assemble_composition` を `force` つきで呼び、描画から歩き直す                                          |
-| `NondeterministicComposition` | 時刻で絵が決まらない（同じ時刻に飛んでも同じ絵にならない。違う時刻が列挙される）。図解を見直して書き直し、`explainer_assemble_composition` を `force` つきで呼び、描画から歩き直す |
-| `AudioTrackNotFound`          | 最終の音声トラックが無い。`explainer_mix_audio_track` を先に呼び、頭から歩き直す                                                                                                   |
-| `AudioTrackUnreadable`        | 最終の音声トラックを読めない。`explainer_mix_audio_track` を `force` つきで呼び直し、描画から歩き直す                                                                              |
-| `EncodeFailed`                | エンコードが途中で失敗した（何も書かれない）。`explainer_render_cut` を呼び直す。繰り返すなら人間に伝える                                                                          |
+| タグ                          | 意味と手順                                                                                                                                                                            |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CompositionNotFound`         | composition が無い。`explainer_assemble_composition` を先に呼び、頭から歩き直す                                                                                                       |
+| `CompositionStale`            | ショートの候補を書き直した後に、composition を組み立て直していない（`cut` が示すカット）。`explainer_assemble_composition` をそのカットで呼び（`force` は要らない）、描画から歩き直す |
+| `InvalidComposition`          | composition が契約を破っている（違反が列挙される）。図解を直して `explainer_assemble_composition` を `force` つきで呼び、描画から歩き直す                                             |
+| `NondeterministicComposition` | 時刻で絵が決まらない（同じ時刻に飛んでも同じ絵にならない。違う時刻が列挙される）。図解を見直して書き直し、`explainer_assemble_composition` を `force` つきで呼び、描画から歩き直す    |
+| `AudioTrackNotFound`          | 最終の音声トラックが無い。`explainer_mix_audio_track` を先に呼び、頭から歩き直す                                                                                                      |
+| `AudioTrackUnreadable`        | 最終の音声トラックを読めない。`explainer_mix_audio_track` を `force` つきで呼び直し、描画から歩き直す                                                                                 |
+| `EncodeFailed`                | エンコードが途中で失敗した（何も書かれない）。`explainer_render_cut` を呼び直す。繰り返すなら人間に伝える                                                                             |
 
 ## 失敗のタグが無い失敗
 
