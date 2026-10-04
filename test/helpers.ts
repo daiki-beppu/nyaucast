@@ -129,6 +129,7 @@ export const selectAll = (
     | "explainer_cut_exports"
     | "explainer_cut_previews"
     | "explainer_plans"
+    | "explainer_post_drafts"
     | "explainer_rejections"
     | "explainer_short_versions"
     | "explainer_short_withdrawals"

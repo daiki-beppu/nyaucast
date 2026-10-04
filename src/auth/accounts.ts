@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Schema } from "effect";
+import { Context, Effect, type FileSystem, Layer, type Path, Schema } from "effect";
 
 import { channelRegistrySchema } from "../channel-registry/schema.ts";
 import {
@@ -18,14 +18,17 @@ class ChannelNotRegistered extends Schema.TaggedError<ChannelNotRegistered>()(
   "ChannelNotRegistered",
   { channel: Schema.String },
 ) {}
-class AccountsDeclarationInvalid extends Schema.TaggedError<AccountsDeclarationInvalid>()(
+export class AccountsDeclarationInvalid extends Schema.TaggedError<AccountsDeclarationInvalid>()(
   "AccountsDeclarationInvalid",
   { channel: Schema.String },
 ) {}
-class AccountNotDeclared extends Schema.TaggedError<AccountNotDeclared>()("AccountNotDeclared", {
-  channel: Schema.String,
-  platform: Schema.String,
-}) {}
+export class AccountNotDeclared extends Schema.TaggedError<AccountNotDeclared>()(
+  "AccountNotDeclared",
+  {
+    channel: Schema.String,
+    platform: Schema.String,
+  },
+) {}
 
 type ChannelAccountsFailure =
   | AccountNotDeclared
@@ -35,7 +38,7 @@ type ChannelAccountsFailure =
   | InvalidChannel;
 
 /** 宣言されたアカウント。`id` は SNS の不変の ID（照合に使う）、`handle` は表示用。 */
-type Account = {
+export type Account = {
   readonly channel: string;
   readonly handle: string;
   readonly id: string;
@@ -69,6 +72,33 @@ export class ChannelAccounts extends Context.Service<
   }
 }
 
+/**
+ * チャンネルルートの config/channel/accounts.json に宣言されたアカウントを、SNS の順に読む。ファイルが無ければ宣言なし。
+ * チャンネルの解決は含まない（root は呼び出し側が決める）。宣言ファイルの schema はここだけが持つ。
+ */
+export const readDeclaredAccounts = (
+  fileSystem: FileSystem.FileSystem,
+  path: Path.Path,
+  channel: string,
+  root: string,
+): Effect.Effect<ReadonlyArray<Account>, AccountsDeclarationInvalid> =>
+  Effect.gen(function* () {
+    const file = path.join(root, ...accountsFile);
+    if (!(yield* fileSystem.exists(file))) return {};
+    const contents = yield* fileSystem.readFileString(file);
+    return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(AccountsFile))(contents, {
+      onExcessProperty: "error",
+    });
+  }).pipe(
+    Effect.mapError(() => new AccountsDeclarationInvalid({ channel })),
+    Effect.map((declarations) =>
+      platforms.flatMap((platform) => {
+        const declaration: { handle: string; id: string } | undefined = declarations[platform];
+        return declaration === undefined ? [] : [{ channel, platform, ...declaration }];
+      }),
+    ),
+  );
+
 function makeChannelAccounts(configRoot: string) {
   return Effect.gen(function* () {
     const { fileSystem, path } = yield* fileServices;
@@ -85,34 +115,14 @@ function makeChannelAccounts(configRoot: string) {
         return root ?? (yield* new ChannelNotRegistered({ channel }));
       });
 
-    const declarationsOf = (channel: string, root: string) =>
-      Effect.gen(function* () {
-        const file = path.join(root, ...accountsFile);
-        if (!(yield* fileSystem.exists(file))) return {};
-        const contents = yield* fileSystem.readFileString(file);
-        return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(AccountsFile))(contents, {
-          onExcessProperty: "error",
-        });
-      }).pipe(Effect.mapError(() => new AccountsDeclarationInvalid({ channel })));
-
-    const accountsOf = (channel: string, root: string) =>
-      declarationsOf(channel, root).pipe(
-        Effect.map((declarations) =>
-          platforms.flatMap((platform) => {
-            const declaration: { handle: string; id: string } | undefined = declarations[platform];
-            return declaration === undefined ? [] : [{ channel, platform, ...declaration }];
-          }),
-        ),
-      );
-
     const list = Effect.fn("ChannelAccounts.list")(function* (channel: string | undefined) {
       if (channel !== undefined) {
         yield* requireChannel(channel);
-        return yield* accountsOf(channel, yield* rootOf(channel));
+        return yield* readDeclaredAccounts(fileSystem, path, channel, yield* rootOf(channel));
       }
       const roots = yield* registeredRoots;
       const perChannel = yield* Effect.forEach(roots, (root) =>
-        accountsOf(path.basename(root), root),
+        readDeclaredAccounts(fileSystem, path, path.basename(root), root),
       );
       return perChannel.flat();
     });

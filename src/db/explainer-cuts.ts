@@ -7,6 +7,10 @@ import { insertRow, queryRows } from "./explainer-thumbnails.ts";
 /** 長尺のカットの名前。ショートのカットは `short-<n>-clip` と `short-<n>-dedicated`（`videos/cuts.ts` が名前を解決する）。 */
 export const longCut = "long";
 
+/** 番号 n の候補の 2 つのカットの名前（切り抜きと専用）。 */
+export const shortCutNames = (number: number) =>
+  [`short-${number}-clip`, `short-${number}-dedicated`] as const;
+
 const CutExport = Schema.Struct({
   compositionHash: Schema.String,
   createdAt: Schema.String,
@@ -80,6 +84,17 @@ export const lastCutExport = (videoId: string, cut: string) => lastFact(exportsT
 
 export const lastCutPreview = (videoId: string, cut: string) =>
   lastFact(previewsTable, videoId, cut);
+
+/** そのカットに、この composition の鍵のプレビューが 1 つでもあるか。 */
+export const hasCutPreview = (videoId: string, cut: string, compositionHash: string) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* queryRows(
+      Schema.Struct({ found: Schema.Finite }),
+      sql`SELECT EXISTS (SELECT 1 FROM explainer_cut_previews WHERE video_id = ${videoId} AND cut = ${cut} AND composition_hash = ${compositionHash}) AS found`,
+    );
+    return rows[0]?.found === 1;
+  });
 
 const laterOf = (a: string | undefined, b: string | undefined) =>
   a === undefined || (b !== undefined && b > a) ? b : a;

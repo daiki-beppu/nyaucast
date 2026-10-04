@@ -2,6 +2,7 @@ import { Clock, Effect, Option, Schema, Semaphore } from "effect";
 import { SqlClient } from "effect/sql";
 
 import { ParagraphRange } from "../shorts/short-candidate.ts";
+import { shortCutNames } from "./explainer-cuts.ts";
 import { afterLatestFact } from "./fact-time.ts";
 import { insertRow, queryRows } from "./explainer-thumbnails.ts";
 
@@ -99,6 +100,19 @@ const nextFactTime = (videoId: string, number: number) =>
     return new Date(afterLatestFact(now, rows[0]?.latest ?? undefined)).toISOString();
   });
 
+// 新しい版は、同じ番号の直前の事実に加え、その候補の投稿案と書き出しより必ず後の時刻にする（それらは版より新しいときだけ有効なので、改訂で無効になる）。
+const nextVersionTime = (videoId: string, number: number) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const [clip, dedicated] = shortCutNames(number);
+    const rows = yield* queryRows(
+      LatestRow,
+      sql`SELECT max(at) AS latest FROM (SELECT created_at AS at FROM explainer_short_versions WHERE video_id = ${videoId} AND number = ${number} UNION ALL SELECT withdrawn_at AS at FROM explainer_short_withdrawals WHERE video_id = ${videoId} AND number = ${number} UNION ALL SELECT created_at AS at FROM explainer_post_drafts WHERE video_id = ${videoId} AND short_number = ${number} UNION ALL SELECT created_at AS at FROM explainer_cut_exports WHERE video_id = ${videoId} AND cut IN (${clip}, ${dedicated}))`,
+    );
+    const now = yield* Clock.currentTimeMillis;
+    return new Date(afterLatestFact(now, rows[0]?.latest ?? undefined)).toISOString();
+  });
+
 export interface NewShortVersion {
   readonly hook: string;
   readonly number: number;
@@ -111,7 +125,7 @@ export interface NewShortVersion {
 export const appendShortVersion = (version: NewShortVersion) =>
   Effect.gen(function* () {
     yield* insertRow("explainer_short_versions", {
-      created_at: yield* nextFactTime(version.videoId, version.number),
+      created_at: yield* nextVersionTime(version.videoId, version.number),
       end_paragraph: version.range.end.paragraph,
       end_scene: version.range.end.scene,
       hook: version.hook,

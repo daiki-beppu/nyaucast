@@ -69,6 +69,7 @@ describe("video.status: parameters and result", () => {
       },
       gateRecords: [],
       cuts: [],
+      postDrafts: [],
       shorts: [],
       thumbnails: { candidates: [], exclusions: [] },
       videoId: "V1",
@@ -101,6 +102,7 @@ describe("video.status: parameters and result", () => {
     const status = {
       abandoned: false,
       cuts: [],
+      postDrafts: [],
       shorts: [],
       gateRecords: [],
       plan: { hitPattern: "shock", points: [], sources: [], title: "T", updatedAt: at },
@@ -126,6 +128,7 @@ describe("video.status: gate records in the result schema", () => {
     gateRecords: [{ gate: "produce", kind: "approval", recordedAt: noon }],
     plan: { hitPattern: "shock", points: [], sources: [], title: "T", updatedAt: noon },
     cuts: [],
+    postDrafts: [],
     shorts: [],
     thumbnails: { candidates: [], exclusions: [] },
     videoId: "V1",
@@ -169,6 +172,7 @@ describe("video.status: reading a video", () => {
           gateRecords: [],
           plan: written.plan,
           cuts: [],
+          postDrafts: [],
           shorts: [],
           thumbnails: { candidates: [], exclusions: [] },
           videoId: written.videoId,
@@ -332,6 +336,7 @@ describe("video.status: cuts", () => {
       ],
       gateRecords: [],
       plan: { hitPattern: "shock", points: [], sources: [], title: "T", updatedAt: noon },
+      postDrafts: [],
       shorts: [],
       thumbnails: { candidates: [], exclusions: [] },
       videoId: "V1",
@@ -832,6 +837,7 @@ describe("video.status: short candidates", () => {
     cuts: [],
     gateRecords: [],
     plan: { hitPattern: "shock", points: [], sources: [], title: "T", updatedAt: noon },
+    postDrafts: [],
     shorts: [candidate],
     thumbnails: { candidates: [], exclusions: [] },
     videoId: "V1",
@@ -941,6 +947,485 @@ describe("video.status: short candidates", () => {
       }),
     ),
   );
+});
+
+describe("video.status: post drafts in the result schema", () => {
+  const draft = {
+    accountId: "x-id",
+    createdAt: noon,
+    platform: "x",
+    post: { platform: "x", text: "告知" },
+    scheduledAt: "2026-10-05T00:00:00.000Z",
+  };
+  const status = {
+    abandoned: false,
+    cuts: [],
+    gateRecords: [],
+    plan: { hitPattern: "shock", points: [], sources: [], title: "T", updatedAt: noon },
+    postDrafts: [draft],
+    shorts: [],
+    thumbnails: { candidates: [], exclusions: [] },
+    videoId: "V1",
+  };
+
+  it("describes the post drafts it returns", () => {
+    assert.include(VideoStatusTool.description, "post draft");
+  });
+
+  it("accepts post drafts of a long-form video and of a short, and rejects action fields in them", () => {
+    assert.isTrue(accepts(VideoStatusTool.successSchema, status));
+    assert.isTrue(
+      accepts(VideoStatusTool.successSchema, {
+        ...status,
+        postDrafts: [
+          { ...draft, short: 1 },
+          {
+            ...draft,
+            accountId: "youtube-id",
+            platform: "youtube",
+            post: { description: "説明", platform: "youtube", title: "題名" },
+          },
+        ],
+      }),
+    );
+    assert.isFalse(accepts(VideoStatusTool.successSchema, { ...status, postDrafts: undefined }));
+    assert.isFalse(
+      accepts(VideoStatusTool.successSchema, {
+        ...status,
+        postDrafts: [{ ...draft, next: "approve" }],
+      }),
+    );
+    assert.isFalse(
+      accepts(VideoStatusTool.successSchema, {
+        ...status,
+        postDrafts: [{ ...draft, post: { ...draft.post, command: "post" } }],
+      }),
+    );
+  });
+});
+
+describe("video.status: awaiting the publish gate", () => {
+  // 版は 00:00 に書く。書き出しは既定で 01:00（版より新しい）。
+  const versionAt = "2026-10-04T00:00:00.000Z";
+  const exportedAt = "2026-10-04T01:00:00.000Z";
+  const clip = (number: number) => `short-${number}-clip`;
+  const dedicated = (number: number) => `short-${number}-dedicated`;
+
+  const exportRow = (cut: string, createdAt = exportedAt, compositionHash = "c1") =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO explainer_cut_exports (video_id, cut, key, composition_hash, render_hash, created_at) VALUES ('V1', ${cut}, ${`videos/V1/cuts/${cut}/${cut}.mp4`}, ${compositionHash}, 'r1', ${createdAt})`;
+    });
+  const previewRow = (cut: string, compositionHash = "c1", createdAt = exportedAt) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO explainer_cut_previews (video_id, cut, composition_hash, created_at) VALUES ('V1', ${cut}, ${compositionHash}, ${createdAt})`;
+    });
+  /** カットに最後の書き出しと、その composition の鍵のプレビューをそろえる。 */
+  const readyCut = (cut: string, createdAt = exportedAt) =>
+    Effect.gen(function* () {
+      yield* exportRow(cut, createdAt);
+      yield* previewRow(cut);
+    });
+  const readyShort = (number: number) =>
+    Effect.gen(function* () {
+      yield* readyCut(clip(number));
+      yield* readyCut(dedicated(number));
+    });
+
+  const awaiting = callTool("video_status", { videoId: "V1" }).pipe(
+    Effect.map((status) => status.awaitingApproval),
+  );
+
+  // 企画・企画ゲートの承認・長尺の台本を用意した動画 V1。ショートの候補は shorts の番号で書く（版は 00:00）。
+  const inVideo = <A, E, R>(
+    prefix: string,
+    shorts: readonly number[],
+    use: Effect.Effect<A, E, R>,
+  ) =>
+    withToolChannel(prefix, { config: explainerConfig }, () =>
+      Effect.gen(function* () {
+        yield* setClock(noon);
+        yield* callTool("explainer_write_plan", planInput());
+        yield* approveProduce();
+        yield* callTool("explainer_write_script", scriptInput(scriptScenes));
+        yield* setClock(versionAt);
+        for (const number of shorts) yield* writeShort({ number });
+        return yield* use;
+      }),
+    );
+
+  it.effect(
+    "awaits the publish gate when the long-form video is ready and there is no candidate",
+    () =>
+      inVideo(
+        "nyaucast-video-status-publish-long-only-",
+        [],
+        Effect.gen(function* () {
+          yield* readyCut("long");
+
+          assert.strictEqual(yield* awaiting, "publish");
+        }),
+      ),
+  );
+
+  it.effect("awaits the publish gate when the long-form video and every candidate are ready", () =>
+    inVideo(
+      "nyaucast-video-status-publish-all-",
+      [1, 2],
+      Effect.gen(function* () {
+        yield* readyCut("long");
+        yield* readyShort(1);
+        yield* readyShort(2);
+
+        assert.strictEqual(yield* awaiting, "publish");
+      }),
+    ),
+  );
+
+  it.effect("does not require the cuts of a withdrawn candidate", () =>
+    inVideo(
+      "nyaucast-video-status-publish-withdrawn-",
+      [1, 2],
+      Effect.gen(function* () {
+        yield* readyCut("long");
+        yield* readyShort(2);
+        yield* withdrawShort(1);
+
+        assert.strictEqual(yield* awaiting, "publish");
+      }),
+    ),
+  );
+
+  it.effect("does not require the long-form export to be newer than a candidate's version", () =>
+    inVideo(
+      "nyaucast-video-status-publish-long-older-",
+      [1],
+      Effect.gen(function* () {
+        yield* readyCut("long", "2026-10-03T20:00:00.000Z");
+        yield* readyShort(1);
+
+        assert.strictEqual(yield* awaiting, "publish");
+      }),
+    ),
+  );
+
+  describe("condition 1: every needed cut has a last export", () => {
+    it.effect("does not await when there is no export at all", () =>
+      inVideo(
+        "nyaucast-video-status-publish-no-export-",
+        [],
+        Effect.gen(function* () {
+          assert.isUndefined(yield* awaiting);
+        }),
+      ),
+    );
+
+    it.effect("does not await when the long-form video has only a preview", () =>
+      inVideo(
+        "nyaucast-video-status-publish-long-no-export-",
+        [],
+        Effect.gen(function* () {
+          yield* previewRow("long");
+
+          assert.isUndefined(yield* awaiting);
+        }),
+      ),
+    );
+
+    it.effect.each([
+      ["the clip cut", clip(1)],
+      ["the dedicated cut", dedicated(1)],
+    ] as const)("does not await when %s of a candidate has no export", ([, missing]) =>
+      inVideo(
+        "nyaucast-video-status-publish-cut-no-export-",
+        [1],
+        Effect.gen(function* () {
+          yield* readyCut("long");
+          for (const cut of [clip(1), dedicated(1)]) {
+            if (cut === missing) yield* previewRow(cut);
+            else yield* readyCut(cut);
+          }
+
+          assert.isUndefined(yield* awaiting);
+        }),
+      ),
+    );
+
+    it.effect("does not await when the long-form video is ready but a candidate has no cut", () =>
+      inVideo(
+        "nyaucast-video-status-publish-candidate-no-cut-",
+        [1],
+        Effect.gen(function* () {
+          yield* readyCut("long");
+
+          assert.isUndefined(yield* awaiting);
+        }),
+      ),
+    );
+
+    it.effect("does not await when only the candidates are ready", () =>
+      inVideo(
+        "nyaucast-video-status-publish-no-long-",
+        [1],
+        Effect.gen(function* () {
+          yield* readyShort(1);
+
+          assert.isUndefined(yield* awaiting);
+        }),
+      ),
+    );
+  });
+
+  describe("condition 2: a preview with the composition key of the last export", () => {
+    it.effect("does not await when the long-form video has an export but no preview", () =>
+      inVideo(
+        "nyaucast-video-status-publish-no-preview-",
+        [],
+        Effect.gen(function* () {
+          yield* exportRow("long");
+
+          assert.isUndefined(yield* awaiting);
+        }),
+      ),
+    );
+
+    it.effect("does not await when the only preview has another composition key", () =>
+      inVideo(
+        "nyaucast-video-status-publish-other-key-",
+        [],
+        Effect.gen(function* () {
+          yield* exportRow("long", exportedAt, "c-export");
+          yield* previewRow("long", "c-preview");
+
+          assert.isUndefined(yield* awaiting);
+        }),
+      ),
+    );
+
+    it.effect("does not await when the preview matches an older export but not the last one", () =>
+      inVideo(
+        "nyaucast-video-status-publish-old-key-",
+        [],
+        Effect.gen(function* () {
+          yield* exportRow("long", "2026-10-04T01:00:00.000Z", "c-old");
+          yield* previewRow("long", "c-old", "2026-10-04T01:30:00.000Z");
+          yield* exportRow("long", "2026-10-04T02:00:00.000Z", "c-new");
+
+          assert.isUndefined(yield* awaiting);
+        }),
+      ),
+    );
+
+    it.effect.each([
+      ["the clip cut", clip(1)],
+      ["the dedicated cut", dedicated(1)],
+    ] as const)("does not await when %s of a candidate has an export but no preview", ([, bare]) =>
+      inVideo(
+        "nyaucast-video-status-publish-short-no-preview-",
+        [1],
+        Effect.gen(function* () {
+          yield* readyCut("long");
+          for (const cut of [clip(1), dedicated(1)]) {
+            if (cut === bare) yield* exportRow(cut);
+            else yield* readyCut(cut);
+          }
+
+          assert.isUndefined(yield* awaiting);
+        }),
+      ),
+    );
+
+    it.effect(
+      "awaits when a preview with the composition key exists, even if it is not the last preview",
+      () =>
+        inVideo(
+          "nyaucast-video-status-publish-earlier-preview-",
+          [],
+          Effect.gen(function* () {
+            yield* exportRow("long", exportedAt, "c-export");
+            yield* previewRow("long", "c-export", "2026-10-04T01:10:00.000Z");
+            yield* previewRow("long", "c-other", "2026-10-04T01:20:00.000Z");
+
+            assert.strictEqual(yield* awaiting, "publish");
+          }),
+        ),
+    );
+
+    it.effect("takes the composition key from the last export of each cut separately", () =>
+      inVideo(
+        "nyaucast-video-status-publish-per-cut-key-",
+        [1],
+        Effect.gen(function* () {
+          yield* readyCut("long");
+          yield* readyCut(clip(1));
+          // 専用のカットの鍵はクリップのカットのプレビューでは満たされない。
+          yield* exportRow(dedicated(1), exportedAt, "c-dedicated");
+          yield* previewRow(clip(1), "c-dedicated");
+
+          assert.isUndefined(yield* awaiting);
+        }),
+      ),
+    );
+  });
+
+  describe("condition 3: the cuts of a candidate are newer than its last version", () => {
+    it.effect.each([
+      ["before the version", "2026-10-03T23:59:59.000Z"],
+      ["at the same time as the version", versionAt],
+    ] as const)("does not await when a candidate's cut was exported %s", ([, at]) =>
+      inVideo(
+        "nyaucast-video-status-publish-stale-export-",
+        [1],
+        Effect.gen(function* () {
+          yield* readyCut("long");
+          yield* readyCut(clip(1));
+          yield* readyCut(dedicated(1), at);
+
+          assert.isUndefined(yield* awaiting);
+        }),
+      ),
+    );
+
+    it.effect(
+      "does not await when the clip cut is older than the version while the dedicated cut is newer",
+      () =>
+        inVideo(
+          "nyaucast-video-status-publish-clip-stale-",
+          [1],
+          Effect.gen(function* () {
+            yield* readyCut("long");
+            yield* readyCut(clip(1), "2026-10-03T23:00:00.000Z");
+            yield* readyCut(dedicated(1));
+
+            assert.isUndefined(yield* awaiting);
+          }),
+        ),
+    );
+
+    it.effect(
+      "stops awaiting once the candidate gets a new version, and awaits again after new exports",
+      () =>
+        inVideo(
+          "nyaucast-video-status-publish-renewed-",
+          [1],
+          Effect.gen(function* () {
+            yield* readyCut("long");
+            yield* readyShort(1);
+            assert.strictEqual(yield* awaiting, "publish");
+
+            yield* setClock("2026-10-04T02:00:00.000Z");
+            yield* writeShort({ hook: "改訂", number: 1 });
+            assert.isUndefined(yield* awaiting);
+
+            yield* readyCut(clip(1), "2026-10-04T03:00:00.000Z");
+            assert.isUndefined(yield* awaiting);
+            yield* readyCut(dedicated(1), "2026-10-04T03:00:00.000Z");
+            assert.strictEqual(yield* awaiting, "publish");
+          }),
+        ),
+    );
+
+    it.effect("compares a candidate only with its own version", () =>
+      inVideo(
+        "nyaucast-video-status-publish-other-candidate-",
+        [1, 2],
+        Effect.gen(function* () {
+          yield* readyCut("long");
+          yield* readyShort(1);
+          yield* readyShort(2);
+
+          yield* setClock("2026-10-04T05:00:00.000Z");
+          yield* writeShort({ hook: "改訂", number: 2 });
+          assert.isUndefined(yield* awaiting);
+
+          yield* readyCut(clip(2), "2026-10-04T06:00:00.000Z");
+          yield* readyCut(dedicated(2), "2026-10-04T06:00:00.000Z");
+          assert.strictEqual(yield* awaiting, "publish");
+        }),
+      ),
+    );
+
+    it.effect(
+      "stops awaiting after a renewal even when the clock went back before the exports",
+      () =>
+        inVideo(
+          "nyaucast-video-status-publish-renew-clock-back-",
+          [1],
+          Effect.gen(function* () {
+            yield* readyCut("long");
+            yield* readyShort(1);
+            assert.strictEqual(yield* awaiting, "publish");
+
+            yield* setClock("2026-10-04T00:30:00.000Z");
+            yield* writeShort({ hook: "改訂", number: 1 });
+
+            assert.isUndefined(yield* awaiting);
+          }),
+        ),
+    );
+  });
+
+  describe("the gate itself", () => {
+    it.effect("does not await the publish gate before the produce gate is approved", () =>
+      withToolChannel(
+        "nyaucast-video-status-publish-unapproved-",
+        { config: explainerConfig },
+        () =>
+          Effect.gen(function* () {
+            yield* setClock(noon);
+            yield* callTool("explainer_write_plan", planInput());
+            yield* readyCut("long");
+
+            assert.isUndefined(yield* awaiting);
+          }),
+      ),
+    );
+
+    it.effect("does not await once the publish gate is approved", () =>
+      inVideo(
+        "nyaucast-video-status-publish-approved-",
+        [],
+        Effect.gen(function* () {
+          yield* readyCut("long");
+          yield* insertGateFact("approval", "V1", "publish", "2026-10-04T05:00:00.000Z");
+
+          assert.isUndefined(yield* awaiting);
+        }),
+      ),
+    );
+
+    it.effect("does not await an abandoned video", () =>
+      inVideo(
+        "nyaucast-video-status-publish-abandoned-",
+        [],
+        Effect.gen(function* () {
+          yield* readyCut("long");
+          yield* insertGateFact("rejection", "V1", "publish", "2026-10-04T05:00:00.000Z");
+
+          const status = yield* callTool("video_status", { videoId: "V1" });
+
+          assert.isTrue(status.abandoned);
+          assert.isUndefined(status.awaitingApproval);
+        }),
+      ),
+    );
+
+    it.effect("does not read another video's exports and previews", () =>
+      inVideo(
+        "nyaucast-video-status-publish-other-video-",
+        [],
+        Effect.gen(function* () {
+          const other = yield* callTool("explainer_write_plan", planInput({ title: "Another" }));
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`INSERT INTO explainer_cut_exports (video_id, cut, key, composition_hash, render_hash, created_at) VALUES (${other.videoId}, 'long', 'k', 'c1', 'r1', ${exportedAt})`;
+          yield* sql`INSERT INTO explainer_cut_previews (video_id, cut, composition_hash, created_at) VALUES (${other.videoId}, 'long', 'c1', ${exportedAt})`;
+
+          assert.isUndefined(yield* awaiting);
+        }),
+      ),
+    );
+  });
 });
 
 describe("video.status: unknown keys", () => {

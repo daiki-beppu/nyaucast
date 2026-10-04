@@ -34,6 +34,7 @@ describe("K3 package smoke", () => {
       "video_exclude_thumbnail",
       "video_generate_thumbnails",
       "video_status",
+      "video_write_post_draft",
     ]);
     expect(localDatabaseCreated).toBe(true);
     // codec は tarball に入り、下流の相対 symlink（.claude → .agents → node_modules）越しに読める

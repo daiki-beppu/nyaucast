@@ -185,6 +185,7 @@ describe("full migration to Effect 4.0", () => {
         "video.excludeThumbnail.ts",
         "video.generateThumbnails.ts",
         "video.status.ts",
+        "video.writePostDraft.ts",
       ]);
     });
   });
