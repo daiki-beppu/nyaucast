@@ -17,7 +17,7 @@ import { LocalStore } from "./db/local-store.ts";
 import { nyaucastCli, version } from "./cli.ts";
 import { Chrome, chromeCacheDirectory } from "./lib/chrome.ts";
 import { InstagramAuth } from "./instagram/auth.ts";
-import { NyaucastToolHandlers, NyaucastToolkit } from "./mcp.ts";
+import { NyaucastToolHandlers, NyaucastToolkit, nyaucastInstructions } from "./mcp.ts";
 import { ThumbnailFiles } from "./thumbnails/thumbnail-files.ts";
 import { VideoFiles } from "./videos/video-files.ts";
 import { VideoIds } from "./videos/video-ids.ts";
@@ -49,6 +49,7 @@ const mcpHandlers = NyaucastToolHandlers.pipe(
 const mcpServer = McpServer.toolkit(NyaucastToolkit).pipe(
   Layer.provide(
     McpServer.layerStdio({
+      instructions: nyaucastInstructions,
       name: "nyaucast",
       protocols: [McpProtocol.v2025_06_18],
       version,

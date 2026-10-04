@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { withTemporaryDirectoryAsync } from "./helpers";
@@ -7,6 +7,7 @@ import { createJsonRpcClient, requireRecord, stopChildProcess } from "./mcp-stdi
 
 const packageRoot = resolve(import.meta.dirname, "..");
 const subprocessTimeout = 120_000;
+const codecName = "explainer-lifecycle";
 
 interface PackedFile {
   path: string;
@@ -24,6 +25,10 @@ interface PackageManifest {
 
 export interface PackageSmokeResult {
   allowedRoots: string[];
+  /** consumer の .claude/skills/<codec>/SKILL.md を相対 symlink 経由で読んだ内容 */
+  linkedCodecSkill: string;
+  /** tarball から install された node_modules/nyaucast/skills/<codec>/SKILL.md の内容 */
+  installedCodecSkill: string;
   localDatabaseCreated: boolean;
   packedPaths: string[];
   toolNames: string[];
@@ -129,6 +134,17 @@ export async function inspectInstalledPackage(): Promise<PackageSmokeResult> {
     requireSuccess("isolated pnpm install", installed);
 
     const packageDirectory = join(consumer, "node_modules", manifest.name);
+    // 下流リポの配置: .agents/skills/<codec> → node_modules/nyaucast/skills/<codec>、.claude/skills/<codec> → .agents/skills/<codec>（相対 symlink）
+    mkdirSync(join(consumer, ".agents", "skills"), { recursive: true });
+    mkdirSync(join(consumer, ".claude", "skills"), { recursive: true });
+    symlinkSync(
+      join("..", "..", "node_modules", manifest.name, "skills", codecName),
+      join(consumer, ".agents", "skills", codecName),
+    );
+    symlinkSync(
+      join("..", "..", ".agents", "skills", codecName),
+      join(consumer, ".claude", "skills", codecName),
+    );
     const server = spawn(process.execPath, [join(packageDirectory, "bin", "nyaucast.js"), "mcp"], {
       cwd: consumer,
       env: process.env,
@@ -158,6 +174,14 @@ export async function inspectInstalledPackage(): Promise<PackageSmokeResult> {
       }
       return {
         allowedRoots: manifest.files,
+        installedCodecSkill: readFileSync(
+          join(packageDirectory, "skills", codecName, "SKILL.md"),
+          "utf8",
+        ),
+        linkedCodecSkill: readFileSync(
+          join(consumer, ".claude", "skills", codecName, "SKILL.md"),
+          "utf8",
+        ),
         localDatabaseCreated: existsSync(join(consumer, "data", "local.db")),
         packedPaths: report.files.map(({ path }) => path),
         toolNames: toolNamesFrom(listed.result),

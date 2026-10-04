@@ -69,8 +69,8 @@ const reportFailure = (cause: Cause.Cause<unknown>) => {
 
 const collectionId = Argument.String("id");
 
-/** nyaucast の CLI 全体。argv を受け取り、Effect を返す。 */
-export const nyaucastCli = <E1, R1, E2, R2, E3, R3, E4, R4>(
+/** nyaucast の root Command。サブコマンドの木そのもので、実行はしない。 */
+export const nyaucastCommand = <E1, R1, E2, R2, E3, R3, E4, R4>(
   environment: CliEnvironment<E1, R1, E2, R2, E3, R3, E4, R4>,
 ) => {
   // local store は、ゲートを操作する子のコマンドが実行されるときにだけ組む。
@@ -101,10 +101,14 @@ export const nyaucastCli = <E1, R1, E2, R2, E3, R3, E4, R4>(
 
   const video = videoCommand.pipe(Command.provide(environment.video));
 
-  const root = Command.make("nyaucast").pipe(
-    Command.withSubcommands([collection, mcp, auth, video]),
-  );
+  return Command.make("nyaucast").pipe(Command.withSubcommands([collection, mcp, auth, video]));
+};
 
+/** nyaucast の CLI 全体。argv を受け取り、Effect を返す。 */
+export const nyaucastCli = <E1, R1, E2, R2, E3, R3, E4, R4>(
+  environment: CliEnvironment<E1, R1, E2, R2, E3, R3, E4, R4>,
+) => {
+  const root = nyaucastCommand(environment);
   return (argv: ReadonlyArray<string>) =>
     Command.runWith(root, { version })(argv).pipe(Effect.tapCause(reportFailure));
 };

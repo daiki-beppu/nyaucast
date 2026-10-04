@@ -56,6 +56,16 @@ import { VideoStatusTool, videoStatus } from "./tools/video.status.ts";
 import type { VideoFiles } from "./videos/video-files.ts";
 import type { VideoIds } from "./videos/video-ids.ts";
 
+/**
+ * MCP の initialize で client に返す道案内。512 文字以内に、codec の名前とどの区間で読むかだけを書く。
+ * 手順そのものは codec の領分で、ここには書かない（ADR-0010 決定 6）。
+ */
+export const nyaucastInstructions =
+  "Before planning or producing an explainer video, read the knowledge codec explainer-lifecycle " +
+  "(skills/explainer-lifecycle/SKILL.md in the nyaucast package, linked from .agents/skills). " +
+  "Read it for the plan section (topic, plan, thumbnails, before the plan gate) and the produce " +
+  "section (script, shorts, diagram, narration, render, preview).";
+
 // registry は置かない。tool 一覧は、ここで import した tool を並べるだけ。
 export const NyaucastToolkit = Toolkit.make(
   PlanInitTool,

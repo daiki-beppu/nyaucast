@@ -1,11 +1,20 @@
 import { describe, expect, test } from "@effect/vitest";
 
+import { readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+
 import { inspectInstalledPackage } from "./package-smoke-support.ts";
 
 describe("K3 package smoke", () => {
   test("a published tarball serves MCP tools and migrates its local store", async () => {
-    const { allowedRoots, localDatabaseCreated, packedPaths, toolNames } =
-      await inspectInstalledPackage();
+    const {
+      allowedRoots,
+      installedCodecSkill,
+      linkedCodecSkill,
+      localDatabaseCreated,
+      packedPaths,
+      toolNames,
+    } = await inspectInstalledPackage();
 
     expect(toolNames.toSorted()).toEqual([
       "collection_status",
@@ -27,6 +36,21 @@ describe("K3 package smoke", () => {
       "video_status",
     ]);
     expect(localDatabaseCreated).toBe(true);
+    // codec は tarball に入り、下流の相対 symlink（.claude → .agents → node_modules）越しに読める
+    expect(packedPaths).toEqual(
+      expect.arrayContaining([
+        "skills/explainer-lifecycle/SKILL.md",
+        "skills/explainer-lifecycle/references/plan.md",
+        "skills/explainer-lifecycle/references/produce.md",
+        "skills/explainer-lifecycle/references/failures.md",
+      ]),
+    );
+    const shippedSkill = readFileSync(
+      join(resolve(import.meta.dirname, ".."), "skills", "explainer-lifecycle", "SKILL.md"),
+      "utf8",
+    );
+    expect(installedCodecSkill).toBe(shippedSkill);
+    expect(linkedCodecSkill).toBe(shippedSkill);
     expect(packedPaths).not.toContainEqual(expect.stringMatching(/\.test\.ts$/));
     expect(packedPaths).not.toContainEqual(expect.stringMatching(/^src\//));
     expect(packedPaths).toEqual(
