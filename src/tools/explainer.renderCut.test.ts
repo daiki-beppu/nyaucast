@@ -23,9 +23,10 @@ import {
   clipCut,
   cutAudioKey,
   cutCompositionKey,
-  shortCutExportKey,
-  versionRows,
   dedicatedCut,
+  shortCutExportKey,
+  stampShortVersion,
+  versionRows,
   withdrawShort,
   writeShort,
 } from "../../test/short-helpers.ts";
@@ -746,10 +747,13 @@ const renderCut = (cut: string, extra: { force?: boolean } = {}) =>
 // 縦型（180x320）の小さな composition。
 const verticalHtml = () => compositionHtml({ height: 320, width: 180 });
 
-const writeCutInputs = (channelRoot: string, cut: string, html = verticalHtml()) => {
-  writeChannelFile(channelRoot, cutCompositionKey(cut), new TextEncoder().encode(html));
-  writeChannelFile(channelRoot, cutAudioKey(cut), trackWav());
-};
+const writeCutInputs = (channelRoot: string, cut: string, html = verticalHtml()) =>
+  stampShortVersion(cut, html).pipe(
+    Effect.map((stamped) => {
+      writeChannelFile(channelRoot, cutCompositionKey(cut), new TextEncoder().encode(stamped));
+      writeChannelFile(channelRoot, cutAudioKey(cut), trackWav());
+    }),
+  );
 
 // 企画・承認・長尺の台本・候補 1 を用意した動画 V1（composition と音声は置かない）。
 const withShort = <A, E, R>(prefix: string, use: (channelRoot: string) => Effect.Effect<A, E, R>) =>
@@ -821,8 +825,8 @@ describe("explainer.renderCut: the two cuts of a short candidate", () => {
     () =>
       withShort("nyaucast-render-short-two-cuts-", (channelRoot) =>
         Effect.gen(function* () {
-          writeCutInputs(channelRoot, clipCut(1));
-          writeCutInputs(channelRoot, dedicatedCut(1));
+          yield* writeCutInputs(channelRoot, clipCut(1));
+          yield* writeCutInputs(channelRoot, dedicatedCut(1));
 
           const clip = yield* renderCut(clipCut(1));
           const dedicated = yield* renderCut(dedicatedCut(1));
@@ -865,7 +869,7 @@ describe("explainer.renderCut: the two cuts of a short candidate", () => {
     () =>
       withShort("nyaucast-render-short-after-version-", (channelRoot) =>
         Effect.gen(function* () {
-          writeCutInputs(channelRoot, clipCut(1));
+          yield* writeCutInputs(channelRoot, clipCut(1));
           const [version] = yield* versionRows;
           const versionTime = String(version?.["created_at"]);
           yield* setClock(versionTime);
@@ -880,14 +884,25 @@ describe("explainer.renderCut: the two cuts of a short candidate", () => {
   );
 
   it.effect(
-    "renders again when the candidate was written after the last export, even if the files are unchanged",
+    "refuses a composition assembled before the candidate was written again, and renders once it is assembled again",
     () =>
       withShort("nyaucast-render-short-stale-", (channelRoot) =>
         Effect.gen(function* () {
-          writeCutInputs(channelRoot, dedicatedCut(1));
+          yield* writeCutInputs(channelRoot, dedicatedCut(1));
           yield* renderCut(dedicatedCut(1));
           yield* writeShort({ hook: "新しいフック" });
 
+          const stale = yield* Effect.flip(renderCut(dedicatedCut(1)));
+
+          assert.deepStrictEqual(failureFacts(stale), {
+            _tag: "CompositionStale",
+            cut: dedicatedCut(1),
+            videoId: "V1",
+          });
+          assert.strictEqual((yield* exportRows).length, 1);
+
+          // 組み立て直すと、composition の版が候補の最後の版になる
+          yield* writeCutInputs(channelRoot, dedicatedCut(1));
           const again = yield* renderCut(dedicatedCut(1));
 
           const versions = yield* versionRows;
@@ -906,8 +921,8 @@ describe("explainer.renderCut: the two cuts of a short candidate", () => {
     () =>
       withShort("nyaucast-render-short-status-", (channelRoot) =>
         Effect.gen(function* () {
-          writeCutInputs(channelRoot, dedicatedCut(1));
-          writeCutInputs(channelRoot, clipCut(1));
+          yield* writeCutInputs(channelRoot, dedicatedCut(1));
+          yield* writeCutInputs(channelRoot, clipCut(1));
           yield* renderCut(dedicatedCut(1));
           yield* renderCut(clipCut(1));
 
@@ -930,8 +945,8 @@ describe("explainer.renderCut: the two cuts of a short candidate", () => {
     () =>
       withShort("nyaucast-render-short-again-", (channelRoot) =>
         Effect.gen(function* () {
-          writeCutInputs(channelRoot, clipCut(1));
-          writeCutInputs(channelRoot, dedicatedCut(1));
+          yield* writeCutInputs(channelRoot, clipCut(1));
+          yield* writeCutInputs(channelRoot, dedicatedCut(1));
           const first = yield* renderCut(clipCut(1));
 
           const again = yield* renderCut(clipCut(1));
@@ -952,7 +967,7 @@ describe("explainer.renderCut: the two cuts of a short candidate", () => {
         writeChannelFile(
           channelRoot,
           cutCompositionKey(clipCut(1)),
-          new TextEncoder().encode(verticalHtml()),
+          new TextEncoder().encode(yield* stampShortVersion(clipCut(1), verticalHtml())),
         );
         writeTrack(channelRoot);
 
@@ -984,7 +999,7 @@ describe("explainer.renderCut: the two cuts of a short candidate", () => {
     () =>
       withShort("nyaucast-render-short-no-candidate-", (channelRoot) =>
         Effect.gen(function* () {
-          writeCutInputs(channelRoot, clipCut(2));
+          yield* writeCutInputs(channelRoot, clipCut(2));
 
           const failure = yield* Effect.flip(renderCut(clipCut(2)));
 
@@ -1000,8 +1015,8 @@ describe("explainer.renderCut: the two cuts of a short candidate", () => {
   it.effect("fails with ShortCandidateNotFound for a withdrawn candidate, for both cuts", () =>
     withShort("nyaucast-render-short-withdrawn-", (channelRoot) =>
       Effect.gen(function* () {
-        writeCutInputs(channelRoot, clipCut(1));
-        writeCutInputs(channelRoot, dedicatedCut(1));
+        yield* writeCutInputs(channelRoot, clipCut(1));
+        yield* writeCutInputs(channelRoot, dedicatedCut(1));
         yield* withdrawShort(1);
 
         for (const cut of [clipCut(1), dedicatedCut(1)]) {
@@ -1018,7 +1033,7 @@ describe("explainer.renderCut: the two cuts of a short candidate", () => {
     () =>
       withShort("nyaucast-render-short-rejected-", (channelRoot) =>
         Effect.gen(function* () {
-          writeCutInputs(channelRoot, clipCut(1));
+          yield* writeCutInputs(channelRoot, clipCut(1));
           yield* rejectProduce();
 
           const failure = yield* Effect.flip(renderCut(clipCut(1)));

@@ -11,7 +11,11 @@ import {
   capturePreviewFrames,
   openComposition,
 } from "../compositions/capture.ts";
-import { CompositionNotFound, readCutComposition } from "../compositions/composition.ts";
+import {
+  CompositionNotFound,
+  CompositionStale,
+  readCutComposition,
+} from "../compositions/composition.ts";
 import { appendCutPreview, lastCutPreview } from "../db/explainer-cuts.ts";
 import { ShortCandidateNotFound } from "../db/explainer-shorts.ts";
 import { VideoNotFound } from "../db/explainer-videos.ts";
@@ -37,7 +41,8 @@ export const ExplainerPreviewCutTool = Tool.make("explainer_preview_cut", {
     "Requires the produce gate to be approved. ",
     "Fails with VideoNotFound for an unknown video, with ProduceGateNotApproved before the produce gate is approved, ",
     "with ShortCandidateNotFound when the cut names a short candidate that was never written or is withdrawn, ",
-    "with CompositionNotFound when there is no composition, ",
+    "with CompositionNotFound when there is no composition, " +
+      "with CompositionStale for a short whose candidate was rewritten after the composition was assembled, ",
     "with InvalidComposition (violations lists every broken rule) when the composition breaks the contract, ",
     "and with ChromeUnavailable when the browser cannot be downloaded, started or driven. ",
     "Nothing is written when it fails. ",
@@ -51,6 +56,7 @@ export const ExplainerPreviewCutTool = Tool.make("explainer_preview_cut", {
     ProduceGateNotApproved,
     ShortCandidateNotFound,
     CompositionNotFound,
+    CompositionStale,
     InvalidComposition,
     ChromeUnavailable,
   ]),
