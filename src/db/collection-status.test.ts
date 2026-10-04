@@ -1,7 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import { Effect } from "effect";
 
-import { approveCollectionGate, rejectCollectionGate } from "../collections/gate-operations.ts";
+import { abandonCollection, produceCollection } from "../collections/gate-operations.ts";
 import { insertCollection, setClock, withChannel } from "../../test/helpers.ts";
 import { deriveCollectionStatus } from "./read-model.ts";
 
@@ -33,7 +33,7 @@ describe("collection status read model", () => {
       "nyaucast-rejected-status-",
       Effect.gen(function* () {
         yield* setClock("2026-09-02T00:00:00.000Z");
-        yield* rejectCollectionGate({ collectionId, gate: "produce" });
+        yield* abandonCollection(collectionId);
 
         assert.deepStrictEqual(yield* deriveCollectionStatus(collectionId), {
           collectionId,
@@ -51,9 +51,9 @@ describe("collection status read model", () => {
         "nyaucast-approved-status-",
         Effect.gen(function* () {
           yield* setClock("2026-09-02T00:00:00.000Z");
-          yield* rejectCollectionGate({ collectionId, gate: "produce" });
+          yield* abandonCollection(collectionId);
           yield* setClock("2026-09-02T01:00:00.000Z");
-          yield* approveCollectionGate({ collectionId, gate: "produce" });
+          yield* produceCollection(collectionId);
 
           assert.deepStrictEqual(yield* deriveCollectionStatus(collectionId), {
             collectionId,

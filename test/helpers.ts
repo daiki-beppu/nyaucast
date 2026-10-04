@@ -62,10 +62,6 @@ export const channelLayer = (channelRoot: string) =>
     NodeServices.layer,
   );
 
-/** CLI のプログラムへ渡す local store。SqlClient だけを出し、FileSystem / Path は内側で満たす。 */
-export const localStoreLayer = (channelRoot: string) =>
-  LocalStore.layer(localDatabaseUrl(channelRoot)).pipe(Layer.provide(NodeServices.layer));
-
 const notUsed = Effect.die("このテストでは使わないサブコマンドの Layer が組まれた");
 
 /** auth を使わないテストが CLI のプログラムへ渡す Layer。組まれたら失敗する。 */
@@ -83,9 +79,6 @@ export const unusedVideoLayer = Layer.mergeAll(
   Layer.effect(ChannelSettings, notUsed),
   Layer.effect(ThumbnailFiles, notUsed),
 );
-
-/** local store を使わないテストが CLI のプログラムへ渡す Layer。組まれたら失敗する。 */
-export const unusedLocalStoreLayer = Layer.effect(SqlClient.SqlClient, notUsed);
 
 /**
  * CLI のプログラムを in-process で実行する。観測点は 3 つ: 成功・失敗（outcome）、stdout の行（logs）、stderr の行（errors）。

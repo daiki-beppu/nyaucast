@@ -19,7 +19,6 @@ import {
   failureFacts,
   fakeSpawner,
   temporaryDirectory,
-  unusedLocalStoreLayer,
   unusedVideoLayer,
   writeJsonFile,
 } from "./helpers.ts";
@@ -139,7 +138,6 @@ function runAuth(
     const outcome = yield* Effect.result(
       nyaucastCli({
         auth: layer,
-        localStore: unusedLocalStoreLayer,
         mcpServer: Layer.empty,
         video: unusedVideoLayer,
       })(["auth", ...arguments_]),

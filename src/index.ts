@@ -79,7 +79,7 @@ const authServices = Layer.mergeAll(
 const video = Layer.mergeAll(localStore, ChannelSettings.layer(channelRoot), thumbnailFiles);
 
 Stdio.Stdio.use(({ args }) =>
-  Effect.flatMap(args, nyaucastCli({ auth: authServices, localStore, mcpServer, video })),
+  Effect.flatMap(args, nyaucastCli({ auth: authServices, mcpServer, video })),
 ).pipe(
   Effect.provide(NodeServices.layer),
   Effect.provideService(Logger.LogToStderr, true),

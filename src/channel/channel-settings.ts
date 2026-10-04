@@ -103,6 +103,10 @@ const decodeSettings = Schema.decodeUnknownEffect(VideoChannelSettings);
 export class ChannelSettings extends Context.Service<
   ChannelSettings,
   {
+    readonly kind: Effect.Effect<
+      "collection" | "explainer",
+      ChannelConfigNotFound | InvalidChannelConfig
+    >;
     readonly requireExplainer: Effect.Effect<
       ExplainerSettings,
       ChannelConfigNotFound | InvalidChannelConfig | NotExplainerChannel
@@ -138,7 +142,9 @@ export class ChannelSettings extends Context.Service<
           return settings;
         });
 
-        return ChannelSettings.of({ requireExplainer });
+        const kind = read.pipe(Effect.map((settings) => settings.kind));
+
+        return ChannelSettings.of({ kind, requireExplainer });
       }),
     );
   }

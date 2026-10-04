@@ -17,7 +17,7 @@ import {
   planInput,
   withVideoChannel,
 } from "./explainer-helpers.ts";
-import { failureFacts, selectAll, setClock } from "./helpers.ts";
+import { failureFacts, insertCollection, selectAll, setClock } from "./helpers.ts";
 import {
   insertCandidate,
   insertExclusion,
@@ -570,17 +570,6 @@ describe("nyaucast video produce <id>", () => {
       }),
     ),
   );
-
-  it.effect("fails with NotExplainerChannel on a collection channel", () =>
-    inCollectionChannel("nyaucast-video-cli-produce-collection-", () =>
-      Effect.gen(function* () {
-        const { outcome } = yield* runVideo(["produce", "V1"]);
-
-        assert.strictEqual(failureOf(outcome)._tag, "NotExplainerChannel");
-        assert.strictEqual((yield* gateRows("explainer_approvals")).length, 0);
-      }),
-    ),
-  );
 });
 
 describe("nyaucast video abandon <id>", () => {
@@ -709,14 +698,282 @@ describe("nyaucast video abandon <id>", () => {
       }),
     ),
   );
+});
 
-  it.effect("fails with NotExplainerChannel on a collection channel", () =>
-    inCollectionChannel("nyaucast-video-cli-abandon-collection-", () =>
+const collectionId = "01JCOLLECTION00000000000000";
+const missingCollectionId = "01JMISSING0000000000000000";
+
+const seedCollection = Effect.gen(function* () {
+  yield* setClock(noon);
+  yield* insertCollection({ id: collectionId, title: "Night Drive" });
+});
+
+const collectionGateRows = (table: "approvals" | "rejections") =>
+  selectAll(table).pipe(
+    Effect.map((rows) =>
+      rows.map((row) => ({
+        at: String(row["approved_at"] ?? row["rejected_at"]),
+        collectionId: String(row["collection_id"]),
+        gate: String(row["gate"]),
+      })),
+    ),
+  );
+
+const gatesOf = (table: "approvals" | "rejections") =>
+  collectionGateRows(table).pipe(Effect.map((rows) => rows.map((row) => row.gate)));
+
+// BGM 動画（collection）のチャンネルでは、同じ video のゲートが collection の表に事実を書く。
+describe("nyaucast video produce <id> on a collection channel", () => {
+  it.effect("appends one produce approval and prints one line of facts", () =>
+    inCollectionChannel("nyaucast-video-cli-collection-produce-", () =>
       Effect.gen(function* () {
-        const { outcome } = yield* runVideo(["abandon", "V1"]);
+        yield* seedCollection;
+
+        const { logs, outcome } = yield* runVideo(["produce", collectionId]);
+
+        assert.strictEqual(outcome._tag, "Success");
+        assert.deepStrictEqual(
+          (yield* collectionGateRows("approvals")).map((row) => [row.collectionId, row.gate]),
+          [[collectionId, "produce"]],
+        );
+        assert.deepStrictEqual(yield* collectionGateRows("rejections"), []);
+        assert.deepStrictEqual(logs, [`承認を記録しました: video ${collectionId} / gate=produce`]);
+        // 解説動画の表には何も書かない
+        assert.deepStrictEqual(yield* gateRows("explainer_approvals"), []);
+      }),
+    ),
+  );
+
+  it.effect("does not append a second approval when run twice", () =>
+    inCollectionChannel("nyaucast-video-cli-collection-produce-twice-", () =>
+      Effect.gen(function* () {
+        yield* seedCollection;
+
+        const first = yield* runVideo(["produce", collectionId]);
+        const second = yield* runVideo(["produce", collectionId]);
+
+        assert.strictEqual(first.outcome._tag, "Success");
+        assert.strictEqual(second.outcome._tag, "Success");
+        assert.strictEqual((yield* collectionGateRows("approvals")).length, 1);
+        assert.deepStrictEqual(second.logs.slice(-1), [
+          `既に承認済みです: video ${collectionId} / gate=produce（記録は追加していません）`,
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("fails with CollectionNotFound for an unknown collection and writes nothing", () =>
+    inCollectionChannel("nyaucast-video-cli-collection-produce-unknown-", () =>
+      Effect.gen(function* () {
+        const { outcome } = yield* runVideo(["produce", missingCollectionId]);
+
+        const failure = failureOf(outcome);
+        assert.strictEqual(failure._tag, "CollectionNotFound");
+        assert.strictEqual(failureFacts(failure)["collectionId"], missingCollectionId);
+        assert.deepStrictEqual(yield* collectionGateRows("approvals"), []);
+      }),
+    ),
+  );
+
+  it.effect("fails with ChannelConfigNotFound when the channel has no config", () =>
+    withVideoChannel("nyaucast-video-cli-no-config-", undefined, (channelRoot) =>
+      Effect.gen(function* () {
+        yield* seedCollection;
+
+        const { outcome } = yield* runVideo(["produce", collectionId]);
+
+        assert.strictEqual(failureOf(outcome)._tag, "ChannelConfigNotFound");
+        assert.deepStrictEqual(yield* collectionGateRows("approvals"), []);
+      }).pipe(
+        Effect.provide(ThumbnailFiles.layer(channelRoot).pipe(Layer.provide(NodeServices.layer))),
+      ),
+    ),
+  );
+});
+
+describe("nyaucast video publish <id>", () => {
+  it.effect(
+    "on a collection channel fails with CollectionProduceNotApproved and writes nothing",
+    () =>
+      inCollectionChannel("nyaucast-video-cli-collection-publish-early-", () =>
+        Effect.gen(function* () {
+          yield* seedCollection;
+
+          const { outcome } = yield* runVideo(["publish", collectionId]);
+
+          const failure = failureOf(outcome);
+          assert.strictEqual(failure._tag, "CollectionProduceNotApproved");
+          assert.strictEqual(failureFacts(failure)["collectionId"], collectionId);
+          assert.deepStrictEqual(yield* collectionGateRows("approvals"), []);
+          assert.deepStrictEqual(yield* collectionGateRows("rejections"), []);
+        }),
+      ),
+  );
+
+  it.effect("on a collection channel appends the publish approval after produce, once", () =>
+    inCollectionChannel("nyaucast-video-cli-collection-publish-", () =>
+      Effect.gen(function* () {
+        yield* seedCollection;
+        yield* runVideo(["produce", collectionId]);
+
+        const first = yield* runVideo(["publish", collectionId]);
+        const second = yield* runVideo(["publish", collectionId]);
+
+        assert.strictEqual(first.outcome._tag, "Success");
+        assert.strictEqual(second.outcome._tag, "Success");
+        assert.deepStrictEqual(yield* gatesOf("approvals"), ["produce", "publish"]);
+        assert.deepStrictEqual(first.logs.slice(-1), [
+          `承認を記録しました: video ${collectionId} / gate=publish`,
+        ]);
+        assert.deepStrictEqual(second.logs.slice(-1), [
+          `既に承認済みです: video ${collectionId} / gate=publish（記録は追加していません）`,
+        ]);
+        // 公開ゲートの承認だけを書く。投稿は作らない
+        assert.deepStrictEqual(yield* collectionGateRows("rejections"), []);
+        assert.deepStrictEqual(yield* gateRows("explainer_approvals"), []);
+      }),
+    ),
+  );
+
+  it.effect("fails with CollectionNotFound for an unknown collection", () =>
+    inCollectionChannel("nyaucast-video-cli-collection-publish-unknown-", () =>
+      Effect.gen(function* () {
+        const { outcome } = yield* runVideo(["publish", missingCollectionId]);
+
+        assert.strictEqual(failureOf(outcome)._tag, "CollectionNotFound");
+        assert.deepStrictEqual(yield* collectionGateRows("approvals"), []);
+      }),
+    ),
+  );
+
+  it.effect(
+    "on an explainer channel fails with VideoPublishNotImplemented and writes nothing",
+    () =>
+      inChannel("nyaucast-video-cli-publish-explainer-", () =>
+        Effect.gen(function* () {
+          yield* seedAwaitingVideo;
+
+          const { logs, outcome } = yield* runVideo(["publish", "V1"]);
+
+          const failure = failureOf(outcome);
+          assert.strictEqual(failure._tag, "VideoPublishNotImplemented");
+          assert.strictEqual(failureFacts(failure)["videoId"], "V1");
+          assert.deepStrictEqual(logs, []);
+          assert.deepStrictEqual(yield* gateRows("explainer_approvals"), []);
+          assert.deepStrictEqual(yield* gateRows("explainer_rejections"), []);
+        }),
+      ),
+  );
+});
+
+describe("nyaucast video abandon <id> on a collection channel", () => {
+  it.effect("appends a produce NO-GO to a collection whose produce gate is not approved", () =>
+    inCollectionChannel("nyaucast-video-cli-collection-abandon-", () =>
+      Effect.gen(function* () {
+        yield* seedCollection;
+
+        const { logs, outcome } = yield* runVideo(["abandon", collectionId]);
+
+        assert.strictEqual(outcome._tag, "Success");
+        assert.deepStrictEqual(yield* gatesOf("rejections"), ["produce"]);
+        assert.deepStrictEqual(yield* collectionGateRows("approvals"), []);
+        assert.deepStrictEqual(logs, [
+          `NO-GO を記録しました: video ${collectionId} / gate=produce`,
+        ]);
+        assert.deepStrictEqual(yield* gateRows("explainer_rejections"), []);
+      }),
+    ),
+  );
+
+  it.effect("puts the NO-GO on the publish gate once produce is approved", () =>
+    inCollectionChannel("nyaucast-video-cli-collection-abandon-publish-", () =>
+      Effect.gen(function* () {
+        yield* seedCollection;
+        yield* runVideo(["produce", collectionId]);
+
+        const { outcome } = yield* runVideo(["abandon", collectionId]);
+
+        assert.strictEqual(outcome._tag, "Success");
+        assert.deepStrictEqual(yield* gatesOf("rejections"), ["publish"]);
+      }),
+    ),
+  );
+
+  it.effect("does not append a second NO-GO when run twice", () =>
+    inCollectionChannel("nyaucast-video-cli-collection-abandon-twice-", () =>
+      Effect.gen(function* () {
+        yield* seedCollection;
+
+        const first = yield* runVideo(["abandon", collectionId]);
+        const second = yield* runVideo(["abandon", collectionId]);
+
+        assert.strictEqual(first.outcome._tag, "Success");
+        assert.strictEqual(second.outcome._tag, "Success");
+        assert.deepStrictEqual(yield* gatesOf("rejections"), ["produce"]);
+        assert.deepStrictEqual(second.logs.slice(-1), [
+          `既にやめています: video ${collectionId} / gate=produce（記録は追加していません）`,
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("is refused with CollectionPublishApproved when the publish gate is approved", () =>
+    inCollectionChannel("nyaucast-video-cli-collection-abandon-refused-", () =>
+      Effect.gen(function* () {
+        yield* seedCollection;
+        yield* runVideo(["produce", collectionId]);
+        yield* runVideo(["publish", collectionId]);
+
+        const { outcome } = yield* runVideo(["abandon", collectionId]);
+
+        const failure = failureOf(outcome);
+        assert.strictEqual(failure._tag, "CollectionPublishApproved");
+        assert.strictEqual(failureFacts(failure)["collectionId"], collectionId);
+        assert.deepStrictEqual(yield* collectionGateRows("rejections"), []);
+      }),
+    ),
+  );
+
+  it.effect("resumes with a later produce: the approval is newer than the NO-GO", () =>
+    inCollectionChannel("nyaucast-video-cli-collection-abandon-resume-", () =>
+      Effect.gen(function* () {
+        yield* seedCollection;
+        yield* runVideo(["abandon", collectionId]);
+
+        const resumed = yield* runVideo(["produce", collectionId]);
+
+        assert.strictEqual(resumed.outcome._tag, "Success");
+        const rejectedAt = (yield* collectionGateRows("rejections")).map((row) => row.at);
+        const approvedAt = (yield* collectionGateRows("approvals")).map((row) => row.at);
+        assert.strictEqual(rejectedAt.length, 1);
+        assert.strictEqual(approvedAt.length, 1);
+        assert.isTrue(approvedAt[0]! > rejectedAt[0]!);
+      }),
+    ),
+  );
+
+  it.effect("fails with CollectionNotFound for an unknown collection", () =>
+    inCollectionChannel("nyaucast-video-cli-collection-abandon-unknown-", () =>
+      Effect.gen(function* () {
+        const { outcome } = yield* runVideo(["abandon", missingCollectionId]);
+
+        assert.strictEqual(failureOf(outcome)._tag, "CollectionNotFound");
+        assert.deepStrictEqual(yield* collectionGateRows("rejections"), []);
+      }),
+    ),
+  );
+});
+
+describe("nyaucast video thumbnail on a collection channel", () => {
+  it.effect("fails with NotExplainerChannel and writes nothing", () =>
+    inCollectionChannel("nyaucast-video-cli-collection-thumbnail-", () =>
+      Effect.gen(function* () {
+        yield* seedCollection;
+
+        const { outcome } = yield* runVideo(["thumbnail", collectionId, "1-1"]);
 
         assert.strictEqual(failureOf(outcome)._tag, "NotExplainerChannel");
-        assert.strictEqual((yield* gateRows("explainer_rejections")).length, 0);
+        assert.deepStrictEqual(yield* selections, []);
       }),
     ),
   );

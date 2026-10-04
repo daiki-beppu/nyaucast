@@ -4,7 +4,7 @@
 
 ## Status
 
-accepted (2026-07-27) / 改訂 2026-10-03（#527。Consequences の「CLI が次に取る行動を示す責務」を、戻し方の知識は codec に置く形に改める。ADR-0009 決定 14）
+accepted (2026-07-27) / 改訂 2026-10-03（#527。Consequences の「CLI が次に取る行動を示す責務」を、戻し方の知識は codec に置く形に改める。ADR-0009 決定 14） / 改訂 2026-10-04（#487。決定 3 のコマンドを `nyaucast video produce|publish <id>` に改める。ADR-0009 決定 7）
 
 ## Context
 
@@ -39,11 +39,11 @@ collection の成果物はすべて nyaucast tool が書く。agent が生成し
 ### 3. 承認は「次の区間を起動する CLI 実行」そのもの（#61）
 
 ```
-nyaucast collection produce <id>   # 叩いた事実が gate='produce' の承認
-nyaucast collection publish <id>   # 叩いた事実が gate='publish' の承認
+nyaucast video produce <id>   # 叩いた事実が gate='produce' の承認
+nyaucast video publish <id>   # 叩いた事実が gate='publish' の承認（produce の承認が前提）
 ```
 
-`approve` という独立操作は存在しない。**CLI は承認記録を書いて終わる。agent を起動しない。**（「人間が次に取る行動を stdout に示す」責務は ADR-0009 決定 14 で外した。Consequences を参照。collection の CLI はまだ旧来の文章を出しており、collection を video に統合する #487 でそろえる） agent の発動は人間が Claude Code 側で行い、knowledge codec のトリガー発話がその入口になる。
+`approve` という独立操作は存在しない。**CLI は承認記録を書いて終わる。agent を起動しない。**（「人間が次に取る行動を stdout に示す」責務は ADR-0009 決定 14 で外した。Consequences を参照） agent の発動は人間が Claude Code 側で行い、knowledge codec のトリガー発話がその入口になる。
 
 この分担により **nyaucast core は LLM を一切知らない**（ADR-0002）。
 
