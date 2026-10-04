@@ -18,6 +18,7 @@ const accessToken = "ACCESS_TOKEN_SENTINEL";
 const uploadStartUrl = "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable";
 const uploadSessionUrl =
   "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&upload_id=session-1";
+const thumbnailsSetUrl = "https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=v1";
 const videoUrl = "https://youtube.googleapis.com/youtube/v3/videos";
 const night = { id: "video-1", title: "Night Drive" };
 
@@ -94,12 +95,23 @@ function createFixture(responses: readonly Response[]) {
 
 type Fixture = ReturnType<typeof createFixture>;
 type Request = Parameters<YouTubeClient["Service"]["request"]>[0];
+type ExchangeRequest = Parameters<YouTubeClient["Service"]["exchange"]>[0];
 
 // 再試行の待ちは Effect.sleep なので、request を別 fiber で走らせ TestClock を進めて完了させる。
 const requestWith = (fixture: Fixture, request: Request) =>
   Effect.gen(function* () {
     const client = yield* YouTubeClient;
     const fiber = yield* Effect.forkChild(Effect.result(client.request(request)));
+    yield* TestClock.adjust("1 hour");
+    return yield* Fiber.join(fiber);
+  }).pipe(Effect.provide(fixture.layer));
+
+// exchange は一時的失敗を再送しないので sleep は起きないが、401 の更新は sleep を使わず起こるため、
+// fork + TestClock.adjust の形は無害に共有できる（request 側と同じ作法）。
+const exchangeWith = (fixture: Fixture, request: ExchangeRequest) =>
+  Effect.gen(function* () {
+    const client = yield* YouTubeClient;
+    const fiber = yield* Effect.forkChild(Effect.result(client.exchange(request)));
     yield* TestClock.adjust("1 hour");
     return yield* Fiber.join(fiber);
   }).pipe(Effect.provide(fixture.layer));
@@ -142,6 +154,8 @@ describe("YouTube REST client", () => {
     "https://www.googleapis.com:444/upload/youtube/v3/videos?uploadType=resumable",
     "https://www.googleapis.com/drive/v3/files",
     "https://www.googleapis.com/upload/youtube/v3/videos/extra",
+    "https://www.googleapis.com/upload/youtube/v3/thumbnails/set/extra",
+    "https://www.googleapis.com/upload/youtube/v3/thumbnails",
     "not a url",
   ])("fails for untrusted URL %s before accessing credentials", (url) =>
     Effect.gen(function* () {
@@ -160,7 +174,7 @@ describe("YouTube REST client", () => {
     }),
   );
 
-  it.effect.each([uploadStartUrl, uploadSessionUrl])(
+  it.effect.each([uploadStartUrl, uploadSessionUrl, thumbnailsSetUrl])(
     "sends an authenticated request to the YouTube upload URL %s",
     (url) =>
       Effect.gen(function* () {
@@ -488,6 +502,103 @@ describe("YouTube REST client", () => {
         assert.isFalse(failure.message.includes(accessToken));
       }),
   );
+
+  // A: exchange（投稿の経路。upload・thumbnails.set）は一時的失敗を再送しない。request の外形(上の
+  // retryable/stops after three ブロック)は変えない。401 の 1 回だけの更新は exchange でも保つ(A-3)。
+  describe("YouTube REST client: exchange does not retry transient failures (post path only)", () => {
+    const transient = [
+      { reason: "backendError", status: 503 },
+      { reason: "rateLimitExceeded", status: 429 },
+      { reason: "quotaExceeded", status: 403 },
+    ];
+
+    it.effect.each(transient)(
+      "fails immediately on HTTP $status, without retrying or sleeping",
+      ({ reason, status }) =>
+        Effect.gen(function* () {
+          const fixture = createFixture([
+            googleError(status, [reason]),
+            jsonResponse({ id: "unused" }),
+          ]);
+
+          const result = yield* exchangeWith(fixture, {
+            channel: "deepfocus365",
+            method: "PUT",
+            url: uploadSessionUrl,
+          });
+
+          assert.strictEqual(failed(result)._tag, "YouTubeHttpFailure");
+          assert.strictEqual(failed(result).status, status);
+          assert.strictEqual(fixture.calls.length, 1);
+        }),
+    );
+
+    it.effect(
+      "still refreshes once after an unauthorized response and retries with the refreshed token",
+      () =>
+        Effect.gen(function* () {
+          const fixture = createFixture([googleError(401, ["authError"]), jsonResponse(night)]);
+
+          const result = yield* exchangeWith(fixture, {
+            channel: "deepfocus365",
+            url: uploadSessionUrl,
+          });
+
+          assert.strictEqual(result._tag, "Success");
+          expect(fixture.refreshAccessToken).toHaveBeenCalledOnce();
+          assert.strictEqual(fixture.calls.length, 2);
+          assert.strictEqual(fixture.calls[1]?.authorization, "Bearer REFRESHED_ACCESS_TOKEN");
+        }),
+    );
+
+    // P1 (Companion 指摘 testing-review-companion を独立に再検討した結果): 呼び出し側が境界で
+    // 既に解決済みのトークン(accessToken)を渡したとき、exchange がそれを無視して送信直前に
+    // auth.getAccessToken を再び呼んでしまうと、P1 が閉じたはずの「予定時刻の最後の確認と実際の
+    // 送信の間の認証 I/O」の隙間が復活する。渡したトークンの値そのものが送信ヘッダーに使われ、
+    // getAccessToken が呼ばれないことを確認する。
+    it.effect(
+      "uses the caller's pre-resolved accessToken directly, without calling getAccessToken",
+      () =>
+        Effect.gen(function* () {
+          const fixture = createFixture([jsonResponse(night)]);
+          const preResolvedToken = "PRE_RESOLVED_ACCESS_TOKEN_SENTINEL";
+
+          const result = yield* exchangeWith(fixture, {
+            accessToken: preResolvedToken,
+            channel: "deepfocus365",
+            url: uploadSessionUrl,
+          });
+
+          assert.strictEqual(result._tag, "Success");
+          assert.strictEqual(fixture.calls.length, 1);
+          assert.strictEqual(fixture.calls[0]?.authorization, `Bearer ${preResolvedToken}`);
+          expect(fixture.getAccessToken).not.toHaveBeenCalled();
+        }),
+    );
+
+    // P1: 渡されたトークンが実は無効(401)でも、401 の 1 回だけの更新(request と同じ外形)は
+    // 保たれる。更新は auth.refreshAccessToken を呼ぶので、getAccessToken は依然として呼ばれない。
+    it.effect(
+      "still refreshes once after an unauthorized response, even when the request carried a " +
+        "pre-resolved accessToken",
+      () =>
+        Effect.gen(function* () {
+          const fixture = createFixture([googleError(401, ["authError"]), jsonResponse(night)]);
+
+          const result = yield* exchangeWith(fixture, {
+            accessToken: "PRE_RESOLVED_ACCESS_TOKEN_SENTINEL",
+            channel: "deepfocus365",
+            url: uploadSessionUrl,
+          });
+
+          assert.strictEqual(result._tag, "Success");
+          expect(fixture.getAccessToken).not.toHaveBeenCalled();
+          expect(fixture.refreshAccessToken).toHaveBeenCalledOnce();
+          assert.strictEqual(fixture.calls.length, 2);
+          assert.strictEqual(fixture.calls[1]?.authorization, "Bearer REFRESHED_ACCESS_TOKEN");
+        }),
+    );
+  });
 
   describe("with the real credential store", () => {
     const channel = "deepfocus365";

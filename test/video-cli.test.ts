@@ -12,6 +12,7 @@ import { explainerVideoWritePlan } from "../src/tools/explainer/video.writePlan.
 import { explainerVideoStatus } from "../src/tools/explainer/video.status.ts";
 import { ThumbnailFiles } from "../src/thumbnails/thumbnail-files.ts";
 import { videoCommand } from "../src/videos/cli.ts";
+import { VideoFiles } from "../src/videos/video-files.ts";
 import {
   collectionConfig,
   explainerConfig,
@@ -42,6 +43,7 @@ const inChannelOf =
           Layer.mergeAll(
             ThumbnailFiles.layer(channelRoot).pipe(Layer.provide(NodeServices.layer)),
             DeclaredAccounts.layer(channelRoot).pipe(Layer.provide(NodeServices.layer)),
+            VideoFiles.layer(channelRoot).pipe(Layer.provide(NodeServices.layer)),
             credentialStoreLayer(join(channelRoot, "credentials")),
             stdinTerminal(false),
           ),
@@ -799,6 +801,7 @@ describe("nyaucast video produce <id> on a collection channel", () => {
           Layer.mergeAll(
             ThumbnailFiles.layer(channelRoot).pipe(Layer.provide(NodeServices.layer)),
             DeclaredAccounts.layer(channelRoot).pipe(Layer.provide(NodeServices.layer)),
+            VideoFiles.layer(channelRoot).pipe(Layer.provide(NodeServices.layer)),
             credentialStoreLayer(join(channelRoot, "credentials")),
             stdinTerminal(false),
           ),

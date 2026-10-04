@@ -19,6 +19,7 @@ import {
   failureFacts,
   fakeSpawner,
   temporaryDirectory,
+  unusedPostLayer,
   unusedVideoLayer,
   writeJsonFile,
 } from "./helpers.ts";
@@ -139,6 +140,7 @@ function runAuth(
       nyaucastCli({
         auth: layer,
         mcpServer: Layer.empty,
+        post: unusedPostLayer,
         video: unusedVideoLayer,
       })(["auth", ...arguments_]),
     );

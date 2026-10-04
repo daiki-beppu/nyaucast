@@ -4,6 +4,7 @@ import type { HttpClient } from "effect/http";
 import type { ChildProcessSpawner } from "effect/process";
 import type { SqlClient } from "effect/sql";
 
+import type { CredentialStore } from "./auth/credential-store.ts";
 import type { DeclaredAccounts } from "./auth/declared-accounts.ts";
 import type { StaticSecrets } from "./auth/secrets.ts";
 
@@ -134,6 +135,7 @@ type ToolServices =
   | ChildProcessSpawner.ChildProcessSpawner
   | CollectionDirectories
   | CollectionIds
+  | CredentialStore
   | DeclaredAccounts
   | FileSystem.FileSystem
   | HttpClient.HttpClient

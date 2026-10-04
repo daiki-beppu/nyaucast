@@ -16,8 +16,10 @@ import { ChannelSettings } from "../src/channel/channel-settings.ts";
 import { LocalStore } from "../src/db/local-store.ts";
 import { InstagramAuth } from "../src/instagram/auth.ts";
 import { ThumbnailFiles } from "../src/thumbnails/thumbnail-files.ts";
+import { VideoFiles } from "../src/videos/video-files.ts";
 import { StdinTerminal } from "../src/videos/stdin-terminal.ts";
 import { XAuth } from "../src/x/auth.ts";
+import { YouTubeClient } from "../src/youtube/client.ts";
 import { YouTubeAuth } from "../src/youtube/auth.ts";
 
 export function withTemporaryDirectory<T>(prefix: string, execute: (directory: string) => T): T {
@@ -85,6 +87,16 @@ export const unusedVideoLayer = Layer.mergeAll(
   Layer.effect(ThumbnailFiles, notUsed),
 );
 
+/** post（`nyaucast post run`）を使わないテストが CLI のプログラムへ渡す Layer。組まれたら失敗する（C20）。 */
+export const unusedPostLayer = Layer.mergeAll(
+  Layer.effect(SqlClient.SqlClient, notUsed),
+  Layer.effect(ChannelSettings, notUsed),
+  Layer.effect(CredentialStore, notUsed),
+  Layer.effect(DeclaredAccounts, notUsed),
+  Layer.effect(VideoFiles, notUsed),
+  Layer.effect(YouTubeClient, notUsed),
+);
+
 /**
  * CLI のプログラムを in-process で実行する。観測点は 3 つ: 成功・失敗（outcome）、stdout の行（logs）、stderr の行（errors）。
  * TestConsole は同じテストの中の実行をまたいで行を溜める（Layer は同じ参照なら同じ instance になる）ので、
@@ -127,6 +139,8 @@ export const selectAll = (
     | "explainer_cut_exports"
     | "explainer_cut_previews"
     | "explainer_plans"
+    | "explainer_post_attempt_results"
+    | "explainer_post_attempts"
     | "explainer_post_drafts"
     | "explainer_posts"
     | "explainer_rejections"

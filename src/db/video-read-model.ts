@@ -1,5 +1,8 @@
 import { Effect, Option, Schema } from "effect";
 
+import { platforms } from "../auth/account-key.ts";
+import { classifyPost } from "../posts/post-classification.ts";
+import { postAwaitingReasons, postStatuses, type DerivedPostState } from "../posts/post-state.ts";
 import {
   CutFacts,
   hasCutPreview,
@@ -9,10 +12,25 @@ import {
   shortCutNames,
 } from "./explainer-cuts.ts";
 import { PostDraft, readPostDrafts } from "./explainer-post-drafts.ts";
+import { readPostRecords, type PostRecord } from "./explainer-posts.ts";
 import { ShortCandidate, readShortFacts } from "./explainer-shorts.ts";
 import { ThumbnailFacts, readThumbnailFacts } from "./explainer-thumbnails.ts";
 import { ExplainerPlan, requireLatestPlan } from "./explainer-videos.ts";
 import { Gate, GateRecord, getExplainerGateDecision, listExplainerGateRecords } from "./gates.ts";
+
+/**
+ * 投稿の状態(issue #553)。`id` は出さない(投稿単位の CLI の issue で公開契約を決める。D7)。
+ * 確認待ちの理由の優先順位は post-state.ts が唯一の所有者で、ここはその結果を映すだけ。
+ */
+const PostStatusView = Schema.Struct({
+  accountId: Schema.String,
+  cut: Schema.String,
+  platform: Schema.Literals(platforms),
+  reason: Schema.optionalKey(Schema.Literals(postAwaitingReasons)),
+  remoteId: Schema.optionalKey(Schema.String),
+  status: Schema.Literals(postStatuses),
+});
+type PostStatusView = typeof PostStatusView.Type;
 
 /** 解説動画の read model が返す事実（取り下げていないショートの候補と、有効な投稿案を含む）。 */
 export const VideoStatus = Schema.Struct({
@@ -22,11 +40,33 @@ export const VideoStatus = Schema.Struct({
   gateRecords: Schema.Array(GateRecord),
   plan: ExplainerPlan,
   postDrafts: Schema.Array(PostDraft),
+  // 投稿が無い動画では省略する(既存の video.status の出力形を変えない。M2・C20)。
+  posts: Schema.optionalKey(Schema.Array(PostStatusView)),
   shorts: Schema.Array(ShortCandidate),
   thumbnails: ThumbnailFacts,
   videoId: Schema.String,
 });
 type VideoStatus = typeof VideoStatus.Type;
+
+const toPostStatusView = (record: PostRecord, state: DerivedPostState): PostStatusView => ({
+  accountId: record.accountId,
+  cut: record.cut,
+  platform: record.platform,
+  status: state.status,
+  ...(state.reason === undefined ? {} : { reason: state.reason }),
+  ...(state.remoteId === undefined ? {} : { remoteId: state.remoteId }),
+});
+
+/** 投稿ごとに derivePostState と同じ入力・同じ関数(classifyPost)で状態を導く(R17)。 */
+const readPostStatuses = (videoId: string, toleranceMinutes: number) =>
+  Effect.gen(function* () {
+    const records = yield* readPostRecords(videoId);
+    return yield* Effect.forEach(records, (record) =>
+      classifyPost(record, toleranceMinutes).pipe(
+        Effect.map((classified) => toPostStatusView(record, classified.state)),
+      ),
+    );
+  });
 
 /** produce か publish のどちらかが NO-GO のまま（NO-GO より後に承認が積まれていなければ）やめた動画。 */
 export const isVideoAbandoned = (videoId: string) =>
@@ -75,7 +115,8 @@ const awaitingPublish = (videoId: string, shorts: ReadonlyArray<ShortCandidate>,
     return (yield* isPublishReady(videoId, shorts)) ? ("publish" as const) : undefined;
   });
 
-export const deriveVideoStatus = (videoId: string) =>
+/** toleranceMinutes は境界（video.status ツール）で解決済みの値を受け取る（R17）。 */
+export const deriveVideoStatus = (videoId: string, toleranceMinutes: number) =>
   Effect.gen(function* () {
     const plan = yield* requireLatestPlan(videoId);
     const thumbnails = yield* readThumbnailFacts(videoId);
@@ -88,6 +129,7 @@ export const deriveVideoStatus = (videoId: string) =>
         produce,
         isSelectionAfterPlan(plan.updatedAt, thumbnails.selection?.selectedAt),
       ) ?? (yield* awaitingPublish(videoId, shorts, produce));
+    const posts = yield* readPostStatuses(videoId, toleranceMinutes);
     return {
       abandoned,
       ...(awaiting === undefined ? {} : { awaitingApproval: awaiting }),
@@ -95,6 +137,8 @@ export const deriveVideoStatus = (videoId: string) =>
       gateRecords: yield* listExplainerGateRecords(videoId),
       plan,
       postDrafts: yield* readPostDrafts(videoId, shorts),
+      // 投稿が無い動画では posts キー自体を省略する(既存9項目の形を変えない。C20)。
+      ...(posts.length === 0 ? {} : { posts }),
       shorts,
       thumbnails,
       videoId,

@@ -2,10 +2,22 @@ import { assert, describe, it } from "@effect/vitest";
 import { Effect } from "effect";
 import { SqlClient } from "effect/sql";
 
-import { explainerConfig, planInput, source } from "../../../test/explainer-helpers.ts";
+import {
+  explainerConfig,
+  explainerConfigWithDistribution,
+  planInput,
+  source,
+} from "../../../test/explainer-helpers.ts";
 import { scriptScenes } from "../../../test/composition-helpers.ts";
-import { accepts, publishedAdditionalProperties, setClock } from "../../../test/helpers.ts";
+import {
+  accepts,
+  publishedAdditionalProperties,
+  setClock,
+  writeVideoConfig,
+} from "../../../test/helpers.ts";
 import { approveProduce, scriptInput } from "../../../test/narration-helpers.ts";
+import { declareAccounts } from "../../../test/post-draft-helpers.ts";
+import { storeToken } from "../../../test/publish-helpers.ts";
 import {
   crossSceneRange,
   defaultHook,
@@ -21,6 +33,8 @@ import {
   insertSelection,
   smallKeyOf,
 } from "../../../test/thumbnail-facts.ts";
+import { appendCutExport, appendCutPreview, longCut } from "../../db/explainer-cuts.ts";
+import { VideoFiles } from "../../videos/video-files.ts";
 import { ExplainerVideoStatusTool } from "./video.status.ts";
 
 const noon = "2026-10-03T12:00:00.000Z";
@@ -1418,6 +1432,365 @@ describe("video.status: awaiting the publish gate", () => {
           assert.isUndefined(yield* awaiting);
         }),
       ),
+    );
+  });
+});
+
+describe("video.status: posts in the result schema", () => {
+  // M2: 既存の 9 項目(posts を持たない)はこれまでどおり受け入れられる。posts が無いことは、投稿が無い
+  // 動画(video.status.test.ts の既存のテストの大半)の既存の出力と両立する前提(posts は省略可能なキー)。
+  const base = {
+    abandoned: false,
+    cuts: [],
+    gateRecords: [],
+    plan: { hitPattern: "shock", points: [], sources: [], title: "T", updatedAt: noon },
+    postDrafts: [],
+    shorts: [],
+    thumbnails: { candidates: [], exclusions: [] },
+    videoId: "V1",
+  };
+  const reservedPost = {
+    accountId: "youtube-id",
+    cut: "long",
+    platform: "youtube",
+    remoteId: "yt-video-1",
+    status: "reserved",
+  };
+  const awaitingPost = {
+    accountId: "x-id",
+    cut: "long",
+    platform: "x",
+    reason: "tolerance_exceeded",
+    status: "awaiting_check",
+  };
+
+  it("accepts a video with no posts key at all, like a video that has none", () => {
+    assert.isTrue(accepts(ExplainerVideoStatusTool.successSchema, base));
+  });
+
+  it("accepts posts with each status/reason combination, and rejects action fields in them", () => {
+    assert.isTrue(
+      accepts(ExplainerVideoStatusTool.successSchema, {
+        ...base,
+        posts: [reservedPost, awaitingPost],
+      }),
+    );
+    for (const posts of [
+      [{ ...reservedPost, next: "run" }],
+      [{ ...reservedPost, command: "post run" }],
+      [{ ...awaitingPost, recommendation: "retry" }],
+    ]) {
+      assert.isFalse(accepts(ExplainerVideoStatusTool.successSchema, { ...base, posts }));
+    }
+  });
+
+  it("rejects a status value outside the derived set", () => {
+    assert.isFalse(
+      accepts(ExplainerVideoStatusTool.successSchema, {
+        ...base,
+        posts: [{ ...reservedPost, status: "publishing" }],
+      }),
+    );
+  });
+
+  it("rejects a reason value outside the four confirmation reasons", () => {
+    assert.isFalse(
+      accepts(ExplainerVideoStatusTool.successSchema, {
+        ...base,
+        posts: [{ ...awaitingPost, reason: "unknown_problem" }],
+      }),
+    );
+  });
+});
+
+describe("video.status: posts (execution-time readiness and the approval-tolerance window)", () => {
+  const videoCreatedAt = "2026-10-01T00:00:00.000Z";
+  const thumbnailSelectedAt = "2026-10-02T00:00:00.000Z";
+  const cutExportedAt = "2026-10-02T01:00:00.000Z";
+  const postCreatedAt = "2026-10-03T00:00:00.000Z";
+  const scheduledAt = "2026-10-05T00:00:00.000Z";
+  const exportKey = "videos/V1/cuts/long/long.mp4";
+
+  // 公開ゲートの対話を経由せず、動画・サムネイルの選択・カットの書き出し・投稿を直に積む最小の fixture。
+  const prepareReadyPost = (accountId = "youtube-id") =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`INSERT INTO explainer_videos (id, created_at) VALUES ('V1', ${videoCreatedAt})`;
+      yield* sql`INSERT INTO explainer_plans (video_id, plan_key, title, points, sources, hit_pattern, recorded_at) VALUES ('V1', 'title:T', 'T', '[]', '[]', 'shock', ${videoCreatedAt})`;
+      yield* insertCandidate({
+        createdAt: thumbnailSelectedAt,
+        number: 1,
+        round: 1,
+        videoId: "V1",
+      });
+      yield* insertSelection({
+        number: 1,
+        round: 1,
+        selectedAt: thumbnailSelectedAt,
+        videoId: "V1",
+      });
+      yield* setClock(cutExportedAt);
+      yield* appendCutExport({
+        compositionHash: "c1",
+        cut: longCut,
+        key: exportKey,
+        renderHash: "r1",
+        videoId: "V1",
+      });
+      yield* appendCutPreview({ compositionHash: "c1", cut: longCut, videoId: "V1" });
+      yield* (yield* VideoFiles).write(exportKey, Uint8Array.from([1, 2, 3]));
+      yield* sql`INSERT INTO explainer_posts (video_id, cut, platform, account_id, title, description, body, scheduled_at, created_at) VALUES ('V1', ${longCut}, 'youtube', ${accountId}, 'T', 'D', NULL, ${scheduledAt}, ${postCreatedAt})`;
+    });
+
+  const postIn = (
+    status: { posts?: ReadonlyArray<Record<string, unknown>> },
+    platform: "instagram" | "x" | "youtube" = "youtube",
+  ) => (status.posts ?? []).find((post) => post["platform"] === platform);
+
+  describe("C9: a post whose stored token belongs to a different account", () => {
+    it.effect("is awaiting_check with account_mismatch in video.status", () =>
+      withToolChannel(
+        "nyaucast-video-status-posts-mismatch-",
+        { config: explainerConfig },
+        (channelRoot) =>
+          Effect.gen(function* () {
+            declareAccounts(channelRoot, ["youtube"]);
+            yield* storeToken(channelRoot, "youtube", { accountId: "a-different-channel-id" });
+            yield* prepareReadyPost("youtube-id");
+            yield* setClock(scheduledAt);
+
+            const status = yield* callTool("video_status", { videoId: "V1" });
+
+            assert.deepStrictEqual(postIn(status), {
+              accountId: "youtube-id",
+              cut: longCut,
+              platform: "youtube",
+              reason: "account_mismatch",
+              status: "awaiting_check",
+            });
+          }),
+      ),
+    );
+  });
+
+  // Companion 指摘(testing-review): C-RESULTLESS の完了証拠は plan.md 上 post-state.test.ts・
+  // due-posts.test.ts・video.status.test.ts の 3 本を要求するが、本ファイルには未作成だった。
+  // DB に結果の無い試行を直に積み、callTool の返値で理由が失われていないことを確認する。
+  describe("C2: a post whose last attempt has no result", () => {
+    it.effect("is awaiting_check with resultless_attempt in video.status", () =>
+      withToolChannel(
+        "nyaucast-video-status-posts-resultless-",
+        { config: explainerConfig },
+        (channelRoot) =>
+          Effect.gen(function* () {
+            declareAccounts(channelRoot, ["youtube"]);
+            yield* storeToken(channelRoot, "youtube");
+            yield* prepareReadyPost("youtube-id");
+            const sql = yield* SqlClient.SqlClient;
+            // 開始だけの試行(結果が無い)。
+            yield* sql`INSERT INTO explainer_post_attempts (post_id, started_at) VALUES (1, '2026-10-04T23:00:00.000Z')`;
+            yield* setClock(scheduledAt);
+
+            const status = yield* callTool("video_status", { videoId: "V1" });
+
+            assert.deepStrictEqual(postIn(status), {
+              accountId: "youtube-id",
+              cut: longCut,
+              platform: "youtube",
+              reason: "resultless_attempt",
+              status: "awaiting_check",
+            });
+          }),
+      ),
+    );
+  });
+
+  describe("C14: a post whose last attempt succeeded", () => {
+    it.effect("is reserved with the saved remote ID, read through callTool", () =>
+      withToolChannel(
+        "nyaucast-video-status-posts-reserved-",
+        { config: explainerConfig },
+        (channelRoot) =>
+          Effect.gen(function* () {
+            declareAccounts(channelRoot, ["youtube"]);
+            yield* storeToken(channelRoot, "youtube");
+            yield* prepareReadyPost("youtube-id");
+            const sql = yield* SqlClient.SqlClient;
+            yield* sql`INSERT INTO explainer_post_attempts (post_id, started_at) VALUES (1, '2026-10-05T00:00:00.000Z')`;
+            yield* sql`INSERT INTO explainer_post_attempt_results (attempt_id, outcome, remote_id, recorded_at) VALUES (1, 'succeeded', 'REMOTE-1', '2026-10-05T00:00:01.000Z')`;
+            yield* setClock(scheduledAt);
+
+            const status = yield* callTool("video_status", { videoId: "V1" });
+
+            assert.deepStrictEqual(postIn(status), {
+              accountId: "youtube-id",
+              cut: longCut,
+              platform: "youtube",
+              remoteId: "REMOTE-1",
+              status: "reserved",
+            });
+          }),
+      ),
+    );
+  });
+
+  describe("C15: the approval-tolerance setting changes the same channel's video.status", () => {
+    // 存続する実体: この withToolChannel の 1 つの ChannelSettings の Layer（settings は呼び出しのたびに
+    // 配信の設定ファイルを読む）。既定の 60 分と、書き換えた後の 30 分とで、同じ投稿の状態・理由が変わることを
+    // 同じチャンネル・同じ Layer の中で連続して観測する(C15、許容時間の変化をまたいで存続する実体の契約)。
+    it.effect(
+      "is due with the default 60-minute tolerance, and awaiting_check with tolerance_exceeded once the channel is rewritten to 30 minutes",
+      () =>
+        withToolChannel(
+          "nyaucast-video-status-posts-tolerance-",
+          { config: explainerConfig },
+          (channelRoot) =>
+            Effect.gen(function* () {
+              declareAccounts(channelRoot, ["youtube", "instagram", "x"]);
+              yield* storeToken(channelRoot, "instagram");
+              const sql = yield* SqlClient.SqlClient;
+              yield* sql`INSERT INTO explainer_videos (id, created_at) VALUES ('V1', '2026-10-01T00:00:00.000Z')`;
+              yield* sql`INSERT INTO explainer_plans (video_id, plan_key, title, points, sources, hit_pattern, recorded_at) VALUES ('V1', 'title:T', 'T', '[]', '[]', 'shock', '2026-10-01T00:00:00.000Z')`;
+              yield* insertCandidate({
+                createdAt: "2026-10-02T00:00:00.000Z",
+                number: 1,
+                round: 1,
+                videoId: "V1",
+              });
+              yield* insertSelection({
+                number: 1,
+                round: 1,
+                selectedAt: "2026-10-02T00:00:00.000Z",
+                videoId: "V1",
+              });
+              yield* setClock("2026-10-02T01:00:00.000Z");
+              yield* appendCutExport({
+                compositionHash: "c1",
+                cut: longCut,
+                key: "videos/V1/cuts/long/long.mp4",
+                renderHash: "r1",
+                videoId: "V1",
+              });
+              yield* appendCutPreview({ compositionHash: "c1", cut: longCut, videoId: "V1" });
+              yield* (yield* VideoFiles).write(
+                "videos/V1/cuts/long/long.mp4",
+                Uint8Array.from([1, 2, 3]),
+              );
+              // Instagram は許容時間の間は due のまま(YouTube と違い予約でなく即時投稿の SNS)。
+              yield* sql`INSERT INTO explainer_posts (video_id, cut, platform, account_id, title, description, body, scheduled_at, created_at) VALUES ('V1', ${longCut}, 'instagram', 'instagram-id', NULL, NULL, 'b', '2026-10-05T00:00:00.000Z', '2026-10-03T00:00:00.000Z')`;
+              // 予定時刻から 45 分後: 既定の 60 分の許容時間では due、30 分に書き換えると許容時間の超過。
+              yield* setClock("2026-10-05T00:45:00.000Z");
+
+              const before = yield* callTool("video_status", { videoId: "V1" });
+              assert.deepStrictEqual(postIn(before, "instagram"), {
+                accountId: "instagram-id",
+                cut: longCut,
+                platform: "instagram",
+                status: "due",
+              });
+
+              writeVideoConfig(
+                channelRoot,
+                explainerConfigWithDistribution({ toleranceMinutes: 30 }),
+              );
+              const after = yield* callTool("video_status", { videoId: "V1" });
+
+              assert.deepStrictEqual(postIn(after, "instagram"), {
+                accountId: "instagram-id",
+                cut: longCut,
+                platform: "instagram",
+                reason: "tolerance_exceeded",
+                status: "awaiting_check",
+              });
+            }),
+        ),
+    );
+  });
+
+  describe("C-FRESHNESS-PER-POST: two posts of the same cut, across a re-export", () => {
+    // 投稿 A は最初の書き出しの後に承認(created_at)され、一度は鮮度の検査を通る。その後カットを
+    // 描き直すと、A の承認より新しい書き出しができて A は鮮度の検査落ちになる。投稿 B は描き直しの後に
+    // 承認されるので、鮮度の検査を通る。A の鮮度は A 自身の created_at で測り、動画全体の最新の承認
+    // (B の承認)を使わないので、B を承認しても A は確認待ちのまま(要件 23)。
+    it.effect(
+      "keeps post A awaiting_check with stale_facts after a re-export and post B's approval, while post B is due",
+      () =>
+        withToolChannel(
+          "nyaucast-video-status-posts-freshness-",
+          { config: explainerConfig },
+          (channelRoot) =>
+            Effect.gen(function* () {
+              declareAccounts(channelRoot, ["youtube", "instagram"]);
+              yield* storeToken(channelRoot, "youtube");
+              yield* storeToken(channelRoot, "instagram");
+              const sql = yield* SqlClient.SqlClient;
+              yield* sql`INSERT INTO explainer_videos (id, created_at) VALUES ('V1', '2026-10-01T00:00:00.000Z')`;
+              yield* sql`INSERT INTO explainer_plans (video_id, plan_key, title, points, sources, hit_pattern, recorded_at) VALUES ('V1', 'title:T', 'T', '[]', '[]', 'shock', '2026-10-01T00:00:00.000Z')`;
+              yield* insertCandidate({
+                createdAt: "2026-10-02T00:00:00.000Z",
+                number: 1,
+                round: 1,
+                videoId: "V1",
+              });
+              yield* insertSelection({
+                number: 1,
+                round: 1,
+                selectedAt: "2026-10-02T00:00:00.000Z",
+                videoId: "V1",
+              });
+
+              // 最初の書き出し。投稿 A はこの後に承認するので、この時点では鮮度の検査を通る。
+              yield* setClock("2026-10-02T01:00:00.000Z");
+              yield* appendCutExport({
+                compositionHash: "c1",
+                cut: longCut,
+                key: "videos/V1/cuts/long/long-v1.mp4",
+                renderHash: "r1",
+                videoId: "V1",
+              });
+              yield* appendCutPreview({ compositionHash: "c1", cut: longCut, videoId: "V1" });
+              yield* (yield* VideoFiles).write(
+                "videos/V1/cuts/long/long-v1.mp4",
+                Uint8Array.from([1, 2, 3]),
+              );
+              yield* sql`INSERT INTO explainer_posts (video_id, cut, platform, account_id, title, description, body, scheduled_at, created_at) VALUES ('V1', ${longCut}, 'youtube', 'youtube-id', 'T', 'D', NULL, '2026-10-06T00:00:00.000Z', '2026-10-02T02:00:00.000Z')`;
+
+              // 描き直し: 投稿 A の承認(02:00)より新しい書き出し(03:00)ができる → A は鮮度の検査落ち。
+              yield* setClock("2026-10-02T03:00:00.000Z");
+              yield* appendCutExport({
+                compositionHash: "c2",
+                cut: longCut,
+                key: "videos/V1/cuts/long/long-v2.mp4",
+                renderHash: "r2",
+                videoId: "V1",
+              });
+              yield* appendCutPreview({ compositionHash: "c2", cut: longCut, videoId: "V1" });
+              yield* (yield* VideoFiles).write(
+                "videos/V1/cuts/long/long-v2.mp4",
+                Uint8Array.from([4, 5, 6]),
+              );
+
+              // 投稿 B: 描き直し(03:00)より新しい承認(04:00) → B は鮮度の検査を通る。
+              yield* sql`INSERT INTO explainer_posts (video_id, cut, platform, account_id, title, description, body, scheduled_at, created_at) VALUES ('V1', ${longCut}, 'instagram', 'instagram-id', NULL, NULL, 'b', '2026-10-06T00:00:00.000Z', '2026-10-02T04:00:00.000Z')`;
+
+              yield* setClock("2026-10-06T00:00:00.000Z");
+              const status = yield* callTool("video_status", { videoId: "V1" });
+
+              assert.deepStrictEqual(postIn(status, "youtube"), {
+                accountId: "youtube-id",
+                cut: longCut,
+                platform: "youtube",
+                reason: "stale_facts",
+                status: "awaiting_check",
+              });
+              assert.deepStrictEqual(postIn(status, "instagram"), {
+                accountId: "instagram-id",
+                cut: longCut,
+                platform: "instagram",
+                status: "due",
+              });
+            }),
+        ),
     );
   });
 });

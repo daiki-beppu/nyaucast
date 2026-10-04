@@ -31,12 +31,19 @@ import { VideoFiles } from "./videos/video-files.ts";
 import { VideoIds } from "./videos/video-ids.ts";
 import { XAuth } from "./x/auth.ts";
 import { YouTubeAuth } from "./youtube/auth.ts";
+import { YouTubeClient } from "./youtube/client.ts";
 
 const channelRoot = process.cwd();
 const localStore = LocalStore.layer(pathToFileURL(`${channelRoot}/data/local.db`).href);
 // ホームディレクトリは、ここで 1 回だけ解決して各 Layer に渡す。
 const configRoot = join(homedir(), ".config", "nyaucast");
 const thumbnailFiles = ThumbnailFiles.layer(channelRoot);
+const credentialStore = CredentialStore.layer({ credentialRoot: join(configRoot, "credentials") });
+const authDependencies = Layer.mergeAll(
+  credentialStore,
+  StaticSecrets.layer({ configRoot }),
+  NodeHttpClient.layerUndici,
+);
 
 // MCP は stdout が JSON-RPC 専用。tool の handler と DB が整ってから stdio の server を起動する
 // （起動後すぐの tools/list が空にならないよう、tool の登録は server が読み始める前に終える）。
@@ -45,6 +52,7 @@ const withMcpServices = <A, E, R>(handlers: Layer.Layer<A, E, R>) =>
     Layer.provide(BgmPool.layer(channelRoot)),
     Layer.provide(CollectionDirectories.layer(channelRoot)),
     Layer.provide(CollectionIds.layer),
+    Layer.provide(credentialStore),
     Layer.provide(DeclaredAccounts.layer(channelRoot)),
     Layer.provide(ChannelSettings.layer(channelRoot)),
     Layer.provide(VideoIds.layer),
@@ -84,12 +92,6 @@ const mcpServer = Layer.unwrap(
   }).pipe(Effect.provide(ChannelSettings.layer(channelRoot))),
 );
 
-const credentialStore = CredentialStore.layer({ credentialRoot: join(configRoot, "credentials") });
-const authDependencies = Layer.mergeAll(
-  credentialStore,
-  StaticSecrets.layer({ configRoot }),
-  NodeHttpClient.layerUndici,
-);
 const authServices = Layer.mergeAll(
   ChannelAccounts.layer({ configRoot }),
   credentialStore,
@@ -114,8 +116,22 @@ const video = Layer.mergeAll(
   thumbnailFiles,
 );
 
+// 時刻が来た投稿を実行する CLI（issue #553）。YouTube の resumable upload が使う client を、認証（本番）と結んで組む。
+const youtubeClient = YouTubeClient.layer.pipe(
+  Layer.provide(YouTubeAuth.layerProduction),
+  Layer.provide(authDependencies),
+);
+const post = Layer.mergeAll(
+  localStore,
+  ChannelSettings.layer(channelRoot),
+  credentialStore,
+  DeclaredAccounts.layer(channelRoot),
+  VideoFiles.layer(channelRoot),
+  youtubeClient,
+);
+
 Stdio.Stdio.use(({ args }) =>
-  Effect.flatMap(args, nyaucastCli({ auth: authServices, mcpServer, video })),
+  Effect.flatMap(args, nyaucastCli({ auth: authServices, mcpServer, post, video })),
 ).pipe(
   Effect.provide(NodeServices.layer),
   Effect.provideService(Logger.LogToStderr, true),

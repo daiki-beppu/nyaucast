@@ -1,16 +1,20 @@
-import { Context, Effect, Layer, Random, Result, Schema } from "effect";
+import { Context, Effect, Layer, Option, Random, Result, Schema } from "effect";
 import { HttpClient, type HttpBody, HttpClientRequest, type HttpClientResponse } from "effect/http";
 
 import { YouTubeAuth, type YouTubeAuthFailure } from "./auth.ts";
 
 const maximumAttempts = 3;
 const initialRetryDelayMilliseconds = 1_000;
-const retryableStatuses = new Set([429, 503]);
 const youtubeApiOrigin = "https://youtube.googleapis.com";
 const youtubeUploadApiOrigin = "https://www.googleapis.com";
-const youtubeUploadApiPath = "/upload/youtube/v3/videos";
+// resumable upload（動画）と thumbnails.set（長尺のサムネイル設定）の 2 本だけを許可する。
+const youtubeUploadApiPaths = new Set([
+  "/upload/youtube/v3/videos",
+  "/upload/youtube/v3/thumbnails/set",
+]);
 
 // 失敗は、タグと事実（URL・HTTP status・Google の reason）だけを持つ。認証情報は持たない。
+// 呼び出し側は YouTubeClientFailure（union）と _tag の文字列だけを見るので、この 4 つは export しない。
 class UntrustedYouTubeUrl extends Schema.TaggedError<UntrustedYouTubeUrl>()("UntrustedYouTubeUrl", {
   url: Schema.String,
 }) {}
@@ -27,7 +31,7 @@ class YouTubeHttpBoundaryFailed extends Schema.TaggedError<YouTubeHttpBoundaryFa
   {},
 ) {}
 
-type YouTubeClientFailure =
+export type YouTubeClientFailure =
   | UntrustedYouTubeUrl
   | YouTubeAuthFailure
   | YouTubeHttpBoundaryFailed
@@ -40,16 +44,34 @@ const GoogleError = Schema.Struct({
   }),
 });
 
-type YouTubeRequest<Output> = {
+/** request・exchange の両方が共有する、呼び出し側が渡す本体。 */
+type BaseRequest = {
   /** 試行ごとに新しい本文を作る。1 回しか読めない本文を使い回さない。 */
   body?: () => HttpBody.HttpBody;
   channel: string;
   /** 追加のヘッダー（Content-Type・Content-Range など）。authorization は常にこの client が付ける。 */
   headers?: Readonly<Record<string, string>>;
   method?: "DELETE" | "GET" | "PATCH" | "POST" | "PUT";
-  schema: Schema.Decoder<Output>;
   url: string;
 };
+
+type YouTubeRequest<Output> = BaseRequest & { schema: Schema.Decoder<Output> };
+
+/**
+ * resumable upload の 308 のように、2xx 以外でも成功として扱う status を呼び出し側が指定する。
+ * accessToken を渡すと、呼び出し側が境界で既に解決済みのトークンを使う（P1: 投稿経路が送信直前に
+ * 認証取得の実 I/O を挟まないようにする）。省略すれば従来どおり自分で解決する。
+ */
+type YouTubeExchangeRequest = BaseRequest & {
+  accepted?: ReadonlyArray<number>;
+  accessToken?: string;
+};
+
+interface YouTubeExchangeResult {
+  readonly body: Option.Option<unknown>;
+  readonly headers: Readonly<Record<string, string | undefined>>;
+  readonly status: number;
+}
 
 type RequestState = {
   accessToken: string;
@@ -57,8 +79,18 @@ type RequestState = {
   retryAttempt: number;
 };
 
-type HttpFailure = { reason: string | undefined; status: number };
+export type HttpFailure = { reason: string | undefined; status: number };
 type Recovery = { kind: "fail" } | { kind: "refresh" } | { delay: number; kind: "retry" };
+
+// finalize は accept された応答を Output に変換する。request は schema で decode し、
+// exchange は status・ヘッダー・本文（あれば）をそのまま返す。retryTransient は selectRecovery が参照する。
+interface Exchange<Output> {
+  readonly accepted: ReadonlySet<number>;
+  readonly finalize: (
+    response: HttpClientResponse.HttpClientResponse,
+  ) => Effect.Effect<Output, YouTubeResponseInvalid>;
+  readonly retryTransient: boolean;
+}
 
 const classifyHttpFailure = (response: HttpClientResponse.HttpClientResponse) =>
   response.json.pipe(
@@ -76,13 +108,32 @@ const classifyHttpFailure = (response: HttpClientResponse.HttpClientResponse) =>
 const toFailure = ({ reason, status }: HttpFailure) =>
   new YouTubeHttpFailure(reason === undefined ? { status } : { reason, status });
 
-const isRetryableFailure = (failure: HttpFailure) =>
-  retryableStatuses.has(failure.status) ||
+/**
+ * 一時的な HTTP 失敗（通信の再試行の対象と同じ語。ADR-0009 決定 9「通信の失敗・5xx・429・quota 切れ」）。
+ * post-outcome.ts の分類が参照する唯一の所有者。5xx は 503 だけでなく全体を一時的に扱う。
+ */
+export const isRetryableFailure = (failure: HttpFailure) =>
+  failure.status === 429 ||
+  (failure.status >= 500 && failure.status < 600) ||
   (failure.status === 403 && failure.reason === "quotaExceeded");
 
-const selectRecovery = (failure: HttpFailure, state: RequestState, random: number): Recovery => {
+// retryTransient（呼び出し側が exchange で false にする）と、一時的失敗であることの両方が条件。
+const isTransientRetryable = (failure: HttpFailure, retryTransient: boolean): boolean =>
+  retryTransient && isRetryableFailure(failure);
+
+/**
+ * 401 の 1 回だけの更新は request・exchange の両方で保つ（M3）。一時的失敗の再送（retryTransient）は
+ * request（`YouTubeClient.request` の既存の外形。M3）だけで行い、投稿の経路（exchange）では行わない。
+ * ADR-0009 決定 9「一時的なエラーは…同じ実行の中では再試行しない」のため、二重 upload を防ぐ。
+ */
+const selectRecovery = (
+  failure: HttpFailure,
+  state: RequestState,
+  random: number,
+  retryTransient: boolean,
+): Recovery => {
   if (failure.status === 401 && !state.refreshedAfterUnauthorized) return { kind: "refresh" };
-  if (!isRetryableFailure(failure)) return { kind: "fail" };
+  if (!isTransientRetryable(failure, retryTransient)) return { kind: "fail" };
   if (state.retryAttempt >= maximumAttempts - 1) return { kind: "fail" };
   return {
     delay: initialRetryDelayMilliseconds * 2 ** state.retryAttempt * (1 + random),
@@ -99,17 +150,52 @@ const resolveYouTubeApiUrl = (input: string) =>
     });
     const isYouTubeApi = url.origin === youtubeApiOrigin;
     const isYouTubeUploadApi =
-      url.origin === youtubeUploadApiOrigin && url.pathname === youtubeUploadApiPath;
+      url.origin === youtubeUploadApiOrigin && youtubeUploadApiPaths.has(url.pathname);
     if (!isYouTubeApi && !isYouTubeUploadApi) {
       return yield* new UntrustedYouTubeUrl({ url: input });
     }
     return url.toString();
   });
 
+const decodeBody =
+  <Output>(schema: Schema.Decoder<Output>) =>
+  (response: HttpClientResponse.HttpClientResponse) =>
+    response.json.pipe(
+      Effect.flatMap(Schema.decodeUnknownEffect(schema)),
+      Effect.mapError(() => new YouTubeResponseInvalid()),
+    );
+
+// 本文が無い（resumable upload の開始の応答など）ことを失敗にせず、空として返す。
+const readOptionalBody = (response: HttpClientResponse.HttpClientResponse) =>
+  response.json.pipe(
+    Effect.map(Option.some),
+    Effect.orElseSucceed(() => Option.none<unknown>()),
+  );
+
+const toExchangeResult = (response: HttpClientResponse.HttpClientResponse) =>
+  Effect.map(readOptionalBody(response), (body): YouTubeExchangeResult => ({
+    body,
+    headers: { ...response.headers },
+    status: response.status,
+  }));
+
+// 2xx、または呼び出し側が accept した status（resumable upload の 308 など）。
+const isAcceptedStatus = (status: number, accepted: ReadonlySet<number>): boolean =>
+  (status >= 200 && status < 300) || accepted.has(status);
+
 export class YouTubeClient extends Context.Service<
   YouTubeClient,
   {
+    exchange(
+      request: YouTubeExchangeRequest,
+    ): Effect.Effect<YouTubeExchangeResult, YouTubeClientFailure>;
     request<Output>(request: YouTubeRequest<Output>): Effect.Effect<Output, YouTubeClientFailure>;
+    /**
+     * チャンネルのアクセストークンを解決する（P1）。投稿の経路が送信前処理（準備段）でこれを呼び、
+     * 解決済みのトークンを exchange へ渡すことで、予定時刻の最後の再確認と実際の送信の間に
+     * 認証取得の実 I/O（資格情報ファイルの読み・期限切れ時の更新・保存）が挟まらないようにする。
+     */
+    resolveAccessToken(channel: string): Effect.Effect<string, YouTubeClientFailure>;
   }
 >()("nyaucast/YouTubeClient") {
   static readonly layer = Layer.effect(YouTubeClient, makeYouTubeClient());
@@ -120,7 +206,7 @@ function makeYouTubeClient() {
     const auth = yield* YouTubeAuth;
     const http = yield* HttpClient.HttpClient;
 
-    const send = <Output>(request: YouTubeRequest<Output>, url: string, accessToken: string) => {
+    const send = (request: BaseRequest, url: string, accessToken: string) => {
       const base = HttpClientRequest.make(request.method ?? "GET")(url, {
         headers: request.headers ?? {},
       }).pipe(HttpClientRequest.setHeader("authorization", `Bearer ${accessToken}`));
@@ -131,53 +217,82 @@ function makeYouTubeClient() {
         .pipe(Effect.mapError(() => new YouTubeHttpBoundaryFailed()));
     };
 
-    const decodeBody = <Output>(
-      request: YouTubeRequest<Output>,
-      response: HttpClientResponse.HttpClientResponse,
-    ) =>
-      response.json.pipe(
-        Effect.flatMap(Schema.decodeUnknownEffect(request.schema)),
-        Effect.mapError(() => new YouTubeResponseInvalid()),
-      );
-
     const execute = <Output>(
-      request: YouTubeRequest<Output>,
+      exchange: Exchange<Output>,
+      request: BaseRequest,
       url: string,
       state: RequestState,
     ): Effect.Effect<Output, YouTubeClientFailure> =>
       Effect.gen(function* () {
         const response = yield* send(request, url, state.accessToken);
-        if (response.status >= 200 && response.status < 300) {
-          return yield* decodeBody(request, response);
+        if (isAcceptedStatus(response.status, exchange.accepted)) {
+          return yield* exchange.finalize(response);
         }
         const failure = yield* classifyHttpFailure(response);
-        const recovery = selectRecovery(failure, state, yield* Random.next);
+        const recovery = selectRecovery(
+          failure,
+          state,
+          yield* Random.next,
+          exchange.retryTransient,
+        );
         if (recovery.kind === "fail") {
           return yield* toFailure(failure);
         }
         if (recovery.kind === "refresh") {
           const accessToken = yield* auth.refreshAccessToken(request.channel);
-          return yield* execute(request, url, {
+          return yield* execute(exchange, request, url, {
             ...state,
             accessToken,
             refreshedAfterUnauthorized: true,
           });
         }
         yield* Effect.sleep(recovery.delay);
-        return yield* execute(request, url, { ...state, retryAttempt: state.retryAttempt + 1 });
+        return yield* execute(exchange, request, url, {
+          ...state,
+          retryAttempt: state.retryAttempt + 1,
+        });
       });
 
-    const requestOnce = <Output>(request: YouTubeRequest<Output>) =>
+    // resolvedAccessToken が渡されれば、呼び出し側が境界で解決済みのトークンをそのまま使う（P1）。
+    // 省略時は従来どおりここで解決する（request の既存の外形。401 の 1 回更新はどちらでも execute が担う）。
+    const run = <Output>(
+      exchange: Exchange<Output>,
+      request: BaseRequest,
+      resolvedAccessToken?: string,
+    ) =>
       Effect.gen(function* () {
         const url = yield* resolveYouTubeApiUrl(request.url);
-        const accessToken = yield* auth.getAccessToken(request.channel);
-        return yield* execute(request, url, {
+        const accessToken = resolvedAccessToken ?? (yield* auth.getAccessToken(request.channel));
+        return yield* execute(exchange, request, url, {
           accessToken,
           refreshedAfterUnauthorized: false,
           retryAttempt: 0,
         });
       });
 
-    return YouTubeClient.of({ request: requestOnce });
+    const requestOnce = <Output>(request: YouTubeRequest<Output>) =>
+      run(
+        { accepted: new Set(), finalize: decodeBody(request.schema), retryTransient: true },
+        request,
+      );
+
+    // 投稿の経路（upload・thumbnails.set）はすべて exchange を通る。一時的失敗はここでは再送しない
+    // （M3）。再試行は runDuePosts の次回実行に委ねる（ADR-0009 決定 9・1 回目の裁定の論点 1）。
+    const exchangeOnce = (request: YouTubeExchangeRequest) =>
+      run(
+        {
+          accepted: new Set(request.accepted ?? []),
+          finalize: toExchangeResult,
+          retryTransient: false,
+        },
+        request,
+        request.accessToken,
+      );
+
+    return YouTubeClient.of({
+      exchange: exchangeOnce,
+      request: requestOnce,
+      resolveAccessToken: (channel) => auth.getAccessToken(channel),
+    });
   });
 }

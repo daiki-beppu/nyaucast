@@ -1,10 +1,15 @@
 import { Effect, Layer } from "effect";
 import { HttpClient, type HttpClientError, HttpClientResponse } from "effect/http";
 
-/** 偽の SNS の API が受け取った 1 件のリクエスト。`form` は urlencoded の本文、`query` は URL の query。 */
+/**
+ * 偽の SNS の API が受け取った 1 件のリクエスト。`form` は urlencoded の本文、`query` は URL の query。
+ * `bodyBytes` は本文の生バイト列（urlencoded でない本文を検査するとき用）、`headers` は呼び出し側が付けた全ヘッダー。
+ */
 export type RecordedRequest = {
   authorization: string | undefined;
+  bodyBytes: Uint8Array | undefined;
   form: Record<string, string>;
+  headers: Record<string, string | undefined>;
   key: string;
   method: string;
   query: Record<string, string>;
@@ -26,10 +31,12 @@ export function fakeHttp(routes: Routes) {
       const key = `${request.method} ${url.origin}${url.pathname}`;
       const recorded: RecordedRequest = {
         authorization: request.headers["authorization"],
+        bodyBytes: request.body._tag === "Uint8Array" ? request.body.body : undefined,
         form:
           request.body._tag === "Uint8Array"
             ? Object.fromEntries(new URLSearchParams(decoder.decode(request.body.body)))
             : {},
+        headers: { ...request.headers },
         key,
         method: request.method,
         query: Object.fromEntries(url.searchParams),
