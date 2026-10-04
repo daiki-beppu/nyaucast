@@ -5,11 +5,13 @@ import { CliError, Command } from "effect/cli";
 import type { ChannelAccounts } from "./auth/accounts.ts";
 import { authCommand } from "./auth/cli.ts";
 import type { CredentialStore } from "./auth/credential-store.ts";
+import type { DeclaredAccounts } from "./auth/declared-accounts.ts";
 import type { ChannelSettings } from "./channel/channel-settings.ts";
 import { describeFailure } from "./failure-report.ts";
 import type { InstagramAuth } from "./instagram/auth.ts";
 import type { ThumbnailFiles } from "./thumbnails/thumbnail-files.ts";
 import { videoCommand } from "./videos/cli.ts";
+import type { StdinTerminal } from "./videos/stdin-terminal.ts";
 import type { XAuth } from "./x/auth.ts";
 import type { YouTubeAuth } from "./youtube/auth.ts";
 
@@ -26,7 +28,16 @@ interface CliEnvironment<E2, R2, E3, R3, E4, R4> {
     R2
   >;
   readonly mcpServer: Layer.Layer<never, E3, R3>;
-  readonly video: Layer.Layer<SqlClient.SqlClient | ChannelSettings | ThumbnailFiles, E4, R4>;
+  readonly video: Layer.Layer<
+    | ChannelSettings
+    | CredentialStore
+    | DeclaredAccounts
+    | SqlClient.SqlClient
+    | StdinTerminal
+    | ThumbnailFiles,
+    E4,
+    R4
+  >;
 }
 
 // effect/cli の引数の誤りは、cli 自身が使い方とエラーを出力済み。二重に出さない。

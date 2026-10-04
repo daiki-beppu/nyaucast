@@ -16,7 +16,7 @@ import { appendCutPreview, lastCutPreview } from "../../db/explainer-cuts.ts";
 import { ShortCandidateNotFound } from "../../db/explainer-shorts.ts";
 import { VideoNotFound } from "../../db/explainer-videos.ts";
 import { ChromeUnavailable } from "../../lib/chrome.ts";
-import { CutField, type CutRequest } from "../../videos/cuts.ts";
+import { CutField, type CutRequest, previewDirectory } from "../../videos/cuts.ts";
 import { ProduceGateNotApproved } from "../../videos/produce-gate.ts";
 import { VideoFiles } from "../../videos/video-files.ts";
 
@@ -71,9 +71,6 @@ export const ExplainerVideoPreviewCutTool = Tool.make("video_preview_cut", {
   }),
 }).annotate(Tool.Strict, true);
 
-// プレビューは composition の鍵ごとのディレクトリに置く。segment の数が違う別の composition の PNG と混ざらない。
-const previewDirectory = (videoId: string, cut: string, compositionHash: string) =>
-  `videos/${videoId}/cuts/${cut}/previews/${compositionHash}`;
 const manifestKey = (videoId: string, cut: string, compositionHash: string) =>
   `${previewDirectory(videoId, cut, compositionHash)}/manifest.json`;
 const frameKey = (videoId: string, cut: string, compositionHash: string, segment: number) =>

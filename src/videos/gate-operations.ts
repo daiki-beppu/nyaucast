@@ -23,11 +23,6 @@ class VideoPublishApproved extends Schema.TaggedError<VideoPublishApproved>()(
   { videoId: Schema.String },
 ) {}
 
-class VideoPublishNotImplemented extends Schema.TaggedError<VideoPublishNotImplemented>()(
-  "VideoPublishNotImplemented",
-  { videoId: Schema.String },
-) {}
-
 interface GateOperationResult {
   readonly gate: Gate;
   readonly recorded: boolean;
@@ -74,11 +69,4 @@ export const abandonVideo = (videoId: string) =>
   Effect.gen(function* () {
     yield* (yield* ChannelSettings).requireExplainer;
     return yield* inTransaction(abandonInTransaction(videoId));
-  });
-
-/** 解説動画の公開ゲート。対話で投稿を作る本体はまだない。 */
-export const publishVideo = (videoId: string) =>
-  Effect.gen(function* () {
-    yield* (yield* ChannelSettings).requireExplainer;
-    return yield* new VideoPublishNotImplemented({ videoId });
   });

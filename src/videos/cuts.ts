@@ -73,3 +73,7 @@ export const resolveShortTarget = (videoId: string, short: number | undefined) =
     yield* requireActiveShort(videoId, short);
     return { short, videoId } satisfies ScriptTarget;
   });
+
+/** カットのプレビューは composition の鍵ごとのディレクトリに置く。segment の数が違う別の composition の PNG と混ざらない。 */
+export const previewDirectory = (videoId: string, cut: string, compositionHash: string) =>
+  `videos/${videoId}/cuts/${cut}/previews/${compositionHash}`;

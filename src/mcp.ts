@@ -50,6 +50,10 @@ import {
   explainerVideoPreviewCut,
 } from "./tools/explainer/video.previewCut.ts";
 import {
+  ExplainerVideoRecommendShortCutTool,
+  explainerVideoRecommendShortCut,
+} from "./tools/explainer/video.recommendShortCut.ts";
+import {
   ExplainerVideoRenderCutTool,
   explainerVideoRenderCut,
 } from "./tools/explainer/video.renderCut.ts";
@@ -110,6 +114,7 @@ export const ExplainerToolkit = Toolkit.make(
   ExplainerVideoPreviewCutTool,
   ExplainerVideoStatusTool,
   ExplainerVideoWritePostDraftTool,
+  ExplainerVideoRecommendShortCutTool,
   ExplainerVideoGenerateThumbnailsTool,
   ExplainerVideoExcludeThumbnailTool,
 );
@@ -158,6 +163,7 @@ export const ExplainerToolHandlers = ExplainerToolkit.toLayer(
       video_generate_thumbnails: provide(explainerVideoGenerateThumbnails),
       video_mix_audio_track: provide(explainerVideoMixAudioTrack),
       video_preview_cut: provide(explainerVideoPreviewCut),
+      video_recommend_short_cut: provide(explainerVideoRecommendShortCut),
       video_render_cut: provide(explainerVideoRenderCut),
       video_status: provide(explainerVideoStatus),
       video_synthesize_narration: provide(explainerVideoSynthesizeNarration),

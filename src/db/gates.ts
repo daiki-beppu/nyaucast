@@ -149,6 +149,26 @@ const recordDecisionIn =
     });
 
 export const recordExplainerDecision = recordDecisionIn(explainerTables);
+
+/**
+ * 承認を無条件に積む。ゲートの最後の事実と after（承認が新しくなければならない事実の時刻）のどれよりも後の時刻にする。
+ * 承認済みでも積むので、2 回目以降の公開ゲートの承認と、NO-GO の後の再開に使う。積んだ時刻（ミリ秒）を返す。
+ */
+export const appendExplainerApproval = (
+  videoId: string,
+  gate: Gate,
+  after: ReadonlyArray<string>,
+) =>
+  Effect.gen(function* () {
+    const state = yield* gateStateIn(explainerTables)(videoId, gate);
+    const latest = [state.latestTimestamp, ...after]
+      .filter((timestamp) => timestamp !== undefined)
+      .toSorted()
+      .at(-1);
+    const at = afterLatestFact(yield* Clock.currentTimeMillis, latest);
+    yield* insertGateFact(explainerTables, "approval", videoId, gate, at);
+    return at;
+  });
 export const recordCollectionDecision = recordDecisionIn(collectionTables);
 
 // まだ承認されていない最初のゲートが、やめる対象になる。

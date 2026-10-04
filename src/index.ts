@@ -26,6 +26,7 @@ import {
   nyaucastInstructions,
 } from "./mcp.ts";
 import { ThumbnailFiles } from "./thumbnails/thumbnail-files.ts";
+import { StdinTerminal } from "./videos/stdin-terminal.ts";
 import { VideoFiles } from "./videos/video-files.ts";
 import { VideoIds } from "./videos/video-ids.ts";
 import { XAuth } from "./x/auth.ts";
@@ -99,7 +100,19 @@ const authServices = Layer.mergeAll(
   ).pipe(Layer.provide(authDependencies)),
 );
 
-const video = Layer.mergeAll(localStore, ChannelSettings.layer(channelRoot), thumbnailFiles);
+// stdin が TTY かどうかは、ここで 1 回だけ解決する。
+const stdinTerminal = Layer.succeed(
+  StdinTerminal,
+  StdinTerminal.of({ isTerminal: process.stdin.isTTY === true }),
+);
+const video = Layer.mergeAll(
+  localStore,
+  ChannelSettings.layer(channelRoot),
+  credentialStore,
+  DeclaredAccounts.layer(channelRoot),
+  stdinTerminal,
+  thumbnailFiles,
+);
 
 Stdio.Stdio.use(({ args }) =>
   Effect.flatMap(args, nyaucastCli({ auth: authServices, mcpServer, video })),

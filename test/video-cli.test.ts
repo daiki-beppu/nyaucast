@@ -7,6 +7,7 @@ import { Command } from "effect/cli";
 import { SqlClient } from "effect/sql";
 import { TestConsole } from "effect/testing";
 
+import { DeclaredAccounts } from "../src/auth/declared-accounts.ts";
 import { explainerVideoWritePlan } from "../src/tools/explainer/video.writePlan.ts";
 import { explainerVideoStatus } from "../src/tools/explainer/video.status.ts";
 import { ThumbnailFiles } from "../src/thumbnails/thumbnail-files.ts";
@@ -26,16 +27,25 @@ import {
 } from "./thumbnail-facts.ts";
 import { channelFileExists, readChannelFile, writeChannelFile } from "./thumbnail-helpers.ts";
 import { jpegSize, maxThumbnailBytes, noisePng, solidPng } from "./thumbnail-images.ts";
+import { credentialStoreLayer, stdinTerminal } from "./publish-helpers.ts";
 
 const noon = "2026-10-03T12:00:00.000Z";
 
 // CLI は effect/cli を in-process で実行する。DB・設定・成果物の置き場は一時チャンネルの本物。
+// stdin は TTY ではない。TTY を要るのは解説動画の publish だけなので、ここのコマンドはどれも TTY なしで動く（解説動画の publish は video-publish-cli.test.ts）。
 const inChannelOf =
   (config: string) =>
   <A, E, R>(prefix: string, use: (channelRoot: string) => Effect.Effect<A, E, R>) =>
     withVideoChannel(prefix, config, (channelRoot) =>
       use(channelRoot).pipe(
-        Effect.provide(ThumbnailFiles.layer(channelRoot).pipe(Layer.provide(NodeServices.layer))),
+        Effect.provide(
+          Layer.mergeAll(
+            ThumbnailFiles.layer(channelRoot).pipe(Layer.provide(NodeServices.layer)),
+            DeclaredAccounts.layer(channelRoot).pipe(Layer.provide(NodeServices.layer)),
+            credentialStoreLayer(join(channelRoot, "credentials")),
+            stdinTerminal(false),
+          ),
+        ),
       ),
     );
 
@@ -785,7 +795,14 @@ describe("nyaucast video produce <id> on a collection channel", () => {
         assert.strictEqual(failureOf(outcome)._tag, "ChannelConfigNotFound");
         assert.deepStrictEqual(yield* collectionGateRows("approvals"), []);
       }).pipe(
-        Effect.provide(ThumbnailFiles.layer(channelRoot).pipe(Layer.provide(NodeServices.layer))),
+        Effect.provide(
+          Layer.mergeAll(
+            ThumbnailFiles.layer(channelRoot).pipe(Layer.provide(NodeServices.layer)),
+            DeclaredAccounts.layer(channelRoot).pipe(Layer.provide(NodeServices.layer)),
+            credentialStoreLayer(join(channelRoot, "credentials")),
+            stdinTerminal(false),
+          ),
+        ),
       ),
     ),
   );
@@ -844,25 +861,6 @@ describe("nyaucast video publish <id>", () => {
         assert.deepStrictEqual(yield* collectionGateRows("approvals"), []);
       }),
     ),
-  );
-
-  it.effect(
-    "on an explainer channel fails with VideoPublishNotImplemented and writes nothing",
-    () =>
-      inChannel("nyaucast-video-cli-publish-explainer-", () =>
-        Effect.gen(function* () {
-          yield* seedAwaitingVideo;
-
-          const { logs, outcome } = yield* runVideo(["publish", "V1"]);
-
-          const failure = failureOf(outcome);
-          assert.strictEqual(failure._tag, "VideoPublishNotImplemented");
-          assert.strictEqual(failureFacts(failure)["videoId"], "V1");
-          assert.deepStrictEqual(logs, []);
-          assert.deepStrictEqual(yield* gateRows("explainer_approvals"), []);
-          assert.deepStrictEqual(yield* gateRows("explainer_rejections"), []);
-        }),
-      ),
   );
 });
 
