@@ -95,6 +95,20 @@ describe("nyaucast mcp", () => {
     });
   });
 
+  test("tells the client which codec to read, within 512 characters", async () => {
+    await withMcpServer(
+      "nyaucast-mcp-instructions-",
+      async (_channelRoot, _client, initialized) => {
+        const instructions = initialized["instructions"];
+        expect(typeof instructions).toBe("string");
+        expect([...String(instructions)].length).toBeLessThanOrEqual(512);
+        expect(instructions).toContain("explainer-lifecycle");
+        expect(instructions).toMatch(/\bplan\b/);
+        expect(instructions).toMatch(/\bproduce\b/);
+      },
+    );
+  });
+
   test("answers one tool call from the startup working directory", async () => {
     await withMcpServer("nyaucast-mcp-call-", async (channelRoot, client) => {
       client.writeMessage({

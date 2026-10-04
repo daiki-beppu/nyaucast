@@ -1,0 +1,13 @@
+scripts:
+  setup: |
+    set -eu
+    # .worktreeinclude と同じ動き: パターンに合い、かつ gitignore 済みのファイルだけを main checkout から複製する
+    if [ -f "$ORCA_ROOT_PATH/.worktreeinclude" ]; then
+      git -C "$ORCA_ROOT_PATH" ls-files -z --others --ignored --exclude-from=.worktreeinclude \
+        | git -C "$ORCA_ROOT_PATH" check-ignore -z --stdin \
+        | while IFS= read -r -d '' f; do
+            mkdir -p "$ORCA_WORKTREE_PATH/$(dirname "$f")"
+            cp -p "$ORCA_ROOT_PATH/$f" "$ORCA_WORKTREE_PATH/$f"
+          done
+    fi
+    vp install
