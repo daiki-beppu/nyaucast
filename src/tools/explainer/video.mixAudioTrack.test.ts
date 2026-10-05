@@ -65,6 +65,9 @@ import { duckingGain, ExplainerVideoMixAudioTrackTool } from "./video.mixAudioTr
 //   ダッキングの時間の値（立ち上がり・戻り・しきい値 1.5 秒・フェード）はコードの定数で、設定からは変えられない。
 
 const slow = 120_000;
+// 60 秒ちょうどの音声を合成・正規化するテストは単独で約 12 秒かかる（他は 3 秒前後）。境界を確かめるので
+// 入力は短くできない。負荷で 10 倍遅れても落ちないよう、描画のテストと同じ 300 秒を渡す（#644）。
+const sixtySecondMix = 300_000;
 const audioKey = "videos/V1/audio/track.wav";
 const factsKey = "videos/V1/audio/track.json";
 
@@ -1323,7 +1326,7 @@ describe("video.mixAudioTrack: the 60 second limit of a short", () => {
             noCutArtifacts(channelRoot, clipCut(1));
           }),
       ),
-    slow,
+    sixtySecondMix,
   );
 
   it.effect(
@@ -1343,7 +1346,7 @@ describe("video.mixAudioTrack: the 60 second limit of a short", () => {
             );
           }),
       ),
-    slow,
+    sixtySecondMix,
   );
 
   it.effect(
@@ -1369,7 +1372,7 @@ describe("video.mixAudioTrack: the 60 second limit of a short", () => {
           assert.isFalse(accepted.reused);
         }),
       ),
-    slow,
+    sixtySecondMix,
   );
 });
 

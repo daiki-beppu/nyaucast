@@ -1592,30 +1592,36 @@ describe("video.assembleComposition: the 60 second limit of a short", () => {
       ],
     });
 
-  it.effect("fails with ShortTooLong for a range longer than 60 seconds, and writes nothing", () =>
-    inLimitChannel("nyaucast-composition-clip-too-long-", limitTiming(60.8), (channelRoot) =>
-      Effect.gen(function* () {
-        const failure = yield* Effect.flip(assembleCut(clipCut(1)));
+  it.effect(
+    "fails with ShortTooLong for a range longer than 60 seconds, and writes nothing",
+    () =>
+      inLimitChannel("nyaucast-composition-clip-too-long-", limitTiming(60.8), (channelRoot) =>
+        Effect.gen(function* () {
+          const failure = yield* Effect.flip(assembleCut(clipCut(1)));
 
-        assert.strictEqual(failure._tag, "ShortTooLong");
-        assert.strictEqual(failureFacts(failure)["videoId"], "V1");
-        assert.strictEqual(failureFacts(failure)["cut"], clipCut(1));
-        assert.strictEqual(failureFacts(failure)["limit"], 60);
-        near(Number(failureFacts(failure)["seconds"]), 60.05, 1e-6);
-        assert.isFalse(channelFileExists(channelRoot, cutCompositionKey(clipCut(1))));
-      }),
-    ),
+          assert.strictEqual(failure._tag, "ShortTooLong");
+          assert.strictEqual(failureFacts(failure)["videoId"], "V1");
+          assert.strictEqual(failureFacts(failure)["cut"], clipCut(1));
+          assert.strictEqual(failureFacts(failure)["limit"], 60);
+          near(Number(failureFacts(failure)["seconds"]), 60.05, 1e-6);
+          assert.isFalse(channelFileExists(channelRoot, cutCompositionKey(clipCut(1))));
+        }),
+      ),
+    300_000,
   );
 
-  it.effect("accepts a range of exactly 60 seconds", () =>
-    inLimitChannel("nyaucast-composition-clip-exactly-60-", limitTiming(60.75), (channelRoot) =>
-      Effect.gen(function* () {
-        const result = yield* assembleCut(clipCut(1));
+  it.effect(
+    "accepts a range of exactly 60 seconds",
+    () =>
+      inLimitChannel("nyaucast-composition-clip-exactly-60-", limitTiming(60.75), (channelRoot) =>
+        Effect.gen(function* () {
+          const result = yield* assembleCut(clipCut(1));
 
-        assert.isTrue(result.assembled);
-        near(cutPage(channelRoot, clipCut(1)).hf.duration, 60, grid);
-      }),
-    ),
+          assert.isTrue(result.assembled);
+          near(cutPage(channelRoot, clipCut(1)).hf.duration, 60, grid);
+        }),
+      ),
+    300_000,
   );
 
   it.effect(
@@ -1659,6 +1665,7 @@ describe("video.assembleComposition: the 60 second limit of a short", () => {
           assert.isTrue(accepted.assembled);
         }),
       ),
+    300_000,
   );
 });
 
