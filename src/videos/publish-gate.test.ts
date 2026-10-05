@@ -883,6 +883,46 @@ describe("nyaucast video publish <id> on an explainer channel: refusals about wh
   );
 });
 
+describe("nyaucast video publish <id> on an explainer channel: a canceled post (C12/C14)", () => {
+  // 契約（この issue #554 の計画 C12・C14、「公開ゲートの後に直すとき…取り消し → 投稿案の書き直し →
+  // video publish の再実行で直す」ADR-0009 決定 10）: 取り消し済みの投稿は readLivePosts に現れない
+  // ので、その投稿案は「生きている投稿を持たない投稿案」として再び pending になり、2 回目の
+  // video publish で新しい投稿が作られる(古い行は残る。append-only)。
+  it.effect(
+    "lets the long-form YouTube draft be published again after its post is canceled, without any new prompts",
+    () =>
+      inChannel("nyaucast-publish-canceled-", () =>
+        Effect.gen(function* () {
+          yield* preparePublishableVideo(standardShorts);
+          yield* runPublish({ script: everyScriptedChoice });
+          const beforeRows = yield* postRows;
+          const longYoutubePostId = beforeRows.find(
+            (row) => row["cut"] === "long" && row["platform"] === "youtube",
+          )?.["id"];
+          assert.isDefined(longYoutubePostId);
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`INSERT INTO explainer_post_cancellations (post_id, recorded_at) VALUES (${longYoutubePostId}, '2026-10-04T16:00:00.000Z')`;
+          yield* setClock("2026-10-04T16:30:00.000Z");
+
+          const second = yield* runPublish({ script: [approve] });
+
+          assert.strictEqual(second.outcome._tag, "Success");
+          assert.strictEqual(second.unanswered, 0);
+          assert.strictEqual((yield* postRows).length, standardPosts.length + 1);
+          assert.deepStrictEqual(
+            (yield* createdPosts).filter(
+              ([cut, platform]) => cut === "long" && platform === "youtube",
+            ),
+            [
+              ["long", "youtube", "youtube-id"],
+              ["long", "youtube", "youtube-id"],
+            ],
+          );
+        }),
+      ),
+  );
+});
+
 describe("nyaucast video publish <id> on an explainer channel: one transaction", () => {
   it.effect.each(["explainer_posts", "explainer_approvals"] as const)(
     "leaves neither the approval nor the posts when a write to %s fails",

@@ -106,6 +106,14 @@ describe("CLI commands", () => {
       "nyaucast vido",
     ]);
   });
+
+  // SCN-C15-N1（この issue #554 の計画）: 新しい `nyaucast post` のサブコマンド名が `video publish`
+  // と混ざらないこと、および存在しないパスが検出されることの確認。`nyaucast post publish` という
+  // コマンドは存在しない(この issue が足すのは cancel / run-now / mark-published の 3 つ)。
+  test("a command name that mixes an existing root with another root's subcommand is a violation", () => {
+    const text = "`nyaucast post publish <id>` で投稿を公開する。";
+    expect(checkCliCommands(text, known.cli)).toEqual(["nyaucast post publish"]);
+  });
 });
 
 describe("failure tags", () => {

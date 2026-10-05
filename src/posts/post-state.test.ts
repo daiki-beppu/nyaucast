@@ -9,6 +9,12 @@ import { derivePostState } from "./post-state.ts";
 //   確認待ちの理由が複数あてはまるときの優先順位は、結果の無い試行 → アカウントの照合落ち → 鮮度の検査落ち → 許容時間の超過。
 //   YouTube は SNS 側で予約するため許容時間が 0（予定時刻を過ぎたら即座に許容時間の超過）、
 //   Instagram / X は許容時間（既定 60 分、チャンネル設定の配信の設定）の間は due のまま。
+//
+// この issue（#554）で足す契約（C1・C2・C6〜C9・C13、ADR-0009 決定 13・14）:
+//   取り消し・公開済み・upload の拒否/失敗の事実（terminal）は、最後の試行・実行の直前の検査・時刻の
+//   どの判定よりも優先する。優先順位は、取り消し → 公開済み → upload の拒否/失敗 → 最後の試行(既存) →
+//   （succeeded かつ YouTube かつ許容時間を過ぎ、公開済みの事実が無いときだけ）公開の確認が取れない →
+//   実行の直前の検査(既存) → 時刻(既存)。
 
 const minute = 60_000;
 
@@ -19,6 +25,11 @@ interface Input {
   readonly readiness?: { readonly accountMismatch?: boolean; readonly staleFacts?: boolean };
   readonly remoteId?: string;
   readonly scheduledAt?: string;
+  readonly terminal?: {
+    readonly canceled?: boolean;
+    readonly published?: boolean;
+    readonly uploadFailure?: "failed" | "rejected";
+  };
   readonly toleranceMinutes?: number;
 }
 
@@ -38,6 +49,12 @@ const readinessOf = (overrides: Input["readiness"]) => ({
   ...overrides,
 });
 
+const terminalOf = (overrides: Input["terminal"]) => ({
+  canceled: false,
+  published: false,
+  ...overrides,
+});
+
 const input = (overrides: Input = {}) =>
   ({
     lastAttempt: lastAttemptOf(overrides),
@@ -45,6 +62,7 @@ const input = (overrides: Input = {}) =>
     platform: overrides.platform ?? "x",
     readiness: readinessOf(overrides.readiness),
     scheduledAt: overrides.scheduledAt ?? scheduledAt,
+    terminal: terminalOf(overrides.terminal),
     toleranceMinutes: overrides.toleranceMinutes ?? 60,
   }) satisfies Parameters<typeof derivePostState>[0];
 
@@ -219,5 +237,164 @@ describe("derivePostState: the time check for YouTube (reserves on the SNS side,
       "awaiting_check",
     );
     assert.strictEqual(derivePostState(input({ ...common, platform: "x" })).status, "due");
+  });
+});
+
+describe("derivePostState: the cancellation fact (C1/C11) outranks every other signal", () => {
+  it("is canceled when the cancellation fact is present, even with a succeeded attempt and failing readiness", () => {
+    assert.deepStrictEqual(
+      derivePostState(
+        input({
+          lastAttempt: "succeeded",
+          readiness: { accountMismatch: true, staleFacts: true },
+          terminal: { canceled: true },
+        }),
+      ),
+      { status: "canceled" },
+    );
+  });
+
+  it("is canceled without a remote ID even when the last attempt carried one", () => {
+    const state = derivePostState(
+      input({ lastAttempt: "succeeded", remoteId: "yt-video-1", terminal: { canceled: true } }),
+    );
+    assert.strictEqual(state.status, "canceled");
+    assert.isUndefined(state.remoteId);
+  });
+});
+
+describe("derivePostState: the publication fact (C6/C8/C13) outranks the upload-failure fact and the last attempt", () => {
+  it("is published with the remote ID when the last attempt succeeded and the publication fact is present", () => {
+    assert.deepStrictEqual(
+      derivePostState(
+        input({
+          lastAttempt: "succeeded",
+          remoteId: "yt-video-1",
+          terminal: { published: true },
+        }),
+      ),
+      { remoteId: "yt-video-1", status: "published" },
+    );
+  });
+
+  it("is published without a remote ID when there is no successful attempt (recorded for a resultless attempt)", () => {
+    assert.deepStrictEqual(
+      derivePostState(input({ lastAttempt: "resultless", terminal: { published: true } })),
+      { status: "published" },
+    );
+  });
+
+  it("prioritizes the publication fact over a simultaneous upload-failure fact", () => {
+    assert.deepStrictEqual(
+      derivePostState(
+        input({
+          lastAttempt: "succeeded",
+          remoteId: "yt-video-1",
+          terminal: { published: true, uploadFailure: "rejected" },
+        }),
+      ),
+      { remoteId: "yt-video-1", status: "published" },
+    );
+  });
+});
+
+describe("derivePostState: the upload-failure fact (C7/C9) outranks the last attempt's own classification", () => {
+  it("is awaiting_check with upload_rejected when the upload-failure fact records rejected", () => {
+    assert.deepStrictEqual(
+      derivePostState(
+        input({
+          lastAttempt: "succeeded",
+          remoteId: "yt-video-1",
+          terminal: { uploadFailure: "rejected" },
+        }),
+      ),
+      { reason: "upload_rejected", status: "awaiting_check" },
+    );
+  });
+
+  it("is awaiting_check with upload_failed when the upload-failure fact records failed, not the generic failed status", () => {
+    const state = derivePostState(
+      input({
+        lastAttempt: "succeeded",
+        remoteId: "yt-video-1",
+        terminal: { uploadFailure: "failed" },
+      }),
+    );
+    assert.deepStrictEqual(state, { reason: "upload_failed", status: "awaiting_check" });
+    assert.notStrictEqual(state.status, "failed");
+  });
+
+  it("does not carry a remote ID while awaiting_check for an upload failure", () => {
+    const state = derivePostState(
+      input({
+        lastAttempt: "succeeded",
+        remoteId: "yt-video-1",
+        terminal: { uploadFailure: "rejected" },
+      }),
+    );
+    assert.isUndefined(state.remoteId);
+  });
+});
+
+describe("derivePostState: the publication-confirmation deadline for a succeeded YouTube attempt (C9)", () => {
+  // issue 論点 13: 許容時間は、YouTube では「予定時刻から公開の確認が取れるまでの期限」として使う
+  // （post-state.ts:45 の既存コメントが言う「YouTube は使わない」は、この issue で変える）。
+  it("stays reserved within the tolerance window after the scheduled time", () => {
+    assert.deepStrictEqual(
+      derivePostState(
+        input({
+          lastAttempt: "succeeded",
+          now: scheduledAtMs + 60 * minute,
+          platform: "youtube",
+          remoteId: "yt-video-1",
+          toleranceMinutes: 60,
+        }),
+      ),
+      { remoteId: "yt-video-1", status: "reserved" },
+    );
+  });
+
+  it("becomes awaiting_check with publication_unconfirmed one millisecond past the tolerance window", () => {
+    assert.deepStrictEqual(
+      derivePostState(
+        input({
+          lastAttempt: "succeeded",
+          now: scheduledAtMs + 60 * minute + 1,
+          platform: "youtube",
+          remoteId: "yt-video-1",
+          toleranceMinutes: 60,
+        }),
+      ),
+      { reason: "publication_unconfirmed", status: "awaiting_check" },
+    );
+  });
+
+  it("does not carry a remote ID while awaiting_check for publication_unconfirmed", () => {
+    const state = derivePostState(
+      input({
+        lastAttempt: "succeeded",
+        now: scheduledAtMs + 61 * minute,
+        platform: "youtube",
+        remoteId: "yt-video-1",
+        toleranceMinutes: 60,
+      }),
+    );
+    assert.isUndefined(state.remoteId);
+  });
+
+  it("does not apply the publication-confirmation deadline to Instagram or X (out of scope: ADR-0009 decision 13's succeeded-is-published rule for them)", () => {
+    // 非 YouTube の succeeded は、どれだけ時間が経っても reserved のまま（この issue では変えない。§9）。
+    assert.deepStrictEqual(
+      derivePostState(
+        input({
+          lastAttempt: "succeeded",
+          now: scheduledAtMs + 1000 * minute,
+          platform: "x",
+          remoteId: "x-post-1",
+          toleranceMinutes: 60,
+        }),
+      ),
+      { remoteId: "x-post-1", status: "reserved" },
+    );
   });
 });

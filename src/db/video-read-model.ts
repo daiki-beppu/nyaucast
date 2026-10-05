@@ -2,7 +2,12 @@ import { Effect, Option, Schema } from "effect";
 
 import { platforms } from "../auth/account-key.ts";
 import { classifyPost } from "../posts/post-classification.ts";
-import { postAwaitingReasons, postStatuses, type DerivedPostState } from "../posts/post-state.ts";
+import {
+  isTerminalPostStatus,
+  postAwaitingReasons,
+  postStatuses,
+  type DerivedPostState,
+} from "../posts/post-state.ts";
 import {
   CutFacts,
   hasCutPreview,
@@ -19,12 +24,14 @@ import { ExplainerPlan, requireLatestPlan } from "./explainer-videos.ts";
 import { Gate, GateRecord, getExplainerGateDecision, listExplainerGateRecords } from "./gates.ts";
 
 /**
- * 投稿の状態(issue #553)。`id` は出さない(投稿単位の CLI の issue で公開契約を決める。D7)。
- * 確認待ちの理由の優先順位は post-state.ts が唯一の所有者で、ここはその結果を映すだけ。
+ * 投稿の状態(issue #553・#554)。`id` は投稿単位の 3 つの CLI（取り消し・今すぐ実行・公開済みの
+ * 記録）が投稿 1 件を指すための公開識別子（D7）。確認待ちの理由の優先順位は post-state.ts が
+ * 唯一の所有者で、ここはその結果を映すだけ。
  */
 const PostStatusView = Schema.Struct({
   accountId: Schema.String,
   cut: Schema.String,
+  id: Schema.Finite,
   platform: Schema.Literals(platforms),
   reason: Schema.optionalKey(Schema.Literals(postAwaitingReasons)),
   remoteId: Schema.optionalKey(Schema.String),
@@ -38,6 +45,9 @@ export const VideoStatus = Schema.Struct({
   awaitingApproval: Schema.optionalKey(Gate),
   cuts: Schema.Array(CutFacts),
   gateRecords: Schema.Array(GateRecord),
+  // 動画のすべての投稿が公開済み・取り消し済み・失敗のいずれかになったか（issue 決定「lifecycle の
+  // 1 周」）。終わったことを表す事実は積まない。投稿の状態から都度導出する（投稿が無ければ false）。
+  lifecycleComplete: Schema.Boolean,
   plan: ExplainerPlan,
   postDrafts: Schema.Array(PostDraft),
   // 投稿が無い動画では省略する(既存の video.status の出力形を変えない。M2・C20)。
@@ -51,6 +61,7 @@ type VideoStatus = typeof VideoStatus.Type;
 const toPostStatusView = (record: PostRecord, state: DerivedPostState): PostStatusView => ({
   accountId: record.accountId,
   cut: record.cut,
+  id: record.id,
   platform: record.platform,
   status: state.status,
   ...(state.reason === undefined ? {} : { reason: state.reason }),
@@ -115,6 +126,11 @@ const awaitingPublish = (videoId: string, shorts: ReadonlyArray<ShortCandidate>,
     return (yield* isPublishReady(videoId, shorts)) ? ("publish" as const) : undefined;
   });
 
+// 投稿が 0 件なら false（公開ゲートの承認前は投稿が存在しない。ADR-0009 決定 10）。
+// 1 件でも終端でない投稿が残れば false。終端の事実そのものは積まない(導出のみ)。
+const deriveLifecycleComplete = (posts: ReadonlyArray<PostStatusView>): boolean =>
+  posts.length > 0 && posts.every((post) => isTerminalPostStatus(post.status));
+
 /** toleranceMinutes は境界（video.status ツール）で解決済みの値を受け取る（R17）。 */
 export const deriveVideoStatus = (videoId: string, toleranceMinutes: number) =>
   Effect.gen(function* () {
@@ -130,11 +146,13 @@ export const deriveVideoStatus = (videoId: string, toleranceMinutes: number) =>
         isSelectionAfterPlan(plan.updatedAt, thumbnails.selection?.selectedAt),
       ) ?? (yield* awaitingPublish(videoId, shorts, produce));
     const posts = yield* readPostStatuses(videoId, toleranceMinutes);
+    const lifecycleComplete = deriveLifecycleComplete(posts);
     return {
       abandoned,
       ...(awaiting === undefined ? {} : { awaitingApproval: awaiting }),
       cuts: yield* readCutFacts(videoId),
       gateRecords: yield* listExplainerGateRecords(videoId),
+      lifecycleComplete,
       plan,
       postDrafts: yield* readPostDrafts(videoId, shorts),
       // 投稿が無い動画では posts キー自体を省略する(既存9項目の形を変えない。C20)。
