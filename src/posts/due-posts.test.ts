@@ -1537,3 +1537,24 @@ describe("nyaucast post run: the CLI entry point (not just the command tree)", (
       ),
   );
 });
+
+describe("runDuePosts: #656 - the account stored on the post must match the current declaration", () => {
+  it.effect(
+    "does not upload a post approved for another account, even when the declaration and the token agree",
+    () =>
+      inPostsChannel("nyaucast-due-posts-stored-account-", ["youtube"], (_channelRoot) =>
+        Effect.gen(function* () {
+          yield* prepareVideoFacts(longCut);
+          // 承認したときの投稿先は旧チャンネル。その後、宣言とトークンを今のチャンネルに替えた状態。
+          yield* insertPost({ accountId: "a-previous-channel-id" });
+          yield* setClock(defaultScheduledAt);
+          const fixture = fakeYouTubeHttp([]);
+
+          yield* runDuePosts(60).pipe(Effect.provide(youtubeClientLayer(fixture.http)));
+
+          assert.strictEqual(fixture.calls.length, 0);
+          assert.strictEqual((yield* attemptRows).length, 0);
+        }),
+      ),
+  );
+});

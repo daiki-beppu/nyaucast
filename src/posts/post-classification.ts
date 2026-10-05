@@ -44,6 +44,7 @@ export const classifyPost = (
     const lastAttempt = yield* readLastAttempt(record.id);
     const terminal = yield* readPostTerminalFacts(record.id);
     const check = yield* checkPostReadiness({
+      accountId: record.accountId,
       cut: record.cut,
       createdAt: record.createdAt,
       platform: record.platform,

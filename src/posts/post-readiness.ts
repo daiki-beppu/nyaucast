@@ -11,6 +11,8 @@ import { VideoFiles } from "../videos/video-files.ts";
 import type { PostReadiness } from "./post-state.ts";
 
 export interface ReadinessInput {
+  /** 公開ゲートで承認したときに確定した投稿先（#656。書いたら変えない。ADR-0009 決定 9）。 */
+  readonly accountId: string;
   readonly cut: string;
   /** その投稿を承認した時刻（R9: 動画全体の最新の承認時刻ではなく、この投稿自身の時刻で測る）。 */
   readonly createdAt: string;
@@ -19,8 +21,9 @@ export interface ReadinessInput {
 }
 
 /**
- * トークンに記録した ID と宣言の照合（ADR-0009 決定 6）。宣言が無い・トークンが無い・ID が違う、
- * いずれも照合落ち（true）。宣言の読み込み自体が壊れている（AccountsDeclarationInvalid）場合は、
+ * 投稿に保存した ID・宣言・トークンに記録した ID の照合（ADR-0009 決定 6）。宣言が無い・トークンが
+ * 無い・宣言と投稿の ID が違う（承認の後に宣言を替えた。#656）・トークンと宣言の ID が違う、いずれも
+ * 照合落ち（true）。宣言の読み込み自体が壊れている（AccountsDeclarationInvalid）場合は、
  * 確認待ちにせず、そのまま上位へ伝える。チャンネル名は宣言から得る（宣言が無ければ比較の前に落ちる）。
  */
 const checkAccountMismatch = (
@@ -36,6 +39,7 @@ const checkAccountMismatch = (
       if (declared.failure._tag === "AccountNotDeclared") return true;
       return yield* declared.failure;
     }
+    if (declared.success.id !== input.accountId) return true;
     const credential = yield* (yield* CredentialStore).read(
       declared.success.channel,
       input.platform,
