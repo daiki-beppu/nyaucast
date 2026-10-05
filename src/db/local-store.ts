@@ -13,6 +13,7 @@ import explainerShorts from "./migrations/0006_explainer_shorts.ts";
 import explainerPostDrafts from "./migrations/0007_explainer_post_drafts.ts";
 import explainerPosts from "./migrations/0008_explainer_posts.ts";
 import explainerPostAttempts from "./migrations/0009_explainer_post_attempts.ts";
+import explainerPostFacts from "./migrations/0010_explainer_post_facts.ts";
 
 // <id>_<name> をキーにした手書きのマイグレーション。新しいものは id を増やして足す。
 const migrations = {
@@ -25,6 +26,7 @@ const migrations = {
   "0007_explainer_post_drafts": explainerPostDrafts,
   "0008_explainer_posts": explainerPosts,
   "0009_explainer_post_attempts": explainerPostAttempts,
+  "0010_explainer_post_facts": explainerPostFacts,
 };
 
 const latestMigrationId = Math.max(

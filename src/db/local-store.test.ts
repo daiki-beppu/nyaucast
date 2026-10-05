@@ -101,7 +101,7 @@ describe("local store", () => {
     }),
   );
 
-  it.effect("records the hand-written 0001 to 0009 migrations in the migrator's table", () =>
+  it.effect("records the hand-written 0001 to 0010 migrations in the migrator's table", () =>
     Effect.gen(function* () {
       const channelRoot = yield* temporaryDirectory("nyaucast-local-store-migrator-");
       yield* openAndClose(channelRoot);
@@ -109,7 +109,7 @@ describe("local store", () => {
       const rows = migrationRows(localDatabasePath(channelRoot));
       assert.deepStrictEqual(
         rows.map((row) => row["migration_id"]),
-        [1, 2, 3, 4, 5, 6, 7, 8, 9],
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
       );
       for (const row of rows) {
         expect(String(row["name"])).toMatch(/\S/u);
@@ -439,8 +439,8 @@ describe("local store", () => {
 
           yield* openAndClose(channelRoot);
 
-          assert.deepStrictEqual(backupNames(channelRoot), ["local.db.bak-9"]);
-          const backupPath = join(dataDirectory, "local.db.bak-9");
+          assert.deepStrictEqual(backupNames(channelRoot), ["local.db.bak-10"]);
+          const backupPath = join(dataDirectory, "local.db.bak-10");
           assert.deepStrictEqual(query(backupPath, "SELECT value FROM sentinel"), [
             { value: "before migration" },
           ]);
@@ -470,7 +470,7 @@ describe("local store", () => {
         yield* openAndClose(channelRoot);
 
         assert.deepStrictEqual(backupNames(channelRoot), []);
-        assert.strictEqual(migrationRows(localDatabasePath(channelRoot)).length, 9);
+        assert.strictEqual(migrationRows(localDatabasePath(channelRoot)).length, 10);
       }),
     );
   });
@@ -488,12 +488,12 @@ describe("local store", () => {
 
         // 0001 の DDL を再実行して "table already exists" で落ちない
         assert.isTrue(Exit.isSuccess(exit));
-        assert.deepStrictEqual(backupNames(channelRoot), ["local.db.bak-9"]);
-        assert.isTrue(readFileSync(join(channelRoot, "data", "local.db.bak-9")).equals(original));
+        assert.deepStrictEqual(backupNames(channelRoot), ["local.db.bak-10"]);
+        assert.isTrue(readFileSync(join(channelRoot, "data", "local.db.bak-10")).equals(original));
         const rows = migrationRows(databasePath);
         assert.deepStrictEqual(
           rows.map((row) => row["migration_id"]),
-          [1, 2, 3, 4, 5, 6, 7, 8, 9],
+          [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
         );
         assert.deepStrictEqual(query(databasePath, "SELECT id, title FROM collections"), [
           drizzleCollection,
@@ -540,9 +540,9 @@ describe("local store", () => {
         assert.isTrue(Exit.isSuccess(exit));
         assert.deepStrictEqual(
           migrationRows(databasePath).map((row) => row["migration_id"]),
-          [1, 2, 3, 4, 5, 6, 7, 8, 9],
+          [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
         );
-        assert.deepStrictEqual(backupNames(channelRoot), ["local.db.bak-9"]);
+        assert.deepStrictEqual(backupNames(channelRoot), ["local.db.bak-10"]);
       }),
     );
 
@@ -563,8 +563,8 @@ describe("local store", () => {
           "backup written by the Drizzle-era code",
         );
         assert.deepStrictEqual(backupNames(channelRoot), [
+          "local.db.bak-10",
           "local.db.bak-1787771653213",
-          "local.db.bak-9",
         ]);
       }),
     );
@@ -622,7 +622,7 @@ describe("local store", () => {
   );
 
   describe("0002 on a database that only has 0001", () => {
-    it.effect("backs it up as local.db.bak-9, keeps its rows, and adds the explainer tables", () =>
+    it.effect("backs it up as local.db.bak-10, keeps its rows, and adds the explainer tables", () =>
       Effect.gen(function* () {
         const channelRoot = yield* temporaryDirectory("nyaucast-local-store-0002-");
         const databasePath = localDatabasePath(channelRoot);
@@ -631,6 +631,9 @@ describe("local store", () => {
         const database = new DatabaseSync(databasePath);
         try {
           for (const table of [
+            "explainer_post_upload_failures",
+            "explainer_post_publications",
+            "explainer_post_cancellations",
             "explainer_post_attempt_results",
             "explainer_post_attempts",
             "explainer_posts",
@@ -660,9 +663,9 @@ describe("local store", () => {
 
         yield* openAndClose(channelRoot);
 
-        assert.deepStrictEqual(backupNames(channelRoot), ["local.db.bak-9"]);
+        assert.deepStrictEqual(backupNames(channelRoot), ["local.db.bak-10"]);
         assert.deepStrictEqual(
-          tableColumns(join(channelRoot, "data", "local.db.bak-9"), "explainer_videos"),
+          tableColumns(join(channelRoot, "data", "local.db.bak-10"), "explainer_videos"),
           [],
         );
         assert.deepStrictEqual(query(databasePath, "SELECT id, title FROM collections"), [
@@ -674,7 +677,7 @@ describe("local store", () => {
         ]);
         assert.deepStrictEqual(
           migrationRows(databasePath).map((row) => row["migration_id"]),
-          [1, 2, 3, 4, 5, 6, 7, 8, 9],
+          [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
         );
       }),
     );
@@ -694,6 +697,11 @@ describe("local store", () => {
     ["explainer_short_recommendations", "cut"],
     ["explainer_post_attempts", "started_at"],
     ["explainer_post_attempt_results", "outcome"],
+    // C1/C2/C6/C7/C13（この issue の計画）: 取り消し・公開済み・upload の拒否/失敗の事実も、
+    // 既存の事実の表（explainer_post_attempts 等）と同じ append-only トリガーで保護する(ADR-0007 決定 2)。
+    ["explainer_post_cancellations", "recorded_at"],
+    ["explainer_post_publications", "recorded_at"],
+    ["explainer_post_upload_failures", "upload_status"],
   ] as const)("enforces %s as append-only on a freshly migrated database", ([table, column]) =>
     Effect.gen(function* () {
       const channelRoot = yield* temporaryDirectory("nyaucast-local-store-explainer-append-only-");
@@ -713,6 +721,9 @@ describe("local store", () => {
         yield* sql`INSERT INTO explainer_short_recommendations (video_id, number, cut, recommended_at) VALUES ('v1', 1, 'clip', '2026-10-03T00:00:00.000Z')`;
         yield* sql`INSERT INTO explainer_post_attempts (post_id, started_at) VALUES (1, '2026-10-05T00:00:00.000Z')`;
         yield* sql`INSERT INTO explainer_post_attempt_results (attempt_id, outcome, recorded_at) VALUES (1, 'temporary', '2026-10-05T00:00:01.000Z')`;
+        yield* sql`INSERT INTO explainer_post_cancellations (post_id, recorded_at) VALUES (1, '2026-10-05T00:00:02.000Z')`;
+        yield* sql`INSERT INTO explainer_post_publications (post_id, remote_url, recorded_at) VALUES (1, 'https://youtube.com/watch?v=REMOTE1', '2026-10-05T00:00:03.000Z')`;
+        yield* sql`INSERT INTO explainer_post_upload_failures (post_id, upload_status, recorded_at) VALUES (1, 'rejected', '2026-10-05T00:00:04.000Z')`;
         return yield* Effect.all([
           Effect.exit(sql.unsafe(`DELETE FROM ${table}`)),
           Effect.exit(sql.unsafe(`UPDATE ${table} SET ${column} = 'changed'`)),
@@ -722,6 +733,24 @@ describe("local store", () => {
       for (const outcome of outcomes) {
         assert.isTrue(Exit.isFailure(outcome));
       }
+    }),
+  );
+
+  // C7/C8（この issue の計画）: upload_status の CHECK 制約(DB の内部表現)が rejected/failed しか
+  // 受理しないことを、既存のゲート値の CHECK 制約テスト(explainer_approvals/explainer_rejections の gate)
+  // と同じ形で確認する。
+  it.effect("rejects an upload_status value outside rejected and failed at the database", () =>
+    Effect.gen(function* () {
+      const channelRoot = yield* temporaryDirectory("nyaucast-local-store-upload-failure-check-");
+
+      const exit = yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`INSERT INTO explainer_videos (id, created_at) VALUES ('v1', '2026-10-03T00:00:00.000Z')`;
+        yield* sql`INSERT INTO explainer_posts (video_id, cut, platform, account_id, title, description, body, scheduled_at, created_at) VALUES ('v1', 'long', 'x', 'x-id', NULL, NULL, 'b', '2026-10-05T00:00:00.000Z', '2026-10-03T00:00:00.000Z')`;
+        yield* sql`INSERT INTO explainer_post_upload_failures (post_id, upload_status, recorded_at) VALUES (1, 'succeeded', '2026-10-05T00:00:00.000Z')`;
+      }).pipe(Effect.exit, Effect.provide(channelLayer(channelRoot)));
+
+      assert.isTrue(Exit.isFailure(exit));
     }),
   );
 

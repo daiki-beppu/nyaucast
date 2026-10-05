@@ -80,6 +80,7 @@ describe("video.status: parameters and result", () => {
       },
       gateRecords: [],
       cuts: [],
+      lifecycleComplete: false,
       postDrafts: [],
       shorts: [],
       thumbnails: { candidates: [], exclusions: [] },
@@ -113,6 +114,7 @@ describe("video.status: parameters and result", () => {
     const status = {
       abandoned: false,
       cuts: [],
+      lifecycleComplete: false,
       postDrafts: [],
       shorts: [],
       gateRecords: [],
@@ -139,6 +141,7 @@ describe("video.status: gate records in the result schema", () => {
     gateRecords: [{ gate: "produce", kind: "approval", recordedAt: noon }],
     plan: { hitPattern: "shock", points: [], sources: [], title: "T", updatedAt: noon },
     cuts: [],
+    lifecycleComplete: false,
     postDrafts: [],
     shorts: [],
     thumbnails: { candidates: [], exclusions: [] },
@@ -185,6 +188,8 @@ describe("video.status: reading a video", () => {
           gateRecords: [],
           plan: written.plan,
           cuts: [],
+          // 投稿が無い動画は lifecycle を 1 周していない(ADR-0009 決定 13・この issue の計画 §3.4)。
+          lifecycleComplete: false,
           postDrafts: [],
           shorts: [],
           thumbnails: { candidates: [], exclusions: [] },
@@ -345,6 +350,7 @@ describe("video.status: cuts", () => {
         },
       ],
       gateRecords: [],
+      lifecycleComplete: false,
       plan: { hitPattern: "shock", points: [], sources: [], title: "T", updatedAt: noon },
       postDrafts: [],
       shorts: [],
@@ -838,6 +844,7 @@ describe("video.status: short candidates", () => {
     abandoned: false,
     cuts: [],
     gateRecords: [],
+    lifecycleComplete: false,
     plan: { hitPattern: "shock", points: [], sources: [], title: "T", updatedAt: noon },
     postDrafts: [],
     shorts: [candidate],
@@ -967,6 +974,7 @@ describe("video.status: post drafts in the result schema", () => {
     abandoned: false,
     cuts: [],
     gateRecords: [],
+    lifecycleComplete: false,
     plan: { hitPattern: "shock", points: [], sources: [], title: "T", updatedAt: noon },
     postDrafts: [draft],
     shorts: [],
@@ -1443,6 +1451,7 @@ describe("video.status: posts in the result schema", () => {
     abandoned: false,
     cuts: [],
     gateRecords: [],
+    lifecycleComplete: false,
     plan: { hitPattern: "shock", points: [], sources: [], title: "T", updatedAt: noon },
     postDrafts: [],
     shorts: [],
@@ -1452,6 +1461,7 @@ describe("video.status: posts in the result schema", () => {
   const reservedPost = {
     accountId: "youtube-id",
     cut: "long",
+    id: 1,
     platform: "youtube",
     remoteId: "yt-video-1",
     status: "reserved",
@@ -1459,8 +1469,43 @@ describe("video.status: posts in the result schema", () => {
   const awaitingPost = {
     accountId: "x-id",
     cut: "long",
+    id: 2,
     platform: "x",
     reason: "tolerance_exceeded",
+    status: "awaiting_check",
+  };
+  // この issue(#554)で足す 2 状態・3 理由(C1・C6・C7・C9・C11、ADR-0009 決定 13・14)。
+  const canceledPost = { accountId: "x-id", cut: "long", id: 3, platform: "x", status: "canceled" };
+  const publishedPost = {
+    accountId: "youtube-id",
+    cut: "long",
+    id: 4,
+    platform: "youtube",
+    remoteId: "yt-video-2",
+    status: "published",
+  };
+  const unconfirmedPost = {
+    accountId: "youtube-id",
+    cut: "long",
+    id: 5,
+    platform: "youtube",
+    reason: "publication_unconfirmed",
+    status: "awaiting_check",
+  };
+  const rejectedPost = {
+    accountId: "youtube-id",
+    cut: "long",
+    id: 6,
+    platform: "youtube",
+    reason: "upload_rejected",
+    status: "awaiting_check",
+  };
+  const failedUploadPost = {
+    accountId: "youtube-id",
+    cut: "long",
+    id: 7,
+    platform: "youtube",
+    reason: "upload_failed",
     status: "awaiting_check",
   };
 
@@ -1472,16 +1517,35 @@ describe("video.status: posts in the result schema", () => {
     assert.isTrue(
       accepts(ExplainerVideoStatusTool.successSchema, {
         ...base,
-        posts: [reservedPost, awaitingPost],
+        posts: [
+          reservedPost,
+          awaitingPost,
+          canceledPost,
+          publishedPost,
+          unconfirmedPost,
+          rejectedPost,
+          failedUploadPost,
+        ],
       }),
     );
     for (const posts of [
       [{ ...reservedPost, next: "run" }],
       [{ ...reservedPost, command: "post run" }],
       [{ ...awaitingPost, recommendation: "retry" }],
+      [{ ...canceledPost, next: "run-now" }],
+      [{ ...publishedPost, command: "post mark-published" }],
     ]) {
       assert.isFalse(accepts(ExplainerVideoStatusTool.successSchema, { ...base, posts }));
     }
+  });
+
+  it("requires an id for every post (D7: the public identifier the 3 per-post CLIs take)", () => {
+    const withoutId = Object.fromEntries(
+      Object.entries(reservedPost).filter(([key]) => key !== "id"),
+    );
+    assert.isFalse(
+      accepts(ExplainerVideoStatusTool.successSchema, { ...base, posts: [withoutId] }),
+    );
   });
 
   it("rejects a status value outside the derived set", () => {
@@ -1493,11 +1557,33 @@ describe("video.status: posts in the result schema", () => {
     );
   });
 
-  it("rejects a reason value outside the four confirmation reasons", () => {
+  it("rejects a reason value outside the seven confirmation reasons", () => {
     assert.isFalse(
       accepts(ExplainerVideoStatusTool.successSchema, {
         ...base,
         posts: [{ ...awaitingPost, reason: "unknown_problem" }],
+      }),
+    );
+  });
+
+  it("rejects the internal upload_status values (rejected/failed) as a reason (not the public awaiting-reason names)", () => {
+    // DB 内部の upload_status の値('rejected'/'failed')は、公開契約の reason('upload_rejected'/
+    // 'upload_failed')とは別の名前空間(SCN-C14-N1: status の集合と reason の集合は交わらない)。
+    for (const reason of ["rejected", "failed", "canceled"]) {
+      assert.isFalse(
+        accepts(ExplainerVideoStatusTool.successSchema, {
+          ...base,
+          posts: [{ ...awaitingPost, reason }],
+        }),
+      );
+    }
+  });
+
+  it("rejects a reason value used as a status (SCN-C14-N1: the status set and the reason set do not overlap)", () => {
+    assert.isFalse(
+      accepts(ExplainerVideoStatusTool.successSchema, {
+        ...base,
+        posts: [{ ...reservedPost, status: "publication_unconfirmed" }],
       }),
     );
   });
@@ -1564,6 +1650,7 @@ describe("video.status: posts (execution-time readiness and the approval-toleran
             assert.deepStrictEqual(postIn(status), {
               accountId: "youtube-id",
               cut: longCut,
+              id: 1,
               platform: "youtube",
               reason: "account_mismatch",
               status: "awaiting_check",
@@ -1596,6 +1683,7 @@ describe("video.status: posts (execution-time readiness and the approval-toleran
             assert.deepStrictEqual(postIn(status), {
               accountId: "youtube-id",
               cut: longCut,
+              id: 1,
               platform: "youtube",
               reason: "resultless_attempt",
               status: "awaiting_check",
@@ -1625,6 +1713,7 @@ describe("video.status: posts (execution-time readiness and the approval-toleran
             assert.deepStrictEqual(postIn(status), {
               accountId: "youtube-id",
               cut: longCut,
+              id: 1,
               platform: "youtube",
               remoteId: "REMOTE-1",
               status: "reserved",
@@ -1685,6 +1774,7 @@ describe("video.status: posts (execution-time readiness and the approval-toleran
               assert.deepStrictEqual(postIn(before, "instagram"), {
                 accountId: "instagram-id",
                 cut: longCut,
+                id: 1,
                 platform: "instagram",
                 status: "due",
               });
@@ -1698,6 +1788,7 @@ describe("video.status: posts (execution-time readiness and the approval-toleran
               assert.deepStrictEqual(postIn(after, "instagram"), {
                 accountId: "instagram-id",
                 cut: longCut,
+                id: 1,
                 platform: "instagram",
                 reason: "tolerance_exceeded",
                 status: "awaiting_check",
@@ -1779,6 +1870,7 @@ describe("video.status: posts (execution-time readiness and the approval-toleran
               assert.deepStrictEqual(postIn(status, "youtube"), {
                 accountId: "youtube-id",
                 cut: longCut,
+                id: 1,
                 platform: "youtube",
                 reason: "stale_facts",
                 status: "awaiting_check",
@@ -1786,8 +1878,79 @@ describe("video.status: posts (execution-time readiness and the approval-toleran
               assert.deepStrictEqual(postIn(status, "instagram"), {
                 accountId: "instagram-id",
                 cut: longCut,
+                id: 2,
                 platform: "instagram",
                 status: "due",
+              });
+            }),
+        ),
+    );
+  });
+
+  describe("C10: lifecycleComplete across a video's posts", () => {
+    it.effect("is false while at least one post is not terminal (canceled/failed/published)", () =>
+      withToolChannel(
+        "nyaucast-video-status-lifecycle-pending-",
+        { config: explainerConfig },
+        (channelRoot) =>
+          Effect.gen(function* () {
+            declareAccounts(channelRoot, ["youtube"]);
+            yield* storeToken(channelRoot, "youtube");
+            yield* prepareReadyPost("youtube-id");
+            yield* setClock(scheduledAt);
+
+            const status = yield* callTool("video_status", { videoId: "V1" });
+
+            assert.isFalse(status.lifecycleComplete);
+          }),
+      ),
+    );
+
+    it.effect(
+      "is true once every post of the video is canceled, failed or published, and false if even one is not",
+      () =>
+        withToolChannel(
+          "nyaucast-video-status-lifecycle-complete-",
+          { config: explainerConfig },
+          (channelRoot) =>
+            Effect.gen(function* () {
+              declareAccounts(channelRoot, ["youtube", "x"]);
+              yield* storeToken(channelRoot, "youtube");
+              yield* storeToken(channelRoot, "x");
+              const sql = yield* SqlClient.SqlClient;
+              yield* prepareReadyPost("youtube-id"); // post 1: youtube, long cut.
+              // post 2: x, 本文のみ必須(鮮度の検査を通す facts は post 1 と共有する)。
+              yield* sql`INSERT INTO explainer_posts (video_id, cut, platform, account_id, title, description, body, scheduled_at, created_at) VALUES ('V1', ${longCut}, 'x', 'x-id', NULL, NULL, 'b', ${scheduledAt}, ${postCreatedAt})`;
+              // post 3: youtube の別投稿。公開済みも終端として数えることを、canceled/failed とは
+              // 独立に確かめる(FINDING-TEST-LIFECYCLE-PUBLISHED: published を含まない完了例では
+              // terminalPostStatuses から published が外れる回帰を検出できない)。
+              yield* sql`INSERT INTO explainer_posts (video_id, cut, platform, account_id, title, description, body, scheduled_at, created_at) VALUES ('V1', ${longCut}, 'youtube', 'youtube-id', 'T3', 'D3', NULL, ${scheduledAt}, ${postCreatedAt})`;
+              yield* setClock(scheduledAt);
+
+              // まだ 1 件でも終端でなければ false(post 2・post 3 は due のまま)。
+              yield* sql`INSERT INTO explainer_post_cancellations (post_id, recorded_at) VALUES (1, ${scheduledAt})`;
+              const stillPending = yield* callTool("video_status", { videoId: "V1" });
+              assert.isFalse(stillPending.lifecycleComplete);
+
+              // post 2 が終端(permanent の試行 → failed)、post 3 が終端(succeeded の試行 →
+              // 公開済みの事実 → published)になれば、canceled・failed・published がすべて揃って true。
+              yield* sql`INSERT INTO explainer_post_attempts (post_id, started_at) VALUES (2, ${scheduledAt})`;
+              yield* sql`INSERT INTO explainer_post_attempt_results (attempt_id, outcome, recorded_at) VALUES (1, 'permanent', ${scheduledAt})`;
+              yield* sql`INSERT INTO explainer_post_attempts (post_id, started_at) VALUES (3, ${scheduledAt})`;
+              yield* sql`INSERT INTO explainer_post_attempt_results (attempt_id, outcome, remote_id, recorded_at) VALUES (2, 'succeeded', 'yt-video-3', ${scheduledAt})`;
+              yield* sql`INSERT INTO explainer_post_publications (post_id, recorded_at) VALUES (3, ${scheduledAt})`;
+              const complete = yield* callTool("video_status", { videoId: "V1" });
+
+              assert.isTrue(complete.lifecycleComplete);
+              // postIn は platform で探すため、youtube の投稿が 2 件ある本テストでは id で特定する。
+              const post3 = (complete.posts ?? []).find((post) => post["id"] === 3);
+              assert.deepStrictEqual(post3, {
+                accountId: "youtube-id",
+                cut: longCut,
+                id: 3,
+                platform: "youtube",
+                remoteId: "yt-video-3",
+                status: "published",
               });
             }),
         ),

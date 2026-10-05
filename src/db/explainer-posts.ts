@@ -6,6 +6,11 @@ import { type PostText, postTextFromColumns } from "../posts/post-text.ts";
 import type { PostDraft } from "./explainer-post-drafts.ts";
 import { insertRow, queryRows } from "./explainer-thumbnails.ts";
 
+/** 投稿単位の CLI（issue #554）が、存在しない投稿 ID を渡されたときに返す型付きの失敗。 */
+export class PostNotFound extends Schema.TaggedError<PostNotFound>()("PostNotFound", {
+  postId: Schema.Finite,
+}) {}
+
 const PostRow = Schema.Struct({
   account_id: Schema.String,
   cut: Schema.String,
@@ -78,6 +83,26 @@ export const readAllPostRecords = Effect.gen(function* () {
   return yield* Effect.forEach(rows, toPostRecord);
 });
 
+/**
+ * 投稿 1 件を ID で読む。投稿単位の 3 つの CLI（取り消し・今すぐ実行・公開済みの記録）が、
+ * 動かす前にアカウントとカットを表示するために使う唯一の口（post-target.ts 経由）。
+ */
+export const readPostRecord = (
+  postId: number,
+): Effect.Effect<PostRecord, PostNotFound, SqlClient.SqlClient> =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* queryRows(
+      PostRecordRow,
+      sql`SELECT id, video_id, cut, platform, account_id, title, description, body, scheduled_at, created_at FROM explainer_posts WHERE id = ${postId}`,
+    );
+    const row = rows[0];
+    if (row === undefined) {
+      return yield* new PostNotFound({ postId });
+    }
+    return yield* toPostRecord(row);
+  });
+
 /** 生きている投稿のキー。投稿案のキー（ショートの候補または長尺・SNS・アカウント）と、指しているカット。 */
 export interface LivePost {
   readonly accountId: string;
@@ -87,15 +112,19 @@ export interface LivePost {
 }
 
 /**
- * 生きている投稿（取り消されていない投稿）。取り消しの事実はまだ無いので、積んだ投稿はすべて生きている。
- * 取り消しの事実を足すときは、この 1 関数で除く。
+ * 生きている投稿（取り消されていない投稿）。取り消し済みの投稿は除く（issue 決定「公開ゲートの後に
+ * 直すとき…取り消し → 投稿案の書き直し → video publish の再実行で直す」。ADR-0009 決定 10）。
+ * これが取り消しを除く唯一の関数で、due-posts.ts 側では写さない（R17）。
  */
 export const readLivePosts = (videoId: string) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const rows = yield* queryRows(
       PostRow,
-      sql`SELECT account_id, cut, platform, short_number FROM explainer_posts WHERE video_id = ${videoId} ORDER BY id`,
+      sql`SELECT account_id, cut, platform, short_number FROM explainer_posts p
+          WHERE p.video_id = ${videoId}
+            AND NOT EXISTS (SELECT 1 FROM explainer_post_cancellations c WHERE c.post_id = p.id)
+          ORDER BY p.id`,
     );
     return rows.map((row): LivePost => ({
       accountId: row.account_id,

@@ -6,7 +6,11 @@ import type { AccountsDeclarationInvalid } from "../auth/accounts.ts";
 import { CredentialStore, type CredentialStoreFailure } from "../auth/credential-store.ts";
 import { DeclaredAccounts } from "../auth/declared-accounts.ts";
 import { longCut, type CutExport } from "../db/explainer-cuts.ts";
-import { acquireAttempt, appendAttemptResult } from "../db/explainer-post-attempts.ts";
+import {
+  acquireAttempt,
+  appendAttemptResult,
+  type AttemptOutcome as AttemptResultOutcome,
+} from "../db/explainer-post-attempts.ts";
 import { readAllPostRecords, type PostRecord } from "../db/explainer-posts.ts";
 import type { ThumbnailSelection } from "../db/explainer-thumbnails.ts";
 import { VideoFiles } from "../videos/video-files.ts";
@@ -20,7 +24,7 @@ import type { ChunkReadFailed, ResumableUploadFailed } from "../youtube/resumabl
 import { classifyPost, type ClassifiedPost } from "./post-classification.ts";
 import { classifyPostFailure } from "./post-outcome.ts";
 import { checkPostReadiness } from "./post-readiness.ts";
-import { derivePostState, toLastAttemptInput } from "./post-state.ts";
+import { derivePostState, isPastYouTubeSchedule, toLastAttemptInput } from "./post-state.ts";
 
 export type DuePostOutcome =
   | { readonly kind: "account_stopped"; readonly postId: number }
@@ -48,6 +52,23 @@ const selectDuePosts = (records: ReadonlyArray<PostRecord>, toleranceMinutes: nu
     }
     return results;
   });
+
+/**
+ * 予定時刻の再確認（issue 論点 1）を省くかどうかの方針。`post run` は現状どおり `due` 判定を通し、
+ * 今すぐ実行は `forced` で時刻の門を外す（issue 決定「許容時間を無視して実行する」）。鮮度の検査
+ * （isStillReady）は方針に関わらず常に行う（issue 決定「鮮度の検査は外さない」）。
+ */
+type PostTimePolicy =
+  | { readonly kind: "due"; readonly toleranceMinutes: number }
+  | { readonly kind: "forced" };
+
+/**
+ * 試行の獲得が許す最後の結果。今すぐ実行だけ `permanent`（恒久的な失敗）を加えて失敗の投稿を
+ * 再び開く（issue「#553 の後の前提」）。`succeeded` を許す側は無く、二重 upload を防ぐ排他は
+ * どちらの経路でも迂回しない。
+ */
+const acquirableOutcomes = (policy: PostTimePolicy): ReadonlyArray<AttemptResultOutcome> =>
+  policy.kind === "forced" ? ["permanent", "temporary"] : ["temporary"];
 
 /**
  * readiness の再評価(獲得・アダプタの入力を整える前の最後の読み取り。issue 論点 3)で読んだ、
@@ -95,21 +116,33 @@ const isStillReady = (
 
 /**
  * 予定時刻の再確認(アダプタの入力を整えた後・獲得の直前の最後の読み取り。issue 論点 1)。readiness は
- * ここでは読み直さない(isStillReady が別に担う)。
+ * ここでは読み直さない(isStillReady が別に担う)。方針が forced（今すぐ実行）が外すのは許容時間の
+ * 判定だけで（issue 決定「許容時間を無視して実行する」。「#553 の後の前提」「今すぐ実行が外すのは
+ * 許容時間だけ」）、YouTube の予定時刻超過の安全策（private で upload すると即時公開になる）は
+ * `deriveYouTubeTimeStatus` と同じ判定（isPastYouTubeSchedule）を通して残す。
+ * 終端の事実（entry.terminal）は classifyPost が読んだものをそのまま使い、読み直さない。
  */
-const isStillDue = (entry: ClassifiedPost, toleranceMinutes: number) =>
-  Effect.gen(function* () {
-    const now = yield* Clock.currentTimeMillis;
-    const state = derivePostState({
-      lastAttempt: yield* toLastAttemptInput(entry.lastAttempt),
-      now,
-      platform: entry.record.platform,
-      readiness: entry.readiness,
-      scheduledAt: entry.record.scheduledAt,
-      toleranceMinutes,
-    });
-    return state.status === "due";
-  });
+const isStillDue = (entry: ClassifiedPost, policy: PostTimePolicy) =>
+  policy.kind === "forced"
+    ? Effect.map(
+        Clock.currentTimeMillis,
+        (now) =>
+          entry.record.platform !== "youtube" ||
+          !isPastYouTubeSchedule(now, entry.record.scheduledAt),
+      )
+    : Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis;
+        const state = derivePostState({
+          lastAttempt: yield* toLastAttemptInput(entry.lastAttempt),
+          now,
+          platform: entry.record.platform,
+          readiness: entry.readiness,
+          scheduledAt: entry.record.scheduledAt,
+          terminal: entry.terminal,
+          toleranceMinutes: policy.toleranceMinutes,
+        });
+        return state.status === "due";
+      });
 
 const accountKey = (entry: ClassifiedPost) => `${entry.record.platform}:${entry.record.accountId}`;
 
@@ -257,13 +290,18 @@ const resolveIndeterminate = (
   stopAccount: classifyPostFailure(cause).stopAccount,
 });
 
-/** 現在時刻を起点に試行を原子的に取る。取れなければ既存の not_acquired の意味のまま返す。 */
+/**
+ * 現在時刻を起点に試行を原子的に取る。取れなければ既存の not_acquired の意味のまま返す。
+ * 許す最後の結果は方針（PostTimePolicy）から導く。今すぐ実行と post run の両方がこの同じ関数を
+ * 通り、同じ原子的な獲得（acquireAttempt）を迂回しない（issue「#553 の後の前提」）。
+ */
 const acquireNow = (
   postId: number,
+  policy: PostTimePolicy,
 ): Effect.Effect<Option.Option<number>, never, SqlClient.SqlClient> =>
   Effect.gen(function* () {
     const startedAt = new Date(yield* Clock.currentTimeMillis).toISOString();
-    return yield* acquireAttempt(postId, startedAt);
+    return yield* acquireAttempt(postId, startedAt, acquirableOutcomes(policy));
   });
 
 /**
@@ -280,9 +318,10 @@ const acquireNow = (
 const recordPrepareFailure = (
   postId: number,
   failure: YouTubeClientFailure,
+  policy: PostTimePolicy,
 ): Effect.Effect<AttemptOutcome, never, SqlClient.SqlClient> =>
   Effect.gen(function* () {
-    const attemptId = yield* acquireNow(postId);
+    const attemptId = yield* acquireNow(postId, policy);
     if (Option.isNone(attemptId)) {
       return { outcome: { kind: "not_acquired", postId }, stopAccount: false };
     }
@@ -302,7 +341,7 @@ type AcquiredAttempt = { readonly attemptId: number } | { readonly outcome: Atte
  */
 const prepareAndCheckDue = (
   entry: ClassifiedPost,
-  toleranceMinutes: number,
+  policy: PostTimePolicy,
   facts: ReadyFacts,
 ): Effect.Effect<
   PreparedInput,
@@ -313,11 +352,11 @@ const prepareAndCheckDue = (
     const { platform, id: postId } = entry.record;
     const prepared = yield* prepareAdapterInput(platform, entry.record, facts).pipe(Effect.result);
     if (prepared._tag === "Failure") {
-      return { outcome: yield* recordPrepareFailure(postId, prepared.failure) };
+      return { outcome: yield* recordPrepareFailure(postId, prepared.failure, policy) };
     }
     // 予定時刻の最後の読み取り(獲得の直前。issue 論点 1): 準備の間に過ぎていたら、結果の無い
-    // 試行を残さずに飛ばす。
-    if (!(yield* isStillDue(entry, toleranceMinutes))) {
+    // 試行を残さずに飛ばす。方針が forced なら常に通る。
+    if (!(yield* isStillDue(entry, policy))) {
       return { outcome: { outcome: { kind: "scheduled_in_past", postId }, stopAccount: false } };
     }
     return { input: prepared.success };
@@ -332,15 +371,15 @@ const prepareAndCheckDue = (
  */
 const acquireAndCheckDue = (
   entry: ClassifiedPost,
-  toleranceMinutes: number,
+  policy: PostTimePolicy,
 ): Effect.Effect<AcquiredAttempt, never, SqlClient.SqlClient> =>
   Effect.gen(function* () {
     const { id: postId } = entry.record;
-    const attemptId = yield* acquireNow(postId);
+    const attemptId = yield* acquireNow(postId, policy);
     if (Option.isNone(attemptId)) {
       return { outcome: { outcome: { kind: "not_acquired", postId }, stopAccount: false } };
     }
-    if (!(yield* isStillDue(entry, toleranceMinutes))) {
+    if (!(yield* isStillDue(entry, policy))) {
       return { outcome: { outcome: { kind: "scheduled_in_past", postId }, stopAccount: false } };
     }
     return { attemptId: attemptId.value };
@@ -353,7 +392,7 @@ const acquireAndCheckDue = (
  */
 const attemptUpload = (
   entry: ClassifiedPost,
-  toleranceMinutes: number,
+  policy: PostTimePolicy,
   facts: ReadyFacts,
 ): Effect.Effect<
   AttemptOutcome,
@@ -363,12 +402,12 @@ const attemptUpload = (
   Effect.scoped(
     Effect.gen(function* () {
       const { id: postId } = entry.record;
-      const prepared = yield* prepareAndCheckDue(entry, toleranceMinutes, facts);
+      const prepared = yield* prepareAndCheckDue(entry, policy, facts);
       if ("outcome" in prepared) {
         return prepared.outcome;
       }
       const input = prepared.input;
-      const acquired = yield* acquireAndCheckDue(entry, toleranceMinutes);
+      const acquired = yield* acquireAndCheckDue(entry, policy);
       if ("outcome" in acquired) {
         return acquired.outcome;
       }
@@ -390,7 +429,7 @@ const attemptUpload = (
 const processDuePost = (
   entry: ClassifiedPost,
   stoppedAccounts: Set<string>,
-  toleranceMinutes: number,
+  policy: PostTimePolicy,
 ): Effect.Effect<
   DuePostOutcome,
   AccountsDeclarationInvalid | CredentialStoreFailure,
@@ -406,15 +445,12 @@ const processDuePost = (
     }
     // readiness の再評価(獲得・アダプタの入力を整える前。issue 論点 3): バッチの判定から、この
     // 投稿の番が来るまでの間に、アカウントの宣言やカットの事実が変わっていたら手を出さない。
+    // 今すぐ実行でも鮮度の検査は外さない（issue 決定）。
     const readyFacts = yield* isStillReady(entry);
     if (Option.isNone(readyFacts)) {
       return { kind: "not_ready", postId };
     }
-    const { outcome, stopAccount } = yield* attemptUpload(
-      entry,
-      toleranceMinutes,
-      readyFacts.value,
-    );
+    const { outcome, stopAccount } = yield* attemptUpload(entry, policy, readyFacts.value);
     if (stopAccount) stoppedAccounts.add(accountKey(entry));
     return outcome;
   });
@@ -434,7 +470,19 @@ export const runDuePosts = (
     const records = yield* readAllPostRecords;
     const due = yield* selectDuePosts(records, toleranceMinutes);
     const stoppedAccounts = new Set<string>();
-    return yield* Effect.forEach(due, (entry) =>
-      processDuePost(entry, stoppedAccounts, toleranceMinutes),
-    );
+    const policy: PostTimePolicy = { kind: "due", toleranceMinutes };
+    return yield* Effect.forEach(due, (entry) => processDuePost(entry, stoppedAccounts, policy));
   });
+
+/**
+ * 投稿 1 件を、許容時間を無視して実行する（issue 決定「今すぐ実行」）。鮮度の検査・アカウントの
+ * 照合・試行の獲得・3 つの独立した書き込みは `post run` と同じ経路（processDuePost）をそのまま
+ * 通す。呼び出し側（run-post-now.ts）が、状態が確認待ちか失敗であることを先に確かめる。
+ */
+export const runPostForced = (
+  entry: ClassifiedPost,
+): Effect.Effect<
+  DuePostOutcome,
+  AccountsDeclarationInvalid | CredentialStoreFailure,
+  CredentialStore | DeclaredAccounts | SqlClient.SqlClient | VideoFiles | YouTubeClient
+> => processDuePost(entry, new Set(), { kind: "forced" });

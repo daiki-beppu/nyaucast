@@ -103,6 +103,11 @@ export function jsonUploadResponse(body: unknown, status = 200): Response {
   return Response.json(body, { status });
 }
 
+/** 本文の無い応答（videos.list の delete の 204、または既に無い 404）。 */
+export function noBodyResponse(status: number): Response {
+  return new Response(null, { status });
+}
+
 /** Google のエラー応答の形（client.test.ts の googleError と同じ形）。 */
 export function googleErrorResponse(status: number, reasons: readonly string[]): Response {
   return Response.json(

@@ -24,6 +24,10 @@ describe("nyaucast root command", () => {
     }
     // 時刻が来た投稿を実行する CLI（#553）。MCP には開かず、定期実行からもそのまま叩ける形にする。
     assert.isTrue(tree.has("nyaucast post run"));
+    // 投稿単位の人間だけが叩く 3 つの CLI（この issue #554、ADR-0009 決定 9・14）。
+    assert.isTrue(tree.has("nyaucast post cancel"));
+    assert.isTrue(tree.has("nyaucast post run-now"));
+    assert.isTrue(tree.has("nyaucast post mark-published"));
     assert.isFalse(tree.has("nyaucast collection"));
     for (const path of tree.keys()) {
       assert.notMatch(path, /^nyaucast collection/u);

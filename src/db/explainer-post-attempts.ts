@@ -19,11 +19,18 @@ const LastAttemptRow = Schema.Struct({
 
 /**
  * 試行の開始を投稿ごとに原子的に取る。条件は、その投稿の最後の試行で決める
- * （無い、または最後が一時的な失敗なら取る）。1 文の INSERT ... SELECT ... WHERE ... RETURNING id
- * にすることで、条件の評価と INSERT が同じ暗黙トランザクションに入る。戻り行が無ければ None
- * （取れなかった）。取った id はこの戻り値から得て、後から最新の行を読み直さない。
+ * （無い、または最後の結果が `allowedOutcomes` に含まれるなら取る）。`post run` は `["temporary"]`
+ * だけを許し、今すぐ実行はそれに `"permanent"` を加えて失敗の投稿も再び開く（issue「#553 の後の
+ * 前提」）。`succeeded` を許す側は無く、二重 upload を防ぐ排他はどちらの経路でも迂回しない。
+ * 1 文の INSERT ... SELECT ... WHERE ... RETURNING id にすることで、条件の評価と INSERT が
+ * 同じ暗黙トランザクションに入る。戻り行が無ければ None（取れなかった）。取った id はこの戻り値から
+ * 得て、後から最新の行を読み直さない。
  */
-export const acquireAttempt = (postId: number, startedAt: string) =>
+export const acquireAttempt = (
+  postId: number,
+  startedAt: string,
+  allowedOutcomes: ReadonlyArray<AttemptOutcome>,
+) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     return yield* insertReturningId(
@@ -35,7 +42,7 @@ export const acquireAttempt = (postId: number, startedAt: string) =>
                    LEFT JOIN explainer_post_attempt_results r ON r.attempt_id = a.id
                   WHERE a.post_id = ${postId}
                   ORDER BY a.id DESC
-                  LIMIT 1) = 'temporary'
+                  LIMIT 1) IN ${sql.in(allowedOutcomes)}
           RETURNING id`,
     );
   });
