@@ -8,7 +8,7 @@ accepted (2026-07-11) / 改訂 2026-08-02（#185 #113。npm CLI の配布互換�
 
 ## Context
 
-ADR-0001 は当初「runtime は Bun」と定めたが、配布実行モデルは未確定だった。CONTEXT.md の canonical 起動は `npx`/`nlx` 互換の `nyaucast <cmd>` であり、`npx` の bin 実行は Node を前提とするため、「利用者マシンに Bun を必須とするか、出荷物を Node 互換 JS にするか」の決定が必要になった。v0.1.0 の利用者は first-party チャンネルリポのみ（external user は Python 版に留まる）。開発は AI agent が主体で、機械的に強制できない規約はレビュー指摘面になる（ADR-0001 の教訓）。初版はこの前提の下で「Bun 必須配布・ビルドレス TS 直接出荷・bin のみ Node 委譲ランチャ」を採った。
+ADR-0001 は当初「runtime は Bun」と定めたが、配布実行モデルは未確定だった。GLOSSARY.md の canonical 起動は `npx`/`nlx` 互換の `nyaucast <cmd>` であり、`npx` の bin 実行は Node を前提とするため、「利用者マシンに Bun を必須とするか、出荷物を Node 互換 JS にするか」の決定が必要になった。v0.1.0 の利用者は first-party チャンネルリポのみ（external user は Python 版に留まる）。開発は AI agent が主体で、機械的に強制できない規約はレビュー指摘面になる（ADR-0001 の教訓）。初版はこの前提の下で「Bun 必須配布・ビルドレス TS 直接出荷・bin のみ Node 委譲ランチャ」を採った。
 
 ### 改訂の経緯（2026-08-25 / #351）
 
@@ -55,13 +55,13 @@ map #353「開発基盤スクラップアンドビルド」で **bun の完全�
 - dist ビルドの破綻は `prepack` が publish 前に検出する — 「静かに進行する事故」にはならない
 - 改訂時点の実装（Bun 委譲 bin ランチャ・`bun run check`・flake 供給・npm 例外を使う統合テスト）は、後続の実装 issue 列（#369〜#373）で本改訂へ追従済み
 - Stryker は監査ツールであり check の直列チェーンに入れない。運用の正書は `docs/agents/mutation-audit.md`
-- 用語の正書は CONTEXT.md — 「Node 互換表面」「mutation testing」「改変拒否契約テスト」
+- 用語の正書は GLOSSARY.md — 「Node 互換表面」「mutation testing」「改変拒否契約テスト」
 - Trusted Publisher は stage publish のみを許可し（Allow npm publish なし）、パッケージ設定は 2FA 必須・bypass 2FA token 禁止とする。CI 単独では公開できず、長期 token も存在しない（#448）
 - **新規パッケージの初回作成は pnpm で成立しない**（2026-10-01 実測、pnpm 12.2.1）: `pnpm stage publish` は未存在パッケージで placeholder（`0.0.0-stage`）を作らず 404、`pnpm publish` / `pnpm login` のブラウザ認証はパスキー承認の完了を検知せず `ERR_PNPM_WEBAUTH_TIMEOUT`。Trusted Publisher はパッケージ存在後にしか登録できないため、`nyaucast@0.0.2` は `pnpm pack` の tarball をリポジトリ外から `npm publish` して作成した。これは Considered Options の「OIDC 登録でつまずいた場合のみ npm CLI へ退避」の適用であり、継続的な例外ではない
 
 ## Related
 
-- ADR-0001（runtime は Node / 境界で変換）/ CONTEXT.md「nyaucast」「first-party (下流)」「external user」「Node 互換表面」「mutation testing」「改変拒否契約テスト」
+- ADR-0001（runtime は Node / 境界で変換）/ GLOSSARY.md「nyaucast」「first-party (下流)」「external user」「Node 互換表面」「mutation testing」「改変拒否契約テスト」
 - wayfinder map #353「開発基盤スクラップアンドビルド」とその ticket #354（ツールチェーン供給 — Node 版管理の出所）/ #363（bun 撤去の範囲と後継 — 決定 1〜5 改訂の出所）/ #364（Node type stripping 実測）/ #365（pnpm 事実調査）/ #362（Vite+ 実態調査）。findings は各 issue の解決コメントにある
 - wayfinder map #343「Stryker mutation testing 導入」（2026-08-25 改訂の出所。#345 / #349 / #351）
 - issue #368（本改訂の docs 先行反映）/ `docs/agents/mutation-audit.md`（mutation 監査の運用）

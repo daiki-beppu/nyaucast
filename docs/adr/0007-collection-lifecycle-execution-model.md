@@ -12,9 +12,9 @@ ADR-0006 で takt の不採用が決まり、**「区間を歩く主体」が空
 
 同時に、マップ issue #57 の子チケット #60 / #61 / #62 で確定した決定群は **takt 採否と独立に有効**であるにもかかわらず、issue の解決コメントにしか存在せず、実装チケット（#1 / #31 / #32 / #36 ほか）が参照すべき正本が無い。#60 は「原則は採否 ADR に書く」と明示的に申し送っている。
 
-さらに CONTEXT.md の `workflow tool`（「人間の GO/NO-GO 判断ゲートで区切られた粗粒度の MCP tool。tool 内部で状態管理し、resume 可能」）は、#61（進捗は実体行から導出・再開は頭から再実行）および #62（agent が渡せる値を `collection_id` 1 個まで削る）と食い違ったまま残っていた。
+さらに GLOSSARY.md の `workflow tool`（「人間の GO/NO-GO 判断ゲートで区切られた粗粒度の MCP tool。tool 内部で状態管理し、resume 可能」）は、#61（進捗は実体行から導出・再開は頭から再実行）および #62（agent が渡せる値を `collection_id` 1 個まで削る）と食い違ったまま残っていた。
 
-本 ADR はこの 3 つを一度に解決する — 空席を埋め、決定群に正本を与え、CONTEXT.md との食い違いを解消する。
+本 ADR はこの 3 つを一度に解決する — 空席を埋め、決定群に正本を与え、GLOSSARY.md との食い違いを解消する。
 
 ## Decision
 
@@ -22,7 +22,7 @@ ADR-0006 で takt の不採用が決まり、**「区間を歩く主体」が空
 
 MCP tool は **primitive tool 1 層 + 読み口**で構成する。粗粒度の `collection.plan` / `collection.produce` / `collection.publish` という **MCP tool は存在しない**。
 
-区間を歩くのは **knowledge codec を読んだ agent**（Claude Code / Codex 等）であり、agent が primitive tool を順に呼ぶ。CONTEXT.md の `workflow tool` は廃止し、`MCP tool` の「2 層で構成される」記述もあわせて改訂する。
+区間を歩くのは **knowledge codec を読んだ agent**（Claude Code / Codex 等）であり、agent が primitive tool を順に呼ぶ。GLOSSARY.md の `workflow tool` は廃止し、`MCP tool` の「2 層で構成される」記述もあわせて改訂する。
 
 ### 1. 関門は tool の事前条件が持つ（#60）
 
@@ -75,7 +75,7 @@ nyaucast video publish <id>   # 叩いた事実が gate='publish' の承認（pr
 
 **読み口は保存済みの事実と、そこから決定的に導出できる状態を返す。** たとえば最新の承認・却下記録から導出する `terminated` や、実体行と承認記録から導出する承認待ち gate は read model の責務である。一方、次に呼ぶ primitive tool、区間を歩く手順、推奨行動は返さない。これら順序と行動の知識は knowledge codec の領分である。
 
-### 7. 区間の割り当ては CONTEXT.md の lifecycle 文字列が正（#61）
+### 7. 区間の割り当ては GLOSSARY.md の lifecycle 文字列が正（#61）
 
 ```
 TTP 収集・分析 → 企画 = plan
@@ -83,7 +83,7 @@ TTP 収集・分析 → 企画 = plan
   →[ゲート②]→  音源生成 → MIX/マスタリング → 動画生成 → upload → 公開後運用 = publish
 ```
 
-CONTEXT.md の `workflow tool` 定義（`produce` = 音源→動画→サムネ / `publish` = upload→公開後運用）は誤りであり、廃止とあわせて解消する。
+GLOSSARY.md の `workflow tool` 定義（`produce` = 音源→動画→サムネ / `publish` = upload→公開後運用）は誤りであり、廃止とあわせて解消する。
 
 ## Why
 
@@ -96,7 +96,7 @@ CONTEXT.md の `workflow tool` 定義（`produce` = 音源→動画→サムネ 
 
 ## Considered Options
 
-- **workflow tool を維持し、core が区間を決定論的に回す** — CONTEXT.md の現行記述を最小の修正（区間割りの訂正）で維持できる。しかし LLM 判定が要る箇所（企画・サムネ品質）のたびに区間が分断され、`plan` と `produce` は通しで回せない。加えて #61 が代償として受け入れた「再開のたび agent が全 step を歩き直す LLM トークン代」という記述の前提が崩れる。不採用
+- **workflow tool を維持し、core が区間を決定論的に回す** — GLOSSARY.md の現行記述を最小の修正（区間割りの訂正）で維持できる。しかし LLM 判定が要る箇所（企画・サムネ品質）のたびに区間が分断され、`plan` と `produce` は通しで回せない。加えて #61 が代償として受け入れた「再開のたび agent が全 step を歩き直す LLM トークン代」という記述の前提が崩れる。不採用
 - **ハイブリッド（LLM 判定を含まない `publish` だけ workflow tool 化）** — 決定論的に回せるところは回す案。しかし #62 は publish の入口を「agent が `collection_id` 1 個だけ渡す」前提で設計済みで、形はすでにほぼ同じである。2 つの駆動モデルを codec と実装の両方が覚えるコストに見合わない。不採用
 - **CLI が Claude Code を subprocess spawn する** — 人間の操作が 1 回で済み、非エンジニア向けの導線が単純になる。しかし #64 で経路 B（nyaucast が takt を spawn）を落とした理由（ADR-0001 の adapter に厚すぎる / どの agent CLI を使うかを nyaucast が決めることになる）がそのまま返る。さらに agent 自身も Bash で同じ CLI を叩けるため、**agent が自分で承認して自分を起動する自己ループ**が開き、Decision 3 の脅威モデルが崩れる。不採用
 - **`collection.next` 的な tool が「次にやるべきこと」を返す** — 安全性は落ちない（agent が無視しても tool が throw する）。しかし「どの順に何をやるか」は knowledge codec の領分であり、tool 側にも置くと ADR-0002 が警戒した判断ロジックの二重化が起きる。不採用（#61）
@@ -105,7 +105,7 @@ CONTEXT.md の `workflow tool` 定義（`produce` = 音源→動画→サムネ 
 
 ## Consequences
 
-- **CONTEXT.md の 8 項目を改訂する** — `MCP tool`（2 層 → 1 層 + 読み口）/ `workflow tool`（廃止し `primitive tool` の _Avoid_ へ）/ `primitive tool`（「workflow tool が内部で呼ぶ」を削除し、冪等規約を追記）/ **`ゲート承認`（新規）** / `knowledge codec`（役割の格上げ）/ `adapter`（CLI = 人間が直接触る唯一の面）/ `tracer`（指す先を plan 区間へ）/ `collection lifecycle`（「各区間が workflow tool に対応する」→ ゲート承認で区切る）
+- **GLOSSARY.md の 8 項目を改訂する** — `MCP tool`（2 層 → 1 層 + 読み口）/ `workflow tool`（廃止し `primitive tool` の _Avoid_ へ）/ `primitive tool`（「workflow tool が内部で呼ぶ」を削除し、冪等規約を追記）/ **`ゲート承認`（新規）** / `knowledge codec`（役割の格上げ）/ `adapter`（CLI = 人間が直接触る唯一の面）/ `tracer`（指す先を plan 区間へ）/ `collection lifecycle`（「各区間が workflow tool に対応する」→ ゲート承認で区切る）
 - **knowledge codec が v0.1 の中心成果物になる。** 記述要素は 5 → 7 に増える（#63 が特定した残余のうち「人間の却下時の戻り経路」と「コスト見積り」が追加。前者は Decision 3 により却下が次の起動になる以上、codec しか持てない）
 - **issue #34 / #35（workflow tool の実装）は要件がすべて他へ分散するため close する。** 受け皿の無い「承認記録 + 読み口 + CLI ゲートコマンド」は新規チケットとして起票する
 - **すべての primitive tool に冪等性 + 明示的な再生成手段が課される**（Decision 4）。既存の tool チケット群はこの規約を前提に再スコープする
@@ -117,5 +117,5 @@ CONTEXT.md の `workflow tool` 定義（`produce` = 音源→動画→サムネ 
 ## Related
 
 - ADR-0001（thin architecture / adapter に業務ロジックを書かない）/ ADR-0002（core に LLM を入れない）/ ADR-0006（takt を製品の orchestration に採用しない）
-- CONTEXT.md「MCP tool」「primitive tool」「knowledge codec」「adapter」「collection lifecycle」「データ 4 分類」「read model」
+- GLOSSARY.md「MCP tool」「primitive tool」「knowledge codec」「adapter」「collection lifecycle」「データ 4 分類」「read model」
 - マップ issue #57 と子チケット #60（決定的境界）/ #61（状態の SSOT）/ #62（誤公開ガード）/ #63（分解試作）/ #66（本 ADR の執筆）

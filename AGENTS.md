@@ -4,7 +4,7 @@ YouTube チャンネル運営を自動化するツールキット。skill に蓄
 
 **旧リポ (00-automation) の Python 版の移植ではない。** Python 実装との差分を根拠にした設計・レビューをしない（経緯: 旧リポ ADR-0021）。
 
-正書はそれぞれ別にある — 用語は `CONTEXT.md`、決定は `docs/adr/`、agent 運用は `docs/agents/`。このファイルには**それらを読む前に踏み抜く落とし穴**だけを置く。agent 向けの指示はこの `AGENTS.md` 1 本だけで管理し、`CLAUDE.md` は置かない（Claude Code は `CLAUDE.md` が無いとき `AGENTS.md` を読み、Codex も同じファイルを読む）。
+正書はそれぞれ別にある — 用語は `GLOSSARY.md`、決定は `docs/adr/`、agent 運用は `docs/agents/`。このファイルには**それらを読む前に踏み抜く落とし穴**だけを置く。agent 向けの指示はこの `AGENTS.md` 1 本だけで管理し、`CLAUDE.md` は置かない（Claude Code は `CLAUDE.md` が無いとき `AGENTS.md` を読み、Codex も同じファイルを読む）。
 
 ## 環境
 
@@ -27,7 +27,7 @@ YouTube チャンネル運営を自動化するツールキット。skill に蓄
 
 ## データ
 
-- SSOT は `CONTEXT.md` の「データ 4 分類」で機械的に決まる。**設定 JSON と YouTube 上の実状態は local store のミラーであって SSOT ではない** — 読み取りは read model に一本化する
+- SSOT は `GLOSSARY.md` の「データ 4 分類」で機械的に決まる。**設定 JSON と YouTube 上の実状態は local store のミラーであって SSOT ではない** — 読み取りは read model に一本化する
 - nyaucast が読み書きするファイルはすべて JSON。YAML は使わない（外部ツールが所有するファイルは除く）
 
 ## 開発フロー
@@ -47,5 +47,5 @@ YouTube チャンネル運営を自動化するツールキット。skill に蓄
 
 - `docs/agents/issue-tracker.md` — GitHub Issues の操作、takt workflow の使い分け、self-contained issue の起票規約
 - `docs/agents/triage-labels.md` — triage ロール → 実ラベル名の対応表
-- `docs/agents/domain.md` — 探索前に読むもの（`CONTEXT.md` / ADR）と、ADR 矛盾の扱い
+- `docs/agents/domain.md` — 探索前に読むもの（`GLOSSARY.md` / ADR）と、ADR 矛盾の扱い
 - `docs/agents/mutation-audit.md` — Stryker mutation 監査の運用（実行の節目・レポートの扱い・発見の issue 化）
