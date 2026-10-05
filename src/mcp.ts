@@ -92,13 +92,20 @@ import type { VideoIds } from "./videos/video-ids.ts";
 
 /**
  * MCP の initialize で client に返す道案内。512 文字以内に、codec の名前とどの区間で読むかだけを書く。
- * 手順そのものは codec の領分で、ここには書かない（ADR-0010 決定 6）。
+ * 手順そのものは codec の領分で、ここには書かない（ADR-0010 決定 6）。tool の一覧と同じく、
+ * チャンネルの種類ごとに持ち、entry point が起動時に選ぶ（#645）。
  */
-export const nyaucastInstructions =
+export const explainerInstructions =
   "Before planning or producing an explainer video, read the knowledge codec explainer-lifecycle " +
   "(skills/explainer-lifecycle/SKILL.md in the nyaucast package, linked from .agents/skills). " +
   "Read it for the plan section (topic, plan, thumbnails, before the plan gate) and the produce " +
   "section (script, shorts, diagram, narration, render, preview).";
+
+/** BGM 動画の codec はまだ無い（v0.2 以降）。codec の名前は出さず、公開する tool の範囲だけを書く。 */
+export const collectionInstructions =
+  "This channel makes BGM collection videos. No knowledge codec ships for them yet. " +
+  "The tools cover the plan (video_write_plan, video_check_title) and reading a collection " +
+  "video's status (video_status).";
 
 // registry は置かない。tool 一覧は、チャンネルの種類ごとに、ここで import した tool を並べるだけ（どちらを公開するかは entry point が決める）。
 export const ExplainerToolkit = Toolkit.make(

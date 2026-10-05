@@ -28,7 +28,7 @@ ADR-0007 で workflow tool を廃止したため、区間を歩く手順を持�
 3. **下流リポは codec を相対 symlink で読み、symlink をコミットする。** `.agents/skills/<codec>` が `node_modules/nyaucast/skills/<codec>` を指し、`.claude/skills/<codec>` は `.agents/skills/<codec>` を指す（RFC #2323 と同じ形）。symlink は一度きりの準備として手で作る。skills-npm や `skills sync` などの利用側ツールを使うかどうかは下流リポが選ぶことで、nyaucast はそれに依存しない
 4. **1 codec = 1 skill とする。** SKILL.md は入口（トリガー発話、区間の地図、ゲートの判断基準、作り直しの手順）にとどめ、区間ごとの手順は `references/` に分けて必要なときだけ読ませる。agent は区間単位で起動されるので（ADR-0007 決定 3）、分け方を起動の単位にそろえる
 5. **codec 独自の版、agent 向けの changelog、起動時の版比べは持たない。** 決定 1〜3 で、codec と MCP tool は同じ tarball の同じ版から来る
-6. **MCP server の `instructions` に codec への道案内を置く。** 512 文字以内で、codec の名前と、どの区間で読むかだけを書く。手順そのものは書かない（順序の知識は codec の領分。ADR-0007 決定 6）
+6. **MCP server の `instructions` に codec への道案内を置く。** 512 文字以内で、codec の名前と、どの区間で読むかだけを書く。手順そのものは書かない（順序の知識は codec の領分。ADR-0007 決定 6）。`instructions` は tool の一覧と同じくチャンネルの種類ごとに持ち、entry point が起動時に選ぶ。codec の無い種類（v0.1 の BGM 動画）は、codec の名前を出さず、公開する tool の範囲だけを書く（改訂 2026-10-05 / #645）
 7. **tool description と codec の線引き。** tool description はその tool 単体の WHAT と隣接する tool への誘導を持ち、codec は WHEN と、複数の tool にまたがる HOW を持つ。不可逆な操作（投稿・公開）の制約だけは両方にわざと重ねて書く。codec を読んでいない agent が tool を直接叩いても、安全側に倒すためである
 8. **codec は `pnpm run check` の静的テストで検証する。** codec が名前を出す MCP tool と CLI コマンドが実在すること、frontmatter が規定の形であることを確かめる。手順の良し悪しは dogfood で確かめる
 

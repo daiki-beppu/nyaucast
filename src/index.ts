@@ -23,7 +23,8 @@ import {
   CollectionToolkit,
   ExplainerToolHandlers,
   ExplainerToolkit,
-  nyaucastInstructions,
+  collectionInstructions,
+  explainerInstructions,
 } from "./mcp.ts";
 import { ThumbnailFiles } from "./thumbnails/thumbnail-files.ts";
 import { StdinTerminal } from "./videos/stdin-terminal.ts";
@@ -67,11 +68,12 @@ const withMcpServices = <A, E, R>(handlers: Layer.Layer<A, E, R>) =>
 const mcpServerOf = <Tools extends Record<string, Tool.Any>, E, R>(
   toolkit: Toolkit.Toolkit<Tools>,
   handlers: Layer.Layer<Tool.HandlersFor<Tools>, E, R>,
+  instructions: string,
 ) =>
   McpServer.toolkit(toolkit).pipe(
     Layer.provide(
       McpServer.layerStdio({
-        instructions: nyaucastInstructions,
+        instructions,
         name: "nyaucast",
         protocols: [McpProtocol.v2025_06_18],
         version,
@@ -80,8 +82,16 @@ const mcpServerOf = <Tools extends Record<string, Tool.Any>, E, R>(
     Layer.provide(NodeStdio.layer),
   );
 
-const explainerMcpServer = mcpServerOf(ExplainerToolkit, ExplainerToolHandlers);
-const collectionMcpServer = mcpServerOf(CollectionToolkit, CollectionToolHandlers);
+const explainerMcpServer = mcpServerOf(
+  ExplainerToolkit,
+  ExplainerToolHandlers,
+  explainerInstructions,
+);
+const collectionMcpServer = mcpServerOf(
+  CollectionToolkit,
+  CollectionToolHandlers,
+  collectionInstructions,
+);
 
 // 公開する tool は、起動したチャンネルの種類で決まる。種類は起動時にここで 1 回だけ読む。
 // 設定の無いチャンネルでは種類を決められないので、tools/list を答える前に起動が失敗する。
