@@ -157,6 +157,20 @@ describe("nyaucast mcp", () => {
     );
   });
 
+  test("does not point a collection channel at the explainer codec (#645)", async () => {
+    await withMcpServer(
+      "nyaucast-mcp-instructions-collection-",
+      collectionConfig,
+      async (_channelRoot, _client, initialized) => {
+        const instructions = initialized["instructions"];
+        expect(typeof instructions).toBe("string");
+        expect([...String(instructions)].length).toBeLessThanOrEqual(512);
+        expect(instructions).not.toContain("explainer-lifecycle");
+        expect(instructions).not.toContain("explainer");
+      },
+    );
+  });
+
   test("answers one tool call from the startup working directory", async () => {
     await withMcpServer("nyaucast-mcp-call-", collectionConfig, async (channelRoot, client) => {
       client.writeMessage({
