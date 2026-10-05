@@ -10,6 +10,7 @@ import { storeToken } from "../../test/publish-helpers.ts";
 import { callTool, withToolChannel } from "../../test/tool-helpers.ts";
 import {
   fakeYouTubeHttp,
+  googleErrorResponse,
   jsonUploadResponse,
   locationResponse,
   youtubeClientLayer,
@@ -386,6 +387,46 @@ describe("nyaucast post run: performs the publication check in the same executio
           assert.strictEqual(outcome._tag, "Success");
           assert.strictEqual(fixture.calls[0]?.method, "GET"); // 公開の確認が先。
           assert.strictEqual(fixture.calls[1]?.method, "POST"); // due の投稿の実行が後。
+        }),
+      ),
+  );
+});
+
+describe("runPublicationChecks: a failed videos.list for one post does not stop the others", () => {
+  it.effect(
+    "reports check_failed for that post without recording any fact, and still checks the next post",
+    () =>
+      inChannel("nyaucast-publication-check-isolated-failure-", () =>
+        Effect.gen(function* () {
+          yield* prepareVideoFacts;
+          const failingPostId = yield* insertReservedPost("yt-video-1");
+          const publicPostId = yield* insertReservedPost("yt-video-2");
+          yield* setClock(withinWindow);
+          const fixture = fakeYouTubeHttp([
+            googleErrorResponse(503, ["backendError"]),
+            jsonUploadResponse({
+              items: [{ status: { privacyStatus: "public", uploadStatus: "processed" } }],
+            }),
+          ]);
+
+          const outcomes = yield* runPublicationChecks(toleranceMinutes).pipe(
+            Effect.provide(youtubeClientLayer(fixture.http)),
+          );
+
+          assert.deepStrictEqual(
+            outcomes.map((outcome) => [outcome.kind, outcome.postId]),
+            [
+              ["check_failed", failingPostId],
+              ["confirmed", publicPostId],
+            ],
+          );
+          assert.strictEqual(fixture.calls.length, 2);
+          assert.isFalse((yield* readPostTerminalFacts(failingPostId)).published);
+          assert.deepStrictEqual(yield* statusOf(failingPostId), {
+            remoteId: "yt-video-1",
+            status: "reserved",
+          });
+          assert.isTrue((yield* readPostTerminalFacts(publicPostId)).published);
         }),
       ),
   );

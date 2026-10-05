@@ -40,7 +40,8 @@ const describeOutcome = (outcome: DuePostOutcome): string => {
 
 // 公開の確認の 1 行(issue 決定「公開の確認」)。次に何をすべきかは書かない(ADR-0009 決定 14)。
 const describePublicationCheckOutcome = (outcome: PublicationCheckOutcome): string =>
-  `${outcome.kind}: post ${outcome.postId}`;
+  `${outcome.kind}: post ${outcome.postId}` +
+  (outcome.kind === "check_failed" ? ` (${outcome.failure})` : "");
 
 // 取り消しの 1 行。結果の無い試行を持つ投稿だけ、リモートに残っているかもしれないことを付記する(AC2)。
 const describeCancelOutcome = (outcome: CancelPostOutcome): string =>

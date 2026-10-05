@@ -48,7 +48,8 @@ export type PublicationCheckOutcome =
   | { readonly kind: "confirmed"; readonly postId: number }
   | { readonly kind: "unconfirmed"; readonly postId: number }
   | { readonly kind: "upload_failed"; readonly postId: number }
-  | { readonly kind: "upload_rejected"; readonly postId: number };
+  | { readonly kind: "upload_rejected"; readonly postId: number }
+  | { readonly kind: "check_failed"; readonly postId: number; readonly failure: string };
 
 // selectPublicationCheckTargets が reserved(= succeeded の試行を持つ)だけを選ぶため、remoteId は
 // 必ず入っている(derivePostState の契約。post-state.ts)。無ければ契約違反(defect)。
@@ -69,9 +70,9 @@ const resolveChannel = (platform: Platform): Effect.Effect<string, never, Declar
  * `videos.list` の応答から、公開の確認の分類を導く（issue 決定「public でない結果は積まない」）。
  * 事実の記録（副作用）とは分離し、純粋な判定だけを行う。
  */
-const classifyVideoStatus = (
-  status: YouTubeVideoStatus | undefined,
-): PublicationCheckOutcome["kind"] => {
+type CheckedKind = Exclude<PublicationCheckOutcome["kind"], "check_failed">;
+
+const classifyVideoStatus = (status: YouTubeVideoStatus | undefined): CheckedKind => {
   if (status === undefined) return "unconfirmed";
   if (status.privacyStatus === "public") return "confirmed";
   if (status.uploadStatus === "rejected") return "upload_rejected";
@@ -82,7 +83,7 @@ const classifyVideoStatus = (
 /** 分類の結果に応じて、公開済みまたは upload の拒否/失敗の事実を積む。それ以外は何も積まない。 */
 const recordClassification = (
   postId: number,
-  kind: PublicationCheckOutcome["kind"],
+  kind: CheckedKind,
   recordedAt: string,
 ): Effect.Effect<void, never, SqlClient.SqlClient> => {
   if (kind === "confirmed") return recordPublication(postId, recordedAt);
@@ -120,19 +121,29 @@ const checkPublication = (
 /**
  * 時刻が来た投稿を実行する CLI が、同じ実行の中で呼ぶ公開の確認（issue 決定「公開の確認」。
  * ADR-0009 決定 13）。予定時刻を過ぎた予約済みの YouTube の投稿を 1 件ずつ照会する。
+ * 照会の失敗は投稿ごとの check_failed として返し、全体としては失敗しない。
  */
 export const runPublicationChecks = (
   toleranceMinutes: number,
 ): Effect.Effect<
   ReadonlyArray<PublicationCheckOutcome>,
-  | AccountsDeclarationInvalid
-  | CredentialStoreFailure
-  | YouTubeClientFailure
-  | YouTubeVideoStatusUnreadable,
+  AccountsDeclarationInvalid | CredentialStoreFailure,
   CredentialStore | DeclaredAccounts | SqlClient.SqlClient | VideoFiles | YouTubeClient
 > =>
   Effect.gen(function* () {
     const records = yield* readAllPostRecords;
     const targets = yield* selectPublicationCheckTargets(records, toleranceMinutes);
-    return yield* Effect.forEach(targets, checkPublication);
+    // 照会の失敗はその投稿の 1 行（check_failed）に閉じ、事実は積まない。1 件の失敗で残りの照会と
+    // 同じ実行の due の投稿の実行を止めない（投稿は reserved のまま、次の実行で照会し直す）。
+    return yield* Effect.forEach(targets, (entry) =>
+      checkPublication(entry).pipe(
+        Effect.catch((failure) =>
+          Effect.succeed<PublicationCheckOutcome>({
+            failure: failure._tag,
+            kind: "check_failed",
+            postId: entry.record.id,
+          }),
+        ),
+      ),
+    );
   });
