@@ -4,7 +4,7 @@ How the engineering skills should consume this repo's domain documentation when 
 
 ## Before exploring, read these
 
-- **`CONTEXT.md`** at the repo root
+- **`GLOSSARY.md`** at the repo root
 - **`docs/adr/`** — read ADRs that touch the area you're about to work in.
   - 改訂を重ねた ADR（ADR-0009 など）は長い。`grep -n '^[0-9]*\. \*\*' <ADR>` で決定の見出しと行番号を先に引き、必要な決定の範囲だけ読む
 
@@ -16,14 +16,14 @@ Single-context repo (this repo):
 
 ```
 /
-├── CONTEXT.md          ← グロッサリ（用語の正書。実装詳細は書かない）
+├── GLOSSARY.md          ← グロッサリ（用語の正書。実装詳細は書かない）
 ├── docs/adr/          ← 決定の記録（NNNN-<slug>.md）
 └── src/
 ```
 
 ## Use the glossary's vocabulary
 
-When your output names a domain concept (in an issue title, a refactor proposal, a hypothesis, a test name), use the term as defined in `CONTEXT.md`. Don't drift to synonyms the glossary explicitly avoids.
+When your output names a domain concept (in an issue title, a refactor proposal, a hypothesis, a test name), use the term as defined in `GLOSSARY.md`. Don't drift to synonyms the glossary explicitly avoids.
 
 If the concept you need isn't in the glossary yet, that's a signal — either you're inventing language the project doesn't use (reconsider) or there's a real gap (note it for `/domain-modeling`).
 

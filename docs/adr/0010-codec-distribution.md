@@ -8,7 +8,7 @@ accepted (2026-10-02) / 改訂 2026-10-04（#587。ADR-0011 でリポを公開�
 
 ADR-0007 で workflow tool を廃止したため、区間を歩く手順を持つのは knowledge codec だけになった。v0.1 では `explainer-lifecycle` と `distribution` の 2 本を書く（ADR-0009）。この 2 本をリポのどこに置き、下流のチャンネルリポで Claude Code と Codex にどう読ませるかが決まっていなかった。
 
-旧 map では「skills CLI でリポを直指定してグローバルに入れ、起動時に版を比べて警告する」と決めていた（#20）。ただし、この決定は ADR にも CONTEXT.md にも入っていない。
+旧 map では「skills CLI でリポを直指定してグローバルに入れ、起動時に版を比べて警告する」と決めていた（#20）。ただし、この決定は ADR にも GLOSSARY.md にも入っていない。
 
 一番避けたい事故は、codec と MCP tool の版がずれて、**codec が存在しない tool を呼ぶ**ことである。
 
@@ -45,7 +45,7 @@ ADR-0007 で workflow tool を廃止したため、区間を歩く手順を持�
 - **Claude Code plugin の npm source で、skills と MCP 設定を一緒に配る**: 採らない。pnpm の lockfile では plugin の依存が入らないので、依存を bundle するか `npm-shrinkwrap.json` を同梱する必要がある。外部 source の plugin は各自が install しなければならず、Codex で stdio MCP が動くかも確認できていない
 - **MCP の prompts / resources で配る**: 採らない。Codex に prompts の実装が無く、resources は agent が自分から読まない
 - **Hono の方式（別リポに skill を置き、plugin marketplace と skills CLI で配る）**: 採らない。ライブラリと skill の版が連動しない構造で、避けたい事故がそのまま起こりうる
-- **区間ごとに別の skill に分ける**: 採らない。CONTEXT.md の「codec は 6 本」という数え方と食い違う。入口が分かれると、ゲートの判断基準と作り直しの手順の置き場も割れる
+- **区間ごとに別の skill に分ける**: 採らない。GLOSSARY.md の「codec は 6 本」という数え方と食い違う。入口が分かれると、ゲートの判断基準と作り直しの手順の置き場も割れる
 - **LLM に codec を読ませて手順をたどらせる eval**: v0.1 では採らない。結果がぶれるので、CI の裁定者にできない
 
 ## Consequences
@@ -55,7 +55,7 @@ ADR-0007 で workflow tool を廃止したため、区間を歩く手順を持�
   - pnpm の node_modules の構造の下で、相対 symlink が解決すること
   - install の前（リンク先が無い状態）で、Claude Code と Codex がどう振る舞うか
 - 利用側ツール（`skills sync` など）が標準として固まったら、下流リポは手作りの symlink をそれに置き換えてよい。提供側の配置（`skills/<名前>/SKILL.md`）はどのツールからも見つかるので、変えなくてよい
-- CONTEXT.md の `knowledge codec` に、配り方を 1 文で加えた
+- GLOSSARY.md の `knowledge codec` に、配り方を 1 文で加えた
 
 ## Related
 

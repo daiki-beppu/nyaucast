@@ -2,7 +2,7 @@ import { defineConfig } from "vite-plus";
 
 export default defineConfig({
   fmt: {
-    ignorePatterns: ["CONTEXT.md", "docs/agents/**", "docs/research/**", "prototype/**"],
+    ignorePatterns: ["GLOSSARY.md", "docs/agents/**", "docs/research/**", "prototype/**"],
     proseWrap: "preserve",
   },
   lint: {

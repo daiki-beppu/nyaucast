@@ -2,7 +2,7 @@
 
 YouTube チャンネル運営を自動化するツールキット。agent (Claude Code / Codex) が直接呼べる型付き MCP tool として、チャンネル運営のワークフロー知識を提供する。
 
-- 用語集: [CONTEXT.md](https://github.com/daiki-beppu/nyaucast/blob/main/CONTEXT.md)
+- 用語集: [GLOSSARY.md](https://github.com/daiki-beppu/nyaucast/blob/main/GLOSSARY.md)
 - アーキテクチャ規約: [docs/adr/0001-thin-architecture.md](https://github.com/daiki-beppu/nyaucast/blob/main/docs/adr/0001-thin-architecture.md)
 - 出自: [00-automation ADR-0021](https://github.com/daiki-beppu/youtube-automation/blob/main/docs/adr/0021-separate-repo-restart.md)（Python 版からの転換の経緯）
 

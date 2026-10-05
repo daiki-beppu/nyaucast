@@ -8,7 +8,7 @@ accepted (2026-07-11) / 改訂 2026-10-02（#475。DB 層を Drizzle から `@ef
 
 ## Context
 
-local store はチャンネルリポごとの `<CHANNEL_DIR>/data/local.db`（libSQL embedded）であり、DB は first-party 5 リポ前後に分散して存在する。nyaucast のバージョンアップごとに全 DB の schema を追従させる必要があり、適用方式（自動 / 明示コマンド）の決定が要る。マイグレーション失敗は CONTEXT.md の critical regression ②「データ破壊（analytics 履歴 / collection 成果物）」に直結する。主な呼び手は agent であり、人間の注意力を前提にした運用は成立しない。
+local store はチャンネルリポごとの `<CHANNEL_DIR>/data/local.db`（libSQL embedded）であり、DB は first-party 5 リポ前後に分散して存在する。nyaucast のバージョンアップごとに全 DB の schema を追従させる必要があり、適用方式（自動 / 明示コマンド）の決定が要る。マイグレーション失敗は GLOSSARY.md の critical regression ②「データ破壊（analytics 履歴 / collection 成果物）」に直結する。主な呼び手は agent であり、人間の注意力を前提にした運用は成立しない。
 
 ## Decision
 
@@ -39,4 +39,4 @@ local store はチャンネルリポごとの `<CHANNEL_DIR>/data/local.db`（li
 
 ## Related
 
-- ADR-0001（DB は libSQL + `@effect/sql-libsql`。2026-10-02 / #475 まで Drizzle）/ ADR-0003（配布モデル。SQL 同梱は `files` 制御に依存）/ CONTEXT.md「local store」「critical regression」「データ 4 分類」/ issue #1（tracer）
+- ADR-0001（DB は libSQL + `@effect/sql-libsql`。2026-10-02 / #475 まで Drizzle）/ ADR-0003（配布モデル。SQL 同梱は `files` 制御に依存）/ GLOSSARY.md「local store」「critical regression」「データ 4 分類」/ issue #1（tracer）

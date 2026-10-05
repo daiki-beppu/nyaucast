@@ -6,7 +6,7 @@ Stryker（<https://stryker-mutator.io/>）を監査ツールとして運用す�
 
 - **監査ツールであってゲートではない。** mutation score を出し、surviving mutant（テストが殺せなかった変異）からテストの穴を発見して issue 化する。score 閾値で CI を落とさない — CI 常設ゲート化の再評価は、監査運用の実測データが出た後の別 effort
 - `pnpm run check` の直列チェーンに入れない。ゲート集合の定義は `package.json` の check script だけが持つ
-- 用語は CONTEXT.md — 「mutation testing」（本書の対象）と「改変拒否契約テスト」（別物・旧称 mutation test）を混同しない
+- 用語は GLOSSARY.md — 「mutation testing」（本書の対象）と「改変拒否契約テスト」（別物・旧称 mutation test）を混同しない
 
 ## 実行
 

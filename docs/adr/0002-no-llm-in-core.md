@@ -8,7 +8,7 @@ accepted (2026-07-10) / 改訂 2026-07-29（ADR-0007 Decision 0 に合わせ、t
 
 ## Context
 
-tracer となる plan 区間の設計で「企画候補のテーマ案を誰が生成するか」が問われた。primitive tool 内部で LLM API を呼んで文言まで生成する案と、決定的ロジックに留める案がある。nyaucast の MCP tool は agent (Claude Code 等) から呼ばれる側であり、WHEN/HOW の知識は knowledge codec が agent に提供する構造（CONTEXT.md「MCP tool」「knowledge codec」）。
+tracer となる plan 区間の設計で「企画候補のテーマ案を誰が生成するか」が問われた。primitive tool 内部で LLM API を呼んで文言まで生成する案と、決定的ロジックに留める案がある。nyaucast の MCP tool は agent (Claude Code 等) から呼ばれる側であり、WHEN/HOW の知識は knowledge codec が agent に提供する構造（GLOSSARY.md「MCP tool」「knowledge codec」）。
 
 ## Decision
 
@@ -32,5 +32,5 @@ tracer となる plan 区間の設計で「企画候補のテーマ案を誰が�
 
 ## Related
 
-- ADR-0001（薄いアーキテクチャ規約）/ CONTEXT.md「MCP tool」「knowledge codec」「primitive tool」/ issue #1 (tracer)
-- ADR-0007（collection lifecycle の実行モデル）— 本 ADR の原則が「区間を歩くのは core ではなく codec を読んだ agent」という帰結を生んだ。CONTEXT.md「workflow tool」は ADR-0007 で廃止済み
+- ADR-0001（薄いアーキテクチャ規約）/ GLOSSARY.md「MCP tool」「knowledge codec」「primitive tool」/ issue #1 (tracer)
+- ADR-0007（collection lifecycle の実行モデル）— 本 ADR の原則が「区間を歩くのは core ではなく codec を読んだ agent」という帰結を生んだ。GLOSSARY.md「workflow tool」は ADR-0007 で廃止済み

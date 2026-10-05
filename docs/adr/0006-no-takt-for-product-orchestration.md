@@ -59,7 +59,7 @@ accepted (2026-07-27)
 ## Consequences
 
 - **facets / workflow YAML の本執筆・実装は消滅する。** マップ #57 の Out of scope へ移した
-- **現行設計にそのまま戻るのではない。** #60 / #61 / #62 で確定した実行モデルは takt 採否と独立に有効であり、これを織り込んだ形を ADR-0007 が定める。特に CONTEXT.md の `workflow tool` は ADR-0007 で廃止される
+- **現行設計にそのまま戻るのではない。** #60 / #61 / #62 で確定した実行モデルは takt 採否と独立に有効であり、これを織り込んだ形を ADR-0007 が定める。特に GLOSSARY.md の `workflow tool` は ADR-0007 で廃止される
 - **issue #59（takt への runtime 依存リスクの評価）は評価対象が消滅**し、未着手のまま close した
 - **issue #65（適用範囲の確定）は選択肢が消滅**し、close した
 - **開発側は無変更。** AGENTS.md / `docs/agents/issue-tracker.md` の「custom workflow / facets は置かない」は開発ワークフローの規約であり、製品側の不採用とは独立に有効
