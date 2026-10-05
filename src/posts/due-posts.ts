@@ -98,6 +98,7 @@ const isStillReady = (
 > =>
   Effect.gen(function* () {
     const check = yield* checkPostReadiness({
+      accountId: entry.record.accountId,
       cut: entry.record.cut,
       createdAt: entry.record.createdAt,
       platform: entry.record.platform,

@@ -1660,6 +1660,35 @@ describe("video.status: posts (execution-time readiness and the approval-toleran
     );
   });
 
+  describe("#656: a post approved for an account other than the current declaration", () => {
+    it.effect(
+      "is awaiting_check with account_mismatch even when the declaration and the token agree",
+      () =>
+        withToolChannel(
+          "nyaucast-video-status-posts-stored-account-",
+          { config: explainerConfig },
+          (channelRoot) =>
+            Effect.gen(function* () {
+              declareAccounts(channelRoot, ["youtube"]);
+              yield* storeToken(channelRoot, "youtube");
+              yield* prepareReadyPost("a-previous-channel-id");
+              yield* setClock(scheduledAt);
+
+              const status = yield* callTool("video_status", { videoId: "V1" });
+
+              assert.deepStrictEqual(postIn(status), {
+                accountId: "a-previous-channel-id",
+                cut: longCut,
+                id: 1,
+                platform: "youtube",
+                reason: "account_mismatch",
+                status: "awaiting_check",
+              });
+            }),
+        ),
+    );
+  });
+
   // Companion 指摘(testing-review): C-RESULTLESS の完了証拠は plan.md 上 post-state.test.ts・
   // due-posts.test.ts・video.status.test.ts の 3 本を要求するが、本ファイルには未作成だった。
   // DB に結果の無い試行を直に積み、callTool の返値で理由が失われていないことを確認する。
