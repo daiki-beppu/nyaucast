@@ -36,10 +36,35 @@ jobs:
         run: pnpm install --frozen-lockfile
       # composition のテストは、テーマのフォントに偽のバイト列を使うので、文字はシステムのフォントで描かれる。
       # ランナーには日本語のフォントが無く、フックと字幕の日本語が描かれないので、Noto CJK を入れる。
+      # apt-get update が毎回 10 秒ほどかかるので、パッケージが置くファイル（フォントと fontconfig の設定）を cache する。
+      # ヒットしたときは apt と同じ場所へ戻すので、テストが見るフォントは apt で入れたときと変わらない。
+      # パッケージを入れ直したいときは key の版を上げる。
+      - name: Cache CJK fonts
+        id: cjk-fonts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/nyaucast/fonts-noto-cjk
+          key: fonts-noto-cjk-${{ runner.os }}-noble-v1
       - name: Install CJK fonts
+        env:
+          CACHE_HIT: ${{ steps.cjk-fonts.outputs.cache-hit }}
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends fonts-noto-cjk
+          cache="$HOME/.cache/nyaucast/fonts-noto-cjk"
+          if [ "$CACHE_HIT" = "true" ]; then
+            while IFS= read -r file; do
+              sudo install -D -m 644 "$cache/files$file" "$file"
+            done < "$cache/paths"
+          else
+            sudo apt-get update -q
+            sudo apt-get install -y -q --no-install-recommends fonts-noto-cjk
+            mkdir -p "$cache/files"
+            dpkg -L fonts-noto-cjk | grep -v '^/usr/share/doc/' | while IFS= read -r file; do
+              if [ -f "$file" ]; then echo "$file"; fi
+            done > "$cache/paths"
+            xargs -d '\n' cp -L --parents -t "$cache/files" < "$cache/paths"
+          fi
+          sudo fc-cache -f
+          fc-list :lang=ja family | grep -q "Noto Sans CJK JP"
       # render と preview のテストは、本物の chrome-headless-shell を使う。ランナーに入っている Chrome は使わず、
       # src/lib/chrome-pin.ts が pin した版を鍵に cache して、ダウンロードを省く。
       - name: Read the pinned Chrome version
@@ -53,6 +78,14 @@ jobs:
         with:
           path: ~/.cache/nyaucast/chrome
           key: chrome-headless-shell-${{ runner.os }}-${{ steps.chrome-pin.outputs.build-id }}
+      # Vitest は前回の所要時間を見て遅いファイルから始めるが、CI は毎回まっさらでその情報が無い。
+      # 最も遅いファイルが後から始まって全体が延びるので、所要時間の記録だけを持ち越す。実行順以外には効かない。
+      - name: Cache Vitest durations
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: node_modules/.vite/vitest
+          key: vitest-results-${{ runner.os }}-${{ github.sha }}
+          restore-keys: vitest-results-${{ runner.os }}-
       # ゲート集合の定義は package.json の check script にのみ置く。ここで step へ
       # 割り戻すと列挙が複製され、CI とローカルが食い違う経路が再び開く。
       - name: Check
