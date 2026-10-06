@@ -23,22 +23,32 @@ const interpolators = [0.25, 0.5, 0.75].map((fraction) =>
   ),
 );
 
-const interpolate = (channel: Float32Array, index: number, taps: Float64Array): number =>
-  taps.reduce((sum, weight, tap) => sum + (channel[index - halfTaps + 1 + tap] ?? 0) * weight, 0);
-
-const peakAround = (channel: Float32Array, index: number): number =>
-  Math.max(
-    Math.abs(channel[index] ?? 0),
-    ...interpolators.map((taps) => Math.abs(interpolate(channel, index, taps))),
-  );
-
-const channelPeak = (channel: Float32Array): number => {
+// サンプル数 × 3 点 × 32 タップを回すホットループなので、サンプルごとに配列・クロージャを作らず、自前の関数も呼ばない（#685）。
+// 端の外は無音として扱い、タップの範囲を端で切って 0 の項を足さずに済ませる。
+const interpolatedPeak = (channel: Float32Array, taps: Float64Array): number => {
   let peak = 0;
   for (let index = 0; index < channel.length; index += 1) {
-    peak = Math.max(peak, peakAround(channel, index));
+    const windowStart = index - halfTaps + 1;
+    const tapEnd = Math.min(taps.length, channel.length - windowStart);
+    let sum = 0;
+    for (let tap = Math.max(0, -windowStart); tap < tapEnd; tap += 1) {
+      sum += (channel[windowStart + tap] ?? 0) * (taps[tap] ?? 0);
+    }
+    peak = Math.max(peak, Math.abs(sum));
   }
   return peak;
 };
+
+const samplePeak = (channel: Float32Array): number => {
+  let peak = 0;
+  for (const sample of channel) {
+    peak = Math.max(peak, Math.abs(sample));
+  }
+  return peak;
+};
+
+const channelPeak = (channel: Float32Array): number =>
+  Math.max(samplePeak(channel), ...interpolators.map((taps) => interpolatedPeak(channel, taps)));
 
 /** true peak（dBTP）。全チャンネルの最大。無音は -Infinity。 */
 export const truePeak = (channels: readonly Float32Array[]): number =>

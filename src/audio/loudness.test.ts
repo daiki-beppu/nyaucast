@@ -106,4 +106,15 @@ describe("truePeak", () => {
 
     assert.closeTo(truePeak(stereo(tone)), -6, 0.1);
   });
+
+  // 補間は端の外を無音として扱う。端に置いた 2 サンプルの間のピークは、無音に囲まれた同じ 2 サンプルと同じ。
+  it("treats the samples beyond either end as silence", () => {
+    const pairAt = (length: number, index: number) =>
+      Float32Array.from({ length }, (_, at) => (at === index || at === index + 1 ? 1 : 0));
+    const inTheMiddle = truePeak(stereo(pairAt(64, 31)));
+
+    assert.isAbove(inTheMiddle, 0);
+    assert.closeTo(truePeak(stereo(pairAt(64, 0))), inTheMiddle, 1e-9);
+    assert.closeTo(truePeak(stereo(pairAt(64, 62))), inTheMiddle, 1e-9);
+  });
 });
