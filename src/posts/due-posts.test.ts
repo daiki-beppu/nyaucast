@@ -2039,15 +2039,16 @@ describe("runDuePosts: C6/AC3 - a permanent container status is recorded as a pe
 });
 
 // コンテナの polling の sleep（10 秒ごと）は 1 回ずつ登録されるので、1 回の TestClock.adjust では
-// まとめて解放できない。fiber が終わるまで 10 秒ずつ進める。上限の回数は、polling の上限（60 回）に
-// 必要な回数の十分な上側で、進めても終わらない場合に無限に回らないためだけに置く。
+// まとめて解放できない。fiber が終わるまで 10 秒ずつ進める。
+// fiber が本物の I/O を待つ間に進めた回は空振りになり、その回数は負荷で増える。進める回数に上限を置くと、
+// 負荷の高い CI では上限を使い切って fiber が sleep のまま残り、timeout していた（#734）。
+// 終わらない実装は、上限が無くてもテストの timeout で落ちる。
 const pollingSleepInterval = "10 seconds";
-const maximumPollingTicks = 200;
 
 /** polling の sleep をすべて解放してから、fiber の結果を受け取る。 */
 const joinAfterPolling = <A, E>(fiber: Fiber.Fiber<A, E>) =>
   Effect.gen(function* () {
-    for (let tick = 0; tick < maximumPollingTicks && fiber.pollUnsafe() === undefined; tick += 1) {
+    while (fiber.pollUnsafe() === undefined) {
       yield* TestClock.adjust(pollingSleepInterval);
     }
     return yield* Fiber.join(fiber);
