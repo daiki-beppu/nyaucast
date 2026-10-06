@@ -6,6 +6,7 @@
     "test/helpers.ts",
     "test/package-smoke-support.ts",
     "test/codec-support.ts",
+    "test/check-gates.ts",
     "test/fixtures/package-dependency-probe.ts"
   ],
   "ignorePatterns": [
