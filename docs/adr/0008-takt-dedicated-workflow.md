@@ -4,7 +4,7 @@
 
 ## Status
 
-accepted (2026-08-22。takt 0.59.0 で廃止された Finding Contract を review-adjudication / verified remediation / final-gate へ移行し、0.60.0 の capability / instruction composition / final-gate contract に追従) / 改訂 2026-08-26（#368。map #353「開発基盤スクラップアンドビルド」の決定を実装に先行して反映 — **主旨転換**: 「takt の builtin を基礎に、nyaucast 固有の開発ゲートだけを重ねる」→「builtin 直用。nyaucast 固有の workflow 資産を持たない」。自作 workflow 5 本・steps / facets / schemas・監査 workflow 2 本を全廃する。骨子は issue #358 の resolution、前提事実は #357 の調査） / 改訂 2026-10-01（#441。feature 経路に指定していた builtin `experimental` が nrslib/takt#1424 で `default` に統合されたため、workflow 名を `default` に改める。起動経路は変えない） / 改訂 2026-10-01（#450。provider 割り当てがグローバルの `~/.takt/runtime.yaml` へ移ったことに合わせ、`config.yaml` に残すキーの記述から provider_routing / personas を外す） / 改訂 2026-10-01（#455。takt が生成する `.takt/.gitignore` の再発を止めるため、`config.yaml` 以外を無視する nyaucast 用の `.gitignore` を `.takt/` に置く）
+accepted (2026-08-22。takt 0.59.0 で廃止された Finding Contract を review-adjudication / verified remediation / final-gate へ移行し、0.60.0 の capability / instruction composition / final-gate contract に追従) / 改訂 2026-08-26（#368。map #353「開発基盤スクラップアンドビルド」の決定を実装に先行して反映 — **主旨転換**: 「takt の builtin を基礎に、nyaucast 固有の開発ゲートだけを重ねる」→「builtin 直用。nyaucast 固有の workflow 資産を持たない」。自作 workflow 5 本・steps / facets / schemas・監査 workflow 2 本を全廃する。骨子は issue #358 の resolution、前提事実は #357 の調査） / 改訂 2026-10-01（#441。feature 経路に指定していた builtin `experimental` が nrslib/takt#1424 で `default` に統合されたため、workflow 名を `default` に改める。起動経路は変えない） / 改訂 2026-10-01（#450。provider 割り当てがグローバルの `~/.takt/runtime.yaml` へ移ったことに合わせ、`config.yaml` に残すキーの記述から provider_routing / personas を外す） / 改訂 2026-10-01（#455。takt が生成する `.takt/.gitignore` の再発を止めるため、`config.yaml` 以外を無視する nyaucast 用の `.gitignore` を `.takt/` に置く） / 改訂 2026-10-06（#564 で隔離 clone の review-adjudication 経路が走りきることを確かめたため、feature の起動を worktree からの `takt --pipeline` 直接実行から、`worktree: true` のキュー実行（takt MCP で積み、常駐の `takt watch` が実行する）に改める。workflow は `default` のまま）
 
 ## Context
 
@@ -22,7 +22,7 @@ map #353 の再検討（#357 の実態調査 + #358 の決定）で前提が変�
 
 ### 2. 経路
 
-- **feature**（新機能・機能拡張）: builtin **`default`**。起動形は現行互換 — origin/main から作った worktree 内で（worktree の作り方は AGENTS.md。改訂 2026-10-04 / #606 で手動の detached HEAD から Orca に変更） `takt --pipeline --auto-pr -b issue-<N>-<slug> -w default -i <N>`。選定根拠は Requirement Scenarios（`SCN-{contract ID}-P/N` の Given/When/Then）を持つ builtin であること（nrslib/takt#1424 の統合以降、`default` が scenario-based の計画・test-first を持つ）
+- **feature**（新機能・機能拡張）: builtin **`default`**。起動形は `worktree: true` のキュー実行 — takt MCP の `takt_enqueue_task` で積み、repo root に常駐させる `takt watch` が隔離 clone で実行して PR を作る（改訂 2026-10-06。それまでは worktree 内からの `takt --pipeline --auto-pr -b issue-<N>-<slug> -w default -i <N>` 直接実行だった）。選定根拠は Requirement Scenarios（`SCN-{contract ID}-P/N` の Given/When/Then）を持つ builtin であること（nrslib/takt#1424 の統合以降、`default` が scenario-based の計画・test-first を持つ）
 - **fix**（バグ修正・回帰修正）: **takt を使わない**。Matt Pocock の `/implement`（Claude Code 直接。worktree とブランチを作り、`/implement` の `/tdd` → `/code-review` → commit の後、PR 作成 → CI green まで監視する）で実装し、品質ゲートは `/implement` に含まれる `/code-review` が担う。旧経路の issue-direct skill は廃止した
 - **PR レビュー**: builtin **`review-fix`**（remediation ループ内蔵。takt 0.61 で `review-fix-default` から改名）。旧 `review-takt-default` は takt 自体の開発用 knowledge を nyaucast コードのレビューに混ぜる誤適合だったため変更する
 
