@@ -35,7 +35,7 @@ export default defineConfig({
     ],
   },
   staged: {
-    "*.{js,jsx,ts,tsx,json,jsonc,md,yml,yaml}": "vp fmt --write",
+    "*.{js,jsx,ts,tsx,json,jsonc,md,yml,yaml}": "vp fmt --write --no-error-on-unmatched-pattern",
   },
   test: {
     passWithNoTests: true,
