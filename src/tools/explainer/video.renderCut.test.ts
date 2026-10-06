@@ -103,7 +103,7 @@ const codecsOf = async (channelRoot: string) => {
   return [mp4.video?.codec, mp4.audio?.codec];
 };
 
-describe("video.renderCut: parameters", () => {
+describe.concurrent("video.renderCut: parameters", () => {
   it("is named with its wire name", () => {
     assert.strictEqual(ExplainerVideoRenderCutTool.name, "video_render_cut");
   });
@@ -153,7 +153,7 @@ describe("video.renderCut: parameters", () => {
   });
 });
 
-describe("video.renderCut: a real render", () => {
+describe.concurrent("video.renderCut: a real render", () => {
   it.effect(
     "writes an mp4 with an H.264 video and an AAC audio track of the composition's size and length, and records one export",
     () =>
@@ -223,7 +223,7 @@ describe("video.renderCut: a real render", () => {
 });
 
 // 復号した内容を確かめる: 映像は時刻ごとの色（前半は赤系、後半は青系）、音声は 440 Hz の音が残っている。
-describe("video.renderCut: the encoded content", () => {
+describe.concurrent("video.renderCut: the encoded content", () => {
   const centerOf = async (channelRoot: string, seconds: number) => {
     const input = new Input({
       formats: ALL_FORMATS,
@@ -264,7 +264,7 @@ describe("video.renderCut: the encoded content", () => {
   );
 });
 
-describe("video.renderCut: idempotence and force", () => {
+describe.concurrent("video.renderCut: idempotence and force", () => {
   it.effect(
     "returns the existing export for the same input and adds no row",
     () =>
@@ -397,7 +397,7 @@ describe("video.renderCut: idempotence and force", () => {
   );
 });
 
-describe("video.renderCut: composition contract checks", () => {
+describe.concurrent("video.renderCut: composition contract checks", () => {
   const failsWith = (html: string, tag: string) =>
     withInputs(
       `nyaucast-render-invalid-${tag}-`,
@@ -470,7 +470,7 @@ describe("video.renderCut: composition contract checks", () => {
   );
 });
 
-describe("video.renderCut: failures while encoding", () => {
+describe.concurrent("video.renderCut: failures while encoding", () => {
   const writesNothing = (channelRoot: string) =>
     Effect.gen(function* () {
       const fs = yield* Effect.promise(() => import("node:fs"));
@@ -558,7 +558,7 @@ const replacedAfterFirstRead = (channelRoot: string) =>
     }),
   ).pipe(Layer.provide(VideoFiles.layer(channelRoot)));
 
-describe("video.renderCut: the audio track replaced during a render", () => {
+describe.concurrent("video.renderCut: the audio track replaced during a render", () => {
   it.effect(
     "encodes the same audio the render hash was made from, so the recorded key matches the mp4",
     () =>
@@ -585,6 +585,7 @@ describe("video.renderCut: the audio track replaced during a render", () => {
   );
 });
 
+// プロセス全体の arrayBuffers の伸びを測るので、並走させない。並列ではないスイートは並列のまとまりを区切るので、単独で走る。
 describe("video.renderCut: memory on a long audio track", () => {
   it.effect(
     "does not hold the audio track or the mp4 in memory while rendering 10 minutes of audio",
@@ -610,7 +611,7 @@ describe("video.renderCut: memory on a long audio track", () => {
   );
 });
 
-describe("video.renderCut: preconditions", () => {
+describe.concurrent("video.renderCut: preconditions", () => {
   it.effect("rejects an unknown key at the tool boundary and writes nothing", () =>
     withInputs("nyaucast-render-unknown-key-", () =>
       Effect.gen(function* () {
@@ -757,7 +758,7 @@ const withShort = <A, E, R>(prefix: string, use: (channelRoot: string) => Effect
     }),
   );
 
-describe("video.renderCut: the cut parameter", () => {
+describe.concurrent("video.renderCut: the cut parameter", () => {
   const schema = ExplainerVideoRenderCutTool.parametersSchema;
 
   it.each([
@@ -810,7 +811,7 @@ describe("video.renderCut: the cut parameter", () => {
   );
 });
 
-describe("video.renderCut: the two cuts of a short candidate", () => {
+describe.concurrent("video.renderCut: the two cuts of a short candidate", () => {
   it.effect(
     "records one export for each of short-1-clip and short-1-dedicated, with an mp4 of the composition's size under each cut's directory",
     () =>
