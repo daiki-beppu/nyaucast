@@ -2,7 +2,7 @@
 
 ## Status
 
-accepted (2026-10-05 / #652。map #648)
+accepted (2026-10-05 / #652。map #648) / 改訂 2026-10-06（#653。Alchemy の state の置き場と単位を決め、決定 8 を追加。Consequences の「置き場は #653 で決める」を改める）
 
 ## Context
 
@@ -22,6 +22,12 @@ Instagram へ投稿するには、動画を R2 に置いて URL で渡す必要�
 5. **資源を消す操作は置かない。** destroy のコマンドは作らない。宣言から外した資源を Alchemy が消さないよう、すべての資源に `RemovalPolicy.retain()` を付ける（ADR-0009 決定 11・14 の「削除する tool を置かない」と揃える）
 6. **アクセスキーの冪等性は、Alchemy の state に任せる。** Alchemy の外でトークンを探したり作り直したりしない。state を失ったときの二重発行は、state の置き場の決め方で防ぐ（#653）
 7. **Alchemy と `cf` は、nyaucast の `dependencies` に exact pin で入れる。** 利用者に別のインストールをさせない。beta と preview であることは、exact pin と、版を上げる差分での実機の確認で受け止める。LGPL-3.0 の `sharp-libvips` の告知は、Alchemy を依存に加える差分で `NOTICE` に足す（ADR-0011 決定 10 の扱いに沿う）
+8. **Alchemy の state は、利用者ごとに 1 つ、ローカルのファイルに置く。**（改訂 2026-10-06 / #653）
+   - 置き場は `~/.config/nyaucast/cloudflare/`。nyaucast が `AlchemyContext` を provide して決める。ディレクトリは 0700、ファイルは 0600 にする（ADR-0009 決定 6 の更新されるトークンと同じ扱い）
+   - 全チャンネルで 1 つの Cloudflare 環境（bucket とアクセスキー）を共有する。Instagram へ渡す動画は、オブジェクトのキーの先頭にチャンネル名を入れて分ける。チャンネルを足しても Cloudflare 環境は作り直さない
+   - v0.1 では、1 人の利用者が扱う Cloudflare アカウントは 1 つまでとする。チャンネルの設定は Cloudflare に触れない
+   - state を失ったときは受け入れる。再実行すると `AccountApiToken` が新しく作られ、古いトークンは効力を持ったまま残る。plan に作成が出るので、人間は確認の時点で気付ける。古いトークンを消す手順は案内に書く
+   - state の専用のバックアップは取らない。Mac 全体のバックアップに任せる
 
 ## Why
 
@@ -29,6 +35,7 @@ Instagram へ投稿するには、動画を R2 に置いて URL で渡す必要�
 - **人間の操作をブラウザの同意 1 回にする。** 非エンジニアに、権限グループを選んで API トークンを作らせない。`cf` の OAuth にはトークンを作るスコープがあり、Alchemy の OAuth には無い。`cf` のトークンは取り出せないので、`cf` に期限つきのトークンを作らせて渡すのが、同意 1 回で apply までつながる唯一の経路である
 - **期限つきのトークンなら、削除の操作が要らない。** デプロイ用トークンを毎回作っても、残ったものは失効する
 - **plan の確認と `retain` で、意図しない削除を二重に止める。** Alchemy は宣言から外れた資源を消すので、スタックの定義の変更が利用者の bucket を消しうる
+- **state は秘密情報なので、複製を増やさない。** state はトークンの値を平文で持つ。`Cloudflare.state()` は plan と apply の外で利用者のアカウントに Worker・Durable Object・Secrets Store を増やし、local store はチャンネルごとに 1 つで、利用者ごとに 1 つの Cloudflare 環境と数え方が合わない。専用のバックアップは平文の複製を増やす。state を失っても、残る古いトークンの権限は 1 つの bucket の書き込みだけで、中身は 7 日で消える（決定 8）
 
 ## Considered Options
 
@@ -42,6 +49,6 @@ Instagram へ投稿するには、動画を R2 に置いて URL で渡す必要�
 ## Consequences
 
 - Alchemy の内部の Layer に依存するので、Alchemy の版を上げるたびに、アダプタの 1 ファイルが壊れうる。Alchemy v2 の stable 版で公開 API が整ったら、アダプタをそちらへ移す
-- Alchemy の state は、アクセスキーの元になるトークンの値を含むので、秘密情報として扱う必要がある。置き場は #653 で決める
+- Alchemy の state は、アクセスキーの元になるトークンの値を含むので、秘密情報として扱う（決定 8）。v0.2 で実行環境の間で引き渡すとき（#505）は、ローカルのファイルでは共有できないので、置き場を見直す（`Cloudflare.state()` が候補になる）。複数の Cloudflare アカウントが要るときは、`cloudflare/<name>/` に分け、チャンネルの設定から参照する形に広げる
 - 利用者がしなければならない手順は、Cloudflare のアカウントの作成・R2 の有効化（checkout）・`cf auth login` の同意の 3 つになる。R2 の有効化に支払い情報が要るかは、一次情報で確かめられていない（#650）
 - 利用者のインストールは 1.3 GB ほど重くなる
