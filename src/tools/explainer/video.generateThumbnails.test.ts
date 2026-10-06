@@ -37,6 +37,12 @@ const waitUntil = (condition: () => boolean) =>
 
 const noon = "2026-10-03T12:00:00.000Z";
 
+// 1920x1080 のノイズを品質を下げながら JPEG に繰り返し変換するテストは、変換だけで CPU を 1 秒近く使う
+// （他のテストは 0.5 秒前後）。品質を下げていく過程そのものが観測点なので、変換の回数も画像の大きさも
+// 減らせない（出力は常に 1920x1080 に引き伸ばされ、小さいノイズは引き伸ばすと縮みやすくなる）。
+// 負荷で 10 倍以上遅れても落ちないよう、既定の 5 秒ではなく 30 秒を渡す（#680）。
+const heavyEncoding = 30_000;
+
 // 16:9 の 1 枚。Gemini の 1K（1344x768）。1920x1080 の JPG にして書かれる。
 const good: FakeReply = { image: solidPng(1344, 768) };
 
@@ -684,6 +690,7 @@ describe("video.generateThumbnails: checking the generated image", () => {
   it.effect(
     "does not make a candidate of an image that stays over 2 MB at the lowest quality",
     () => rejected({ image: noisePng(1920, 1080, 127) }, "too_large"),
+    heavyEncoding,
   );
 
   it.effect("does not make a candidate of bytes that are not an image", () =>
@@ -721,25 +728,29 @@ describe("video.generateThumbnails: checking the generated image", () => {
     );
   });
 
-  it.effect("lowers the JPEG quality to bring an image over 2 MB under it", () => {
-    // 1920x1080 のノイズ（振幅 ±90）は、sharp 0.35.5 の 4:4:4 の JPEG で品質 80 が約 2.23 MB（収まらない）、
-    // 品質 70 が約 1.79 MB。品質 80 で打ち切ると候補にならない。
-    const gemini = fakeGemini([{ image: noisePng(1920, 1080, 90) }]);
-    return withToolChannel(
-      "nyaucast-thumbnails-quality-",
-      { config: explainerConfigWith(thumbnailType({ candidates: 1 })), gemini },
-      (channelRoot) =>
-        Effect.gen(function* () {
-          yield* recordPlan();
+  it.effect(
+    "lowers the JPEG quality to bring an image over 2 MB under it",
+    () => {
+      // 1920x1080 のノイズ（振幅 ±90）は、sharp 0.35.5 の 4:4:4 の JPEG で品質 80 が約 2.23 MB（収まらない）、
+      // 品質 70 が約 1.79 MB。品質 80 で打ち切ると候補にならない。
+      const gemini = fakeGemini([{ image: noisePng(1920, 1080, 90) }]);
+      return withToolChannel(
+        "nyaucast-thumbnails-quality-",
+        { config: explainerConfigWith(thumbnailType({ candidates: 1 })), gemini },
+        (channelRoot) =>
+          Effect.gen(function* () {
+            yield* recordPlan();
 
-          const result = yield* callTool("video_generate_thumbnails", input());
+            const result = yield* callTool("video_generate_thumbnails", input());
 
-          const body = readChannelFile(channelRoot, result.candidates[0]?.key ?? "");
-          assert.deepStrictEqual(jpegSize(body), { height: 1080, width: 1920 });
-          assert.isAtMost(body.length, maxThumbnailBytes);
-        }),
-    );
-  });
+            const body = readChannelFile(channelRoot, result.candidates[0]?.key ?? "");
+            assert.deepStrictEqual(jpegSize(body), { height: 1080, width: 1920 });
+            assert.isAtMost(body.length, maxThumbnailBytes);
+          }),
+      );
+    },
+    heavyEncoding,
+  );
 
   it.effect(
     "records a rejected image, keeps the candidates written before it, and the next run does not generate that number again",
@@ -1238,6 +1249,7 @@ describe("video.generateThumbnails: the codex provider", () => {
     it.effect(
       "does not make a candidate of an image that stays over 2 MB at the lowest quality",
       () => rejected(noisePng(1920, 1080, 127), "too_large"),
+      heavyEncoding,
     );
     it.effect("does not make a candidate of bytes that are not an image", () =>
       rejected(Uint8Array.from([1, 2, 3, 4]), "unreadable"),

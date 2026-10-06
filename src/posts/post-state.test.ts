@@ -80,12 +80,21 @@ describe("derivePostState: the classification of the last attempt decides whethe
     );
   });
 
-  // 既定の platform は "x"。X/Instagram は即時に投稿する SNS なので、試行の成功がそのまま
-  // 公開済みを表す（ADR-0009 決定 13。C-PUBLISHED。YouTube だけが reserved を経由する）。
-  it("is published with the saved remote ID when the last attempt succeeded (non-YouTube)", () => {
+  // C9（ADR-0009 決定 13）: SNS 側で予約を持つのは YouTube だけなので、succeeded は YouTube だけ
+  // reserved になる。既定の platform（"x"）は published になる（下の describe で網羅的に確認する）。
+  it("is reserved with the saved remote ID when the last attempt succeeded on YouTube", () => {
     assert.deepStrictEqual(
-      derivePostState(input({ lastAttempt: "succeeded", remoteId: "x-post-1" })),
-      { remoteId: "x-post-1", status: "published" },
+      derivePostState(
+        input({ lastAttempt: "succeeded", platform: "youtube", remoteId: "yt-video-1" }),
+      ),
+      { remoteId: "yt-video-1", status: "reserved" },
+    );
+  });
+
+  it("is published with the saved remote ID when the last attempt succeeded on a non-YouTube platform", () => {
+    assert.deepStrictEqual(
+      derivePostState(input({ lastAttempt: "succeeded", remoteId: "ig-post-1" })),
+      { remoteId: "ig-post-1", status: "published" },
     );
   });
 
@@ -384,9 +393,8 @@ describe("derivePostState: the publication-confirmation deadline for a succeeded
     assert.isUndefined(state.remoteId);
   });
 
-  it("does not apply the publication-confirmation deadline to Instagram or X: they are already published, regardless of elapsed time (C-PUBLISHED, ADR-0009 decision 13)", () => {
-    // 非 YouTube の succeeded は、試行の成功がそのまま公開済みを表すため、このテストの観点
-    // （時間が経っても reserved のまま確認待ちにならない）自体は変わらないが、結果は published になる。
+  it("does not apply the publication-confirmation deadline to Instagram or X: a succeeded attempt is published immediately, regardless of how much time has passed (C9, ADR-0009 decision 13)", () => {
+    // 非 YouTube の succeeded は、YouTube のような確認待ちの期限を持たず、即座に published になる。
     assert.deepStrictEqual(
       derivePostState(
         input({
@@ -402,33 +410,55 @@ describe("derivePostState: the publication-confirmation deadline for a succeeded
   });
 });
 
-describe("derivePostState: a succeeded attempt on a non-YouTube platform is published (C-PUBLISHED, #554 carry-over, ADR-0009 decision 13)", () => {
-  // SNS 側の予約を持つのは YouTube だけ。Instagram/X は即時に投稿する SNS なので、試行の成功が
-  // そのまま公開を表す（GLOSSARY.md）。#554 からの持ち越し: このアダプタを足すときに直すこと。
-  it.each(["instagram", "x"] as const)(
-    "is published with the remote ID for %s, immediately (no tolerance window applies)",
-    (platform) => {
-      assert.deepStrictEqual(
-        derivePostState(input({ lastAttempt: "succeeded", platform, remoteId: "post-1" })),
-        { remoteId: "post-1", status: "published" },
-      );
-    },
-  );
+describe(
+  "derivePostState: a succeeded attempt is published (not reserved) for every non-YouTube " +
+    "platform, carrying the same remote ID (C9, ADR-0009 decision 13: only YouTube reserves on " +
+    "the SNS side)",
+  () => {
+    it.each(["instagram", "x"] as const)(
+      "is published with the remote ID for %s immediately at the scheduled time",
+      (platform) => {
+        assert.deepStrictEqual(
+          derivePostState(input({ lastAttempt: "succeeded", platform, remoteId: "remote-1" })),
+          { remoteId: "remote-1", status: "published" },
+        );
+      },
+    );
 
-  it.each(["instagram", "x"] as const)(
-    "stays published for %s no matter how much time has passed since the scheduled time",
-    (platform) => {
-      assert.deepStrictEqual(
-        derivePostState(
-          input({
-            lastAttempt: "succeeded",
-            now: scheduledAtMs + 10_000 * minute,
-            platform,
-            remoteId: "post-1",
-          }),
-        ),
-        { remoteId: "post-1", status: "published" },
-      );
-    },
-  );
-});
+    it.each(["instagram", "x"] as const)(
+      "stays published for %s well past what would be YouTube's publication-confirmation deadline",
+      (platform) => {
+        assert.deepStrictEqual(
+          derivePostState(
+            input({
+              lastAttempt: "succeeded",
+              now: scheduledAtMs + 61 * minute,
+              platform,
+              remoteId: "remote-1",
+              toleranceMinutes: 60,
+            }),
+          ),
+          { remoteId: "remote-1", status: "published" },
+        );
+      },
+    );
+
+    it("differs from YouTube given the exact same scheduled time, now and tolerance, once the tolerance window has passed", () => {
+      const common = {
+        lastAttempt: "succeeded" as const,
+        now: scheduledAtMs + 61 * minute,
+        remoteId: "remote-1",
+        toleranceMinutes: 60,
+      };
+
+      assert.deepStrictEqual(derivePostState(input({ ...common, platform: "x" })), {
+        remoteId: "remote-1",
+        status: "published",
+      });
+      assert.deepStrictEqual(derivePostState(input({ ...common, platform: "youtube" })), {
+        reason: "publication_unconfirmed",
+        status: "awaiting_check",
+      });
+    });
+  },
+);

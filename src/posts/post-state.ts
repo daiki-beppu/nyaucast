@@ -134,13 +134,13 @@ const deriveTimeStatus = (input: DerivePostStateInput): DerivedPostState =>
   input.platform === "youtube" ? deriveYouTubeTimeStatus(input) : deriveToleranceTimeStatus(input);
 
 /**
- * succeeded の投稿の状態。SNS 側の予約を持つのは YouTube だけで、Instagram/X は予定時刻に即時
- * 投稿するので、試行の成功がそのまま公開済みを表す（ADR-0009 決定 13・GLOSSARY.md。#554 からの
- * 持ち越しで、#556 で X のアダプタを足すときに直した。直さないと全投稿が終端にならず lifecycle の
- * 1 周が導出されない）。YouTube は予定時刻 + 許容時間を過ぎても公開済みの事実（terminal.published）
- * が無ければ、公開の確認が取れない確認待ちにする（#554 決定「許容時間を過ぎても確認が無ければ
+ * succeeded の投稿の状態。SNS 側で予約を持つのは YouTube だけなので（ADR-0009 決定 13）、
+ * Instagram/X の成功した試行はそのまま公開済みにする（issue #555 決定 8。#554 からの持ち越し。
+ * reserved のままにすると、これらの投稿が終端にならず lifecycle の 1 周が導出されない）。
+ * YouTube は予定時刻 + 許容時間を過ぎても公開済みの事実（terminal.published）が無ければ、
+ * 公開の確認が取れない確認待ちにする（issue #554 決定「許容時間を過ぎても確認が無ければ
  * 確認待ち」）。terminal.published があれば deriveFromTerminalFacts が先に拾うため、ここに
- * 来る時点で published ではない。
+ * 来る時点で published の事実は無い。
  */
 const deriveFromSucceededAttempt = (
   input: DerivePostStateInput,

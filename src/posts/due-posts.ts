@@ -1,32 +1,45 @@
 import { Clock, Effect, Option, Scope } from "effect";
+import type { HttpClient } from "effect/http";
 import type { SqlClient } from "effect/sql";
 
 import type { Platform } from "../auth/account-key.ts";
 import type { AccountsDeclarationInvalid } from "../auth/accounts.ts";
 import { CredentialStore, type CredentialStoreFailure } from "../auth/credential-store.ts";
 import { DeclaredAccounts } from "../auth/declared-accounts.ts";
+import type { StaticSecrets } from "../auth/secrets.ts";
 import {
   acquireAttempt,
   appendAttemptResult,
   type AttemptOutcome as AttemptResultOutcome,
 } from "../db/explainer-post-attempts.ts";
 import { readAllPostRecords, type PostRecord } from "../db/explainer-posts.ts";
+import { InstagramAuth } from "../instagram/auth.ts";
 import { VideoFiles } from "../videos/video-files.ts";
-import { XClient } from "../x/client.ts";
+import type { XClient } from "../x/client.ts";
 import { YouTubeClient } from "../youtube/client.ts";
 import { classifyPost, type ClassifiedPost } from "./post-classification.ts";
+import { classifyPostFailure, type PostAdapterFailure } from "./post-outcome.ts";
+import { checkPostReadiness, type ReadyFacts } from "./post-readiness.ts";
 import {
   hasAdapter,
-  preparePost,
-  type PostPrepareFailure,
-  type PostSendFailure,
-  type PostSendResult,
+  prepareAdapterInput,
+  sendPreparedPost,
+  type PostAttemptResult,
   type PreparedPost,
-  sendPost,
-} from "./post-adapters.ts";
-import { classifyPostFailure } from "./post-outcome.ts";
-import { checkPostReadiness, type ReadyFacts } from "./post-readiness.ts";
+} from "./post-send.ts";
 import { derivePostState, isPastYouTubeSchedule, toLastAttemptInput } from "./post-state.ts";
+
+/** 投稿の実行がアダプタまで通すために要るサービス（`post run` と `post run-now` が共有する）。 */
+export type PostRunServices =
+  | CredentialStore
+  | DeclaredAccounts
+  | HttpClient.HttpClient
+  | InstagramAuth
+  | SqlClient.SqlClient
+  | StaticSecrets
+  | VideoFiles
+  | XClient
+  | YouTubeClient;
 
 export type DuePostOutcome =
   | { readonly kind: "account_stopped"; readonly postId: number }
@@ -79,8 +92,7 @@ const acquirableOutcomes = (policy: PostTimePolicy): ReadonlyArray<AttemptResult
  * (バッチ判定時点のもの)は使わない。
  *
  * P3: 準備できていれば(None でなければ)、この検査で読んだ事実(最後の書き出し・サムネイルの選択)を
- * そのまま返す。各アダプタの送信前処理(preparePost → prepareXPost / prepareYouTubePost)はこれを
- * 再利用し、同じ事実を再び読み直さない。
+ * そのまま返す。呼び出し側(post-send.ts の送信前処理)はこれを再利用し、同じ事実を再び読み直さない。
  */
 const isStillReady = (
   entry: ClassifiedPost,
@@ -155,7 +167,7 @@ const resolveSuccess = (
   postId: number,
   attemptId: number,
   recordedAt: string,
-  success: PostSendResult,
+  success: PostAttemptResult,
 ): Effect.Effect<AttemptOutcome, never, SqlClient.SqlClient> =>
   Effect.gen(function* () {
     yield* appendAttemptResult(attemptId, "succeeded", recordedAt, success.remoteId);
@@ -175,13 +187,13 @@ const resolveSuccess = (
   });
 
 /**
- * upload が失敗したときの結果の書き込みと outcome の組み立て。
+ * 送信が失敗したときの結果の書き込みと outcome の組み立て。
  */
 const resolveFailure = (
   postId: number,
   attemptId: number,
   recordedAt: string,
-  failure: PostPrepareFailure | PostSendFailure,
+  failure: PostAdapterFailure,
 ): Effect.Effect<AttemptOutcome, never, SqlClient.SqlClient> =>
   Effect.gen(function* () {
     const classified = classifyPostFailure(failure);
@@ -193,12 +205,12 @@ const resolveFailure = (
   });
 
 /**
- * upload 自体は始まったが完了可否を確定できない(B・P6)場合の outcome の組み立て。結果は書かず
+ * 送信自体は始まったが完了可否を確定できない(B・P6)場合の outcome の組み立て。結果は書かず
  * 「結果の無い試行」として残す(自動では再実行しない。ADR-0009 決定 9。appendAttemptResult を
- * 呼ばないことで抑止する)。原因(cause)は upload の失敗と同じ分類処理(classifyPostFailure)に通し、
+ * 呼ばないことで抑止する)。原因(cause)は送信の失敗と同じ分類処理(classifyPostFailure)に通し、
  * 認証の失敗なら同一アカウントの残りを試さない(B-4。「複数失敗を集約する境界」: 分類は一度だけ行う)。
  */
-const resolveIndeterminate = (postId: number, cause: PostSendFailure): AttemptOutcome => ({
+const resolveIndeterminate = (postId: number, cause: PostAdapterFailure): AttemptOutcome => ({
   outcome: { kind: "indeterminate", postId },
   stopAccount: classifyPostFailure(cause).stopAccount,
 });
@@ -229,11 +241,11 @@ const acquireNow = (
  * する。試行を取れなければ、既存の not_acquired の意味のまま返す（並行する実行が先に記録した場合）。
  *
  * #556: X の送信前処理は投稿文の検査（InvalidPostText）もここへ運ぶ。URL を含む投稿文は、外部
- * 呼び出しを 1 回もせずに恒久的な失敗として記録される（order.md 決定 4）。
+ * 呼び出しを 1 回もせずに恒久的な失敗として記録される。
  */
 const recordPrepareFailure = (
   postId: number,
-  failure: PostPrepareFailure,
+  failure: PostAdapterFailure,
   policy: PostTimePolicy,
 ): Effect.Effect<AttemptOutcome, never, SqlClient.SqlClient> =>
   Effect.gen(function* () {
@@ -245,7 +257,7 @@ const recordPrepareFailure = (
     return yield* resolveFailure(postId, attemptId.value, recordedAt, failure);
   });
 
-type PreparedInput = { readonly outcome: AttemptOutcome } | { readonly post: PreparedPost };
+type PreparedInput = { readonly prepared: PreparedPost } | { readonly outcome: AttemptOutcome };
 
 type AcquiredAttempt = { readonly attemptId: number } | { readonly outcome: AttemptOutcome };
 
@@ -259,14 +271,10 @@ const prepareAndCheckDue = (
   entry: ClassifiedPost,
   policy: PostTimePolicy,
   facts: ReadyFacts,
-): Effect.Effect<
-  PreparedInput,
-  never,
-  DeclaredAccounts | Scope.Scope | SqlClient.SqlClient | VideoFiles | XClient | YouTubeClient
-> =>
+): Effect.Effect<PreparedInput, never, PostRunServices | Scope.Scope> =>
   Effect.gen(function* () {
     const { id: postId } = entry.record;
-    const prepared = yield* preparePost(entry.record, facts).pipe(Effect.result);
+    const prepared = yield* prepareAdapterInput(entry.record, facts).pipe(Effect.result);
     if (prepared._tag === "Failure") {
       return { outcome: yield* recordPrepareFailure(postId, prepared.failure, policy) };
     }
@@ -275,7 +283,7 @@ const prepareAndCheckDue = (
     if (!(yield* isStillDue(entry, policy))) {
       return { outcome: { outcome: { kind: "scheduled_in_past", postId }, stopAccount: false } };
     }
-    return { post: prepared.success };
+    return { prepared: prepared.success };
   });
 
 /**
@@ -302,6 +310,30 @@ const acquireAndCheckDue = (
   });
 
 /**
+ * 取った試行でアダプタを呼び、結果を書く。401 の後の更新の間に予定時刻を過ぎて、開始を送り直さなかった
+ * とき（#657）は動画が作られていないので、獲得の直後の再確認に落ちたときと同じく、結果を書かずに
+ * 確認待ちへ回す。
+ */
+const uploadAndRecord = (postId: number, attemptId: number, prepared: PreparedPost) =>
+  Effect.gen(function* () {
+    const result = yield* sendPreparedPost(prepared).pipe(Effect.result);
+    const recordedAt = new Date(yield* Clock.currentTimeMillis).toISOString();
+    if (result._tag === "Failure" && result.failure._tag === "YouTubeResendDeadlinePassed") {
+      const skipped: AttemptOutcome = {
+        outcome: { kind: "scheduled_in_past", postId },
+        stopAccount: false,
+      };
+      return skipped;
+    }
+    if (result._tag === "Failure") {
+      return yield* resolveFailure(postId, attemptId, recordedAt, result.failure);
+    }
+    return result.success.kind === "indeterminate"
+      ? resolveIndeterminate(postId, result.success.cause)
+      : yield* resolveSuccess(postId, attemptId, recordedAt, result.success.result);
+  });
+
+/**
  * アダプタの入力を整え、試行を取り、送信の直前に予定時刻を再確認し、アダプタを呼び、結果を書く
  * (開始・外部 API・結果は 3 つの独立した書き込み)。獲得の後に残るのは、失敗しうる I/O ではなく
  * 予定時刻の再確認（P1-4）だけである。
@@ -310,11 +342,7 @@ const attemptUpload = (
   entry: ClassifiedPost,
   policy: PostTimePolicy,
   facts: ReadyFacts,
-): Effect.Effect<
-  AttemptOutcome,
-  never,
-  DeclaredAccounts | SqlClient.SqlClient | VideoFiles | XClient | YouTubeClient
-> =>
+): Effect.Effect<AttemptOutcome, never, PostRunServices> =>
   Effect.scoped(
     Effect.gen(function* () {
       const { id: postId } = entry.record;
@@ -326,14 +354,7 @@ const attemptUpload = (
       if ("outcome" in acquired) {
         return acquired.outcome;
       }
-      const result = yield* sendPost(prepared.post).pipe(Effect.result);
-      const recordedAt = new Date(yield* Clock.currentTimeMillis).toISOString();
-      if (result._tag === "Failure") {
-        return yield* resolveFailure(postId, acquired.attemptId, recordedAt, result.failure);
-      }
-      return result.success.kind === "indeterminate"
-        ? resolveIndeterminate(postId, result.success.cause)
-        : yield* resolveSuccess(postId, acquired.attemptId, recordedAt, result.success.result);
+      return yield* uploadAndRecord(postId, acquired.attemptId, prepared.prepared);
     }),
   );
 
@@ -348,7 +369,7 @@ const processDuePost = (
 ): Effect.Effect<
   DuePostOutcome,
   AccountsDeclarationInvalid | CredentialStoreFailure,
-  CredentialStore | DeclaredAccounts | SqlClient.SqlClient | VideoFiles | XClient | YouTubeClient
+  PostRunServices
 > =>
   Effect.gen(function* () {
     const { platform, id: postId } = entry.record;
@@ -379,7 +400,7 @@ export const runDuePosts = (
 ): Effect.Effect<
   ReadonlyArray<DuePostOutcome>,
   AccountsDeclarationInvalid | CredentialStoreFailure,
-  CredentialStore | DeclaredAccounts | SqlClient.SqlClient | VideoFiles | XClient | YouTubeClient
+  PostRunServices
 > =>
   Effect.gen(function* () {
     const records = yield* readAllPostRecords;
@@ -399,5 +420,5 @@ export const runPostForced = (
 ): Effect.Effect<
   DuePostOutcome,
   AccountsDeclarationInvalid | CredentialStoreFailure,
-  CredentialStore | DeclaredAccounts | SqlClient.SqlClient | VideoFiles | XClient | YouTubeClient
+  PostRunServices
 > => processDuePost(entry, new Set(), { kind: "forced" });

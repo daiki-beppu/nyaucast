@@ -1,12 +1,8 @@
-import { Effect, Option, Schema, type Scope } from "effect";
+import { Effect, Schema } from "effect";
 import { HttpBody } from "effect/http";
 
-import { DeclaredAccounts } from "../auth/declared-accounts.ts";
 import { longCut } from "../db/explainer-cuts.ts";
-import type { PostRecord } from "../db/explainer-posts.ts";
-import type { ThumbnailSelection } from "../db/explainer-thumbnails.ts";
-import type { ReadyFacts } from "../posts/post-readiness.ts";
-import { type ChunkReadFailed, type FileReader, VideoFiles } from "../videos/video-files.ts";
+import type { ChunkReadFailed, FileReader } from "../videos/video-files.ts";
 import { YouTubeClient, type YouTubeClientFailure } from "./client.ts";
 import { type ResumableUploadFailed, uploadResumable } from "./resumable-upload.ts";
 
@@ -122,62 +118,6 @@ const trySetThumbnail = (input: YouTubePostInput, remoteId: string) => {
 };
 
 /**
- * 長尺の投稿にだけ、最後に選んだサムネイルの入力を渡す（ショートには渡さない。ADR-0009 決定 8）。
- * 選択の事実があってもファイルが読めなければ "missing"（issue #553 論点 9）。選択が無い・ショートの
- * 投稿は undefined（CLI の出力に残さない。D2）。P3: 選択の事実は呼び出し側(isStillReady)が
- * 既に読んだものを受け取る。ここでは読み直さない。
- */
-const resolveThumbnailInput = (cut: string, thumbnailSelection: ThumbnailSelection | undefined) =>
-  Effect.gen(function* () {
-    if (cut !== longCut || thumbnailSelection === undefined) return undefined;
-    const videoFiles = yield* VideoFiles;
-    const reader = yield* videoFiles.openReader(thumbnailSelection.key);
-    return Option.isNone(reader)
-      ? ({ kind: "missing" } as const)
-      : ({ kind: "ready", reader: reader.value } as const);
-  });
-
-/**
- * YouTube アダプタの入力を整える(ファイルを開く・アカウントを読む・アクセストークンを解決する)。
- * 獲得の前に呼ぶ(due-posts.ts の prepareAndCheckDue)。
- *
- * P3: 最後の書き出しとサムネイルの選択は、isStillReady が既に読んだ事実(facts)をそのまま使う。
- * 再び読み直すと、検査した事実と実際に upload する事実が食い違うおそれがある(チェック対象と使用
- * 対象の不一致)。
- *
- * P1: アクセストークンをここ(送信前処理・準備段)で解決し、exchange へ渡す。予定時刻の最後の
- * 再確認(isStillDue、attemptUpload 側)より前にここで解決することで、再確認と実際の送信の間に
- * 認証取得の実 I/O(資格情報ファイルの読み・期限切れ時の更新・保存)が挟まらないようにする。
- */
-export const prepareYouTubePost = (
-  record: PostRecord,
-  facts: ReadyFacts,
-): Effect.Effect<
-  YouTubePostInput,
-  YouTubeClientFailure,
-  DeclaredAccounts | Scope.Scope | VideoFiles | YouTubeClient
-> =>
-  Effect.gen(function* () {
-    const videoFiles = yield* VideoFiles;
-    const video = Option.getOrThrow(yield* videoFiles.openReader(facts.lastExport.key));
-    const thumbnail = yield* resolveThumbnailInput(record.cut, facts.thumbnailSelection);
-    // readiness がアカウントの照合済み(due に進んだ投稿だけがここに来る)。ここで落ちれば defect。
-    const account = yield* (yield* DeclaredAccounts).require(record.platform).pipe(Effect.orDie);
-    const accessToken = yield* (yield* YouTubeClient).resolveAccessToken(account.channel);
-    const post = record.post;
-    return {
-      accessToken,
-      channel: account.channel,
-      cut: record.cut,
-      description: post.platform === "youtube" ? post.description : "",
-      scheduledAt: record.scheduledAt,
-      ...(thumbnail === undefined ? {} : { thumbnail }),
-      title: post.platform === "youtube" ? post.title : "",
-      video,
-    };
-  });
-
-/**
  * 投稿 1 件を YouTube へ出す（issue 決定 8・9）。video ID が確定してから、長尺の投稿にだけ
  * thumbnails.set で最後に選んだサムネイルを設定する。
  */
@@ -194,6 +134,8 @@ export const postToYouTube = (
       channel: input.channel,
       contentType: videoContentType,
       file: input.video,
+      // 開始の POST が 401 を返したとき、トークンの更新の間に予定時刻を過ぎたら送り直さない（#657）。
+      notAfter: input.scheduledAt,
       resource: uploadResource(input),
       startUrl: uploadStartUrl,
     });

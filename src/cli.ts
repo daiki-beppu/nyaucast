@@ -1,4 +1,5 @@
 import { Cause, Console, Effect, Layer, Result } from "effect";
+import type { HttpClient } from "effect/http";
 import type { SqlClient } from "effect/sql";
 import { CliError, Command } from "effect/cli";
 
@@ -6,6 +7,7 @@ import type { ChannelAccounts } from "./auth/accounts.ts";
 import { authCommand } from "./auth/cli.ts";
 import type { CredentialStore } from "./auth/credential-store.ts";
 import type { DeclaredAccounts } from "./auth/declared-accounts.ts";
+import type { StaticSecrets } from "./auth/secrets.ts";
 import type { ChannelSettings } from "./channel/channel-settings.ts";
 import { describeFailure } from "./failure-report.ts";
 import type { InstagramAuth } from "./instagram/auth.ts";
@@ -42,12 +44,16 @@ interface CliEnvironment<E2, R2, E3, R3, E4, R4, E5, R5> {
     E4,
     R4
   >;
-  // 時刻が来た投稿を実行する CLI（issue #553）。アダプタのある SNS（YouTube・X。#556）の client も含む。
+  // 時刻が来た投稿を実行する CLI（issue #553・#555・#556）。video.status の read model の service に、
+  // SNS のアダプタが使うもの（HTTP・Instagram の認証・静的なシークレット・X の client）を加えた集合。
   readonly post: Layer.Layer<
     | ChannelSettings
     | CredentialStore
     | DeclaredAccounts
+    | HttpClient.HttpClient
+    | InstagramAuth
     | SqlClient.SqlClient
+    | StaticSecrets
     | VideoFiles
     | XClient
     | YouTubeClient,

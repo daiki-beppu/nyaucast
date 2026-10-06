@@ -1,11 +1,9 @@
 import { Effect, Option, Schema } from "effect";
 import { HttpBody } from "effect/http";
 
-import { ChunkReadFailed, type FileReader } from "../videos/video-files.ts";
+import { ChunkReadFailed, type FileReader, readUploadChunk } from "../videos/video-files.ts";
 import { YouTubeClient, type YouTubeClientFailure } from "./client.ts";
 
-// チャンクは 256KB の倍数（issue 決定 8）。最後のチャンクだけ端数。
-const chunkBytes = 262_144;
 const resumedStatus = 308;
 
 // 失敗は、タグだけを持つ。開始の応答に Location が無い／完了の応答が video ID を持たない、いずれも事実のまま。
@@ -32,6 +30,8 @@ export interface ResumableUploadInput {
   readonly channel: string;
   readonly contentType: string;
   readonly file: FileReader;
+  /** 開始の POST だけに渡す、401 の後の再送の期限（#657。予定時刻）。チャンクの送信には効かせない。 */
+  readonly notAfter?: string;
   readonly resource: unknown;
   readonly startUrl: string;
 }
@@ -54,16 +54,11 @@ const startSession = (input: ResumableUploadInput) =>
         "x-upload-content-type": input.contentType,
       },
       method: "POST",
+      ...(input.notAfter === undefined ? {} : { notAfter: input.notAfter }),
       url: input.startUrl,
     });
     const location = response.headers["location"];
     return location === undefined ? yield* new ResumableUploadFailed() : location;
-  });
-
-const readChunk = (file: FileReader, start: number) =>
-  Effect.tryPromise({
-    catch: () => new ChunkReadFailed(),
-    try: () => file.read(start, Math.min(start + chunkBytes, file.size)),
   });
 
 const putChunk = (input: ResumableUploadInput, session: string, bytes: Uint8Array, start: number) =>
@@ -183,7 +178,7 @@ const sendChunkFrom = (
   YouTubeClient
 > =>
   Effect.gen(function* () {
-    const bytes = yield* readChunk(input.file, start);
+    const bytes = yield* readUploadChunk(input.file, start, () => new ChunkReadFailed());
     const putOutcome = yield* putChunk(input, session, bytes, start).pipe(Effect.result);
     if (putOutcome._tag === "Success") {
       return yield* continueDirectly(input, session, putOutcome.success);
