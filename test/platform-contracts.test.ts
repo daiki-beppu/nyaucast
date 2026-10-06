@@ -184,10 +184,10 @@ describe("K1 three identical check surfaces", () => {
     expect(environment["VITEST_SHARD"]).toBe("${{ matrix.shard }}/${{ strategy.job-total }}");
 
     const manifest = readJson(join(packageRoot, "package.json"));
-    const check = String(requireRecord(manifest["scripts"], "package scripts")["check"]);
-    const testGates = check
-      .split("&&")
-      .map((gate) => gate.trim())
+    const testGates = checkGates(
+      requireRecord(manifest["scripts"], "package scripts") as Record<string, string>,
+    )
+      .map(({ gate }) => gate)
       .filter((gate) => gate.startsWith("vp test"));
     // VITEST_SHARD の無いローカル・pre-push では、shard の引数が消えて全件が走る
     expect(testGates).toEqual(["vp test run ${VITEST_SHARD:+--shard=$VITEST_SHARD}"]);
@@ -211,10 +211,6 @@ describe("K1 three identical check surfaces", () => {
   test("the declared check gate set includes the lockfile gate without duplicates", () => {
     const manifest = readJson(join(packageRoot, "package.json"));
     const scripts = requireRecord(manifest["scripts"], "package scripts");
-    const check = scripts["check"];
-    if (typeof check !== "string") {
-      throw new TypeError("scripts.check must be a string");
-    }
     const gates = checkGates(scripts as Record<string, string>);
 
     expect(gates.map(({ gate }) => gate)).toContain("pnpm run lockfile:check");
@@ -223,6 +219,44 @@ describe("K1 three identical check surfaces", () => {
     for (const { commands, gate } of gates) {
       expect(commands.length, gate).toBeGreaterThan(0);
     }
+  });
+
+  // 互いに依存しない静的ゲートは、テストの直前に 1 つの正規表現のゲートとしてまとめて並行に走らせる（#748）
+  test("the gate right before the tests runs several scripts at once", () => {
+    const manifest = readJson(join(packageRoot, "package.json"));
+    const gates = checkGates(
+      requireRecord(manifest["scripts"], "package scripts") as Record<string, string>,
+    );
+    const tests = gates.findIndex(({ gate }) => gate.startsWith("vp test"));
+
+    expect(gates[tests - 1]?.gate).toMatch(/^pnpm run '\/.+\/'$/u);
+    expect(gates[tests - 1]?.commands.length).toBeGreaterThan(1);
+  });
+
+  // pnpm が並行に走らせた script の 1 つが失敗したら、check はそこで止まって失敗する（最初に失敗したゲートで止まる）
+  test("a gate that runs several scripts at once fails when one of them fails", () => {
+    withTemporaryDirectory("nyaucast-parallel-gate-", (directory) => {
+      writeFileSync(
+        join(directory, "package.json"),
+        JSON.stringify({
+          name: "parallel-gate",
+          private: true,
+          scripts: {
+            "fails:check": "exit 3",
+            "passes:check": "exit 0",
+            "slow:check": "sleep 20",
+            check: "pnpm run '/^(fails|passes|slow):check$/' && echo after-the-gate",
+          },
+        }),
+      );
+      const started = Date.now();
+      const result = spawnSync("pnpm", ["run", "check"], { cwd: directory, encoding: "utf8" });
+
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).not.toContain("after-the-gate");
+      // 遅い script の終わりを待たずに止まる
+      expect(Date.now() - started).toBeLessThan(10_000);
+    });
   });
 
   test("the dependency graph remains visible in a single-document lockfile", () => {
