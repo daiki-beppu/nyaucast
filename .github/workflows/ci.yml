@@ -18,7 +18,7 @@ jobs:
       fail-fast: false
       matrix:
         # 本数は同時刻の計測で選んだ（2 本は平均約 120 秒、3 本は約 110 秒。#715 のコメント）
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4]
     env:
       VITEST_SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
     # concurrency は job 側に置く。workflow レベルに置くと workflow_call 経由の
