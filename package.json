@@ -28,7 +28,7 @@
     "access": "public"
   },
   "scripts": {
-    "check": "pnpm run lockfile:check && vp check && pnpm run effect:check && pnpm run actions:check && vp test run && pnpm run fallow",
+    "check": "pnpm run lockfile:check && vp check && pnpm run effect:check && pnpm run actions:check && vp test run ${VITEST_SHARD:+--shard=$VITEST_SHARD} && pnpm run fallow",
     "lockfile:check": "pnpm install --frozen-lockfile --lockfile-only",
     "actions:check": "github-actionlint",
     "fallow": "fallow --no-cache --fail-on-issues",
