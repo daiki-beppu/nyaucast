@@ -17,24 +17,54 @@ const windowedSinc = (offset: number): number => {
   return (window * Math.sin(Math.PI * offset)) / (Math.PI * offset);
 };
 
-const interpolators = [0.25, 0.5, 0.75].map((fraction) =>
-  Float64Array.from({ length: 2 * halfTaps }, (_, tap) =>
-    windowedSinc(tap - halfTaps + 1 - fraction),
-  ),
-);
+const tapCount = 2 * halfTaps;
 
-// サンプル数 × 3 点 × 32 タップを回すホットループなので、サンプルごとに配列・クロージャを作らず、自前の関数も呼ばない（#685）。
-// 端の外は無音として扱い、タップの範囲を端で切って 0 の項を足さずに済ませる。
-const interpolatedPeak = (channel: Float32Array, taps: Float64Array): number => {
+const interpolatorAt = (fraction: number): Float64Array =>
+  Float64Array.from({ length: tapCount }, (_, tap) => windowedSinc(tap - halfTaps + 1 - fraction));
+
+const quarterTaps = interpolatorAt(0.25);
+const halfwayTaps = interpolatorAt(0.5);
+const threeQuarterTaps = interpolatorAt(0.75);
+
+// サンプル数 × 3 点 × 32 タップを回すホットループなので、サンプルごとに配列・クロージャを作らない（#685）。
+// 端の外は無音として扱う。前後に halfTaps 個の無音を足した写しを回し、タップの範囲をサンプルごとに切らずに済ませる（0 の項を足しても和は変わらない）。
+// 窓のサンプルを 1 度の読み込みで 2 点に使う（#723）。3 点を 1 つのループにまとめると複雑度の上限を超えるので、残りの 1 点は別に回す。
+// どの点も、タップの順に足すので、点ごとに回すのと同じ値になる。
+const twoPointPeak = (
+  padded: Float32Array,
+  start: number,
+  first: Float64Array,
+  second: Float64Array,
+): number => {
+  let firstSum = 0;
+  let secondSum = 0;
+  for (let tap = 0; tap < tapCount; tap += 1) {
+    const sample = padded[start + tap] ?? 0;
+    firstSum += sample * (first[tap] ?? 0);
+    secondSum += sample * (second[tap] ?? 0);
+  }
+  return Math.max(Math.abs(firstSum), Math.abs(secondSum));
+};
+
+const pointPeak = (padded: Float32Array, start: number, coefficients: Float64Array): number => {
+  let sum = 0;
+  for (let tap = 0; tap < tapCount; tap += 1) {
+    sum += (padded[start + tap] ?? 0) * (coefficients[tap] ?? 0);
+  }
+  return Math.abs(sum);
+};
+
+const interpolatedPeak = (channel: Float32Array): number => {
+  const padded = new Float32Array(channel.length + tapCount);
+  padded.set(channel, halfTaps);
   let peak = 0;
-  for (let index = 0; index < channel.length; index += 1) {
-    const windowStart = index - halfTaps + 1;
-    const tapEnd = Math.min(taps.length, channel.length - windowStart);
-    let sum = 0;
-    for (let tap = Math.max(0, -windowStart); tap < tapEnd; tap += 1) {
-      sum += (channel[windowStart + tap] ?? 0) * (taps[tap] ?? 0);
-    }
-    peak = Math.max(peak, Math.abs(sum));
+  // 元の信号の index - halfTaps + 1 から始まる窓は、写しでは index + 1 から始まる。
+  for (let start = 1; start <= channel.length; start += 1) {
+    peak = Math.max(
+      peak,
+      twoPointPeak(padded, start, quarterTaps, halfwayTaps),
+      pointPeak(padded, start, threeQuarterTaps),
+    );
   }
   return peak;
 };
@@ -48,7 +78,7 @@ const samplePeak = (channel: Float32Array): number => {
 };
 
 const channelPeak = (channel: Float32Array): number =>
-  Math.max(samplePeak(channel), ...interpolators.map((taps) => interpolatedPeak(channel, taps)));
+  Math.max(samplePeak(channel), interpolatedPeak(channel));
 
 /** true peak（dBTP）。全チャンネルの最大。無音は -Infinity。 */
 export const truePeak = (channels: readonly Float32Array[]): number =>
