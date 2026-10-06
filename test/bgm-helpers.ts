@@ -233,23 +233,35 @@ export const loudness = (channels: readonly Float32Array[]): number | null =>
     { fs: sampleRate },
   );
 
-// 帯域制限された補間: 位置 position（サンプル単位の小数）の値を、周囲 16 サンプルの窓付き sinc で求める。
-const valueAt = (channel: Float32Array, position: number): number => {
-  const first = Math.floor(position) - 7;
+// 補間点 fraction の、周囲 16 サンプルへの sinc と窓の係数。係数は位置との距離（fraction + 7 - offset）だけで決まるので、補間点ごとに 1 度だけ計算しておく（#723）。
+const kernelAt = (fraction: number) => {
+  const distances = Array.from({ length: 16 }, (_, offset) => fraction + 7 - offset);
+  return {
+    sincs: Float64Array.from(distances, (distance) =>
+      distance === 0 ? 1 : Math.sin(Math.PI * distance) / (Math.PI * distance),
+    ),
+    windows: Float64Array.from(
+      distances,
+      (distance) => 0.5 + 0.5 * Math.cos((Math.PI * distance) / 8.5),
+    ),
+  };
+};
+
+type Kernel = ReturnType<typeof kernelAt>;
+
+const kernels = [0, 0.25, 0.5, 0.75].map(kernelAt);
+
+// 帯域制限された補間: サンプル index から fraction だけ進んだ位置の値を、周囲 16 サンプルの窓付き sinc で求める。
+const valueAt = (channel: Float32Array, index: number, { sincs, windows }: Kernel): number => {
   let sum = 0;
-  for (let index = first; index < first + 16; index += 1) {
-    const distance = position - index;
-    const sinc = distance === 0 ? 1 : Math.sin(Math.PI * distance) / (Math.PI * distance);
-    sum += (channel[index] ?? 0) * sinc * (0.5 + 0.5 * Math.cos((Math.PI * distance) / 8.5));
+  for (let offset = 0; offset < 16; offset += 1) {
+    sum += (channel[index - 7 + offset] ?? 0) * (sincs[offset] ?? 0) * (windows[offset] ?? 0);
   }
   return sum;
 };
 
 const quarterPeak = (channel: Float32Array, index: number): number =>
-  [0, 0.25, 0.5, 0.75].reduce(
-    (peak, fraction) => Math.max(peak, Math.abs(valueAt(channel, index + fraction))),
-    0,
-  );
+  kernels.reduce((peak, kernel) => Math.max(peak, Math.abs(valueAt(channel, index, kernel))), 0);
 
 /** 4 倍オーバーサンプリングした true peak（dBTP）。無音は -Infinity。 */
 export const truePeakDbtp = (channels: readonly Float32Array[]): number => {
