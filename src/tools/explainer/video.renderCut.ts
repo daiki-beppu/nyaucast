@@ -1,4 +1,4 @@
-import { Effect, Option, Schema, Semaphore } from "effect";
+import { Effect, Option, Schema } from "effect";
 import { Tool } from "effect/ai";
 
 import { encodeMp4 } from "../../audio/media.ts";
@@ -24,6 +24,7 @@ import { audioTrackKey } from "../../videos/audio-track.ts";
 import { CutField, type CutRequest } from "../../videos/cuts.ts";
 import { ProduceGateNotApproved } from "../../videos/produce-gate.ts";
 import { type FileReader, VideoFiles } from "../../videos/video-files.ts";
+import { RenderLock } from "../../videos/render-lock.ts";
 
 class AudioTrackNotFound extends Schema.TaggedError<AudioTrackNotFound>()("AudioTrackNotFound", {
   videoId: Schema.String,
@@ -197,8 +198,8 @@ const renderCut = Effect.fn("video.renderCut")(function* ({ cut, force, videoId 
   };
 });
 
-// 同じ動画への並行する呼び出しが、同じ一時ファイルへ書いてぶつからず、同じ行を二重に積まないよう、直列にする。
-const renderLock = Semaphore.makeUnsafe(1);
-
 export const explainerVideoRenderCut = (input: CutRequest) =>
-  renderLock.withPermits(1)(Effect.scoped(renderCut(input)));
+  Effect.gen(function* () {
+    const lock = yield* RenderLock;
+    return yield* lock.withPermits(1)(Effect.scoped(renderCut(input)));
+  });
