@@ -47,6 +47,8 @@ const noStopPermanentTags = new Set<string>([
   "ResumableUploadFailed",
   "ThumbnailReadFailed",
   "UntrustedYouTubeUrl",
+  // due-posts が先に拾って結果を書かない（#657）。ここに届いても同じアカウントは止めない。
+  "YouTubeResendDeadlinePassed",
   "YouTubeResponseInvalid",
 ]);
 

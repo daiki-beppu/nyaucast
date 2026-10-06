@@ -1127,6 +1127,44 @@ describe("runDuePosts: P1 - the access token is resolved before the final due-ti
   );
 });
 
+// #657: upload の開始の POST が 401 を返すと、クライアントはトークンを更新して同じ POST を送り直す。
+// 更新の間に予定時刻を過ぎたまま送ると、publishAt が過去の動画ができて即時公開になる。
+describe("runDuePosts: #657 - the scheduled time is re-checked before resending after a 401", () => {
+  it.effect(
+    "does not resend the upload start and writes no result when the token refresh after a 401 " +
+      "runs past the scheduled time",
+    () =>
+      inPostsChannel("nyaucast-due-posts-657-resend-expiry-", ["youtube"], (_channelRoot) =>
+        Effect.gen(function* () {
+          yield* prepareVideoFacts(longCut);
+          const postId = yield* insertPost({});
+          yield* setClock(defaultScheduledAt);
+          // 応答は 401 の 1 つだけ。送り直すと応答の列が尽きて die する。
+          const fixture = fakeYouTubeHttp([googleErrorResponse(401, ["authError"])]);
+          const slowRefreshAuth = YouTubeAuth.of({
+            authorize: () => Effect.die("authorize is not exercised by this test"),
+            getAccessToken: () => Effect.succeed("ACCESS_TOKEN_SENTINEL"),
+            refreshAccessToken: () =>
+              Effect.gen(function* () {
+                yield* TestClock.adjust("2 hours");
+                return "REFRESHED_ACCESS_TOKEN_SENTINEL";
+              }),
+          });
+
+          const outcomes = yield* runDuePosts(60).pipe(
+            Effect.provide(youtubeClientLayer(fixture.http, slowRefreshAuth)),
+          );
+
+          assert.strictEqual(fixture.calls.length, 1);
+          assert.deepStrictEqual(outcomes, [{ kind: "scheduled_in_past", postId }]);
+          // 試行は取られているが、結果は書かれない（次回実行は「結果の無い試行」として確認待ちにする）。
+          assert.strictEqual((yield* attemptRows).length, 1);
+          assert.strictEqual((yield* attemptResultRows).length, 0);
+        }),
+      ),
+  );
+});
+
 // Companion 指摘(testing-review-companion を独立に再検討した結果): 送信前処理そのもの(アクセス
 // トークンの解決)が失敗した場合、以前は試行を獲得せず indeterminate(結果を書かない)として扱って
 // いた。これは upload を 1 回も呼んでおらず完了可否が不明というB系の不確定とは異なり、認証の失敗を

@@ -38,6 +38,8 @@ export interface ResumableUploadInput {
   readonly channel: string;
   readonly contentType: string;
   readonly file: FileReader;
+  /** 開始の POST だけに渡す、401 の後の再送の期限（#657。予定時刻）。チャンクの送信には効かせない。 */
+  readonly notAfter?: string;
   readonly resource: unknown;
   readonly startUrl: string;
 }
@@ -60,6 +62,7 @@ const startSession = (input: ResumableUploadInput) =>
         "x-upload-content-type": input.contentType,
       },
       method: "POST",
+      ...(input.notAfter === undefined ? {} : { notAfter: input.notAfter }),
       url: input.startUrl,
     });
     const location = response.headers["location"];

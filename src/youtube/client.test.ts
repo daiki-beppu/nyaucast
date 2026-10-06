@@ -600,6 +600,71 @@ describe("YouTube REST client", () => {
     );
   });
 
+  // #657: 401 の後の再送の前に、呼び出し側が渡した期限（notAfter）を確かめる。トークンの更新の間に
+  // 期限を過ぎていたら送り直さない。期限は再送の前だけに効き、最初の送信は止めない。
+  describe("YouTube REST client: exchange checks notAfter before resending after a 401", () => {
+    const notAfter = new Date(60_000).toISOString();
+    const exchangeNow = (fixture: Fixture, request: ExchangeRequest) =>
+      Effect.gen(function* () {
+        const client = yield* YouTubeClient;
+        return yield* Effect.result(client.exchange(request));
+      }).pipe(Effect.provide(fixture.layer));
+
+    it.effect("fails without resending when the token refresh runs past notAfter", () =>
+      Effect.gen(function* () {
+        const fixture = createFixture([googleError(401, ["authError"]), jsonResponse(night)]);
+        fixture.refreshAccessToken.mockImplementation(() =>
+          Effect.as(TestClock.adjust("2 minutes"), "REFRESHED_ACCESS_TOKEN"),
+        );
+
+        const result = yield* exchangeNow(fixture, {
+          channel: "deepfocus365",
+          method: "POST",
+          notAfter,
+          url: uploadStartUrl,
+        });
+
+        assert.strictEqual(failed(result)._tag, "YouTubeResendDeadlinePassed");
+        expect(fixture.refreshAccessToken).toHaveBeenCalledOnce();
+        assert.strictEqual(fixture.calls.length, 1);
+      }),
+    );
+
+    it.effect("resends after refreshing when notAfter has not passed yet", () =>
+      Effect.gen(function* () {
+        const fixture = createFixture([googleError(401, ["authError"]), jsonResponse(night)]);
+
+        const result = yield* exchangeNow(fixture, {
+          channel: "deepfocus365",
+          method: "POST",
+          notAfter,
+          url: uploadStartUrl,
+        });
+
+        assert.strictEqual(result._tag, "Success");
+        assert.strictEqual(fixture.calls.length, 2);
+        assert.strictEqual(fixture.calls[1]?.authorization, "Bearer REFRESHED_ACCESS_TOKEN");
+      }),
+    );
+
+    it.effect("sends the first request even when notAfter has already passed", () =>
+      Effect.gen(function* () {
+        yield* TestClock.adjust("2 minutes");
+        const fixture = createFixture([jsonResponse(night)]);
+
+        const result = yield* exchangeNow(fixture, {
+          channel: "deepfocus365",
+          method: "POST",
+          notAfter,
+          url: uploadStartUrl,
+        });
+
+        assert.strictEqual(result._tag, "Success");
+        assert.strictEqual(fixture.calls.length, 1);
+      }),
+    );
+  });
+
   describe("with the real credential store", () => {
     const channel = "deepfocus365";
     const storedAccessToken = "STORED_ACCESS_TOKEN_SENTINEL";

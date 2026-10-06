@@ -306,6 +306,30 @@ const acquireAndCheckDue = (
   });
 
 /**
+ * 取った試行でアダプタを呼び、結果を書く。401 の後の更新の間に予定時刻を過ぎて、開始を送り直さなかった
+ * とき（#657）は動画が作られていないので、獲得の直後の再確認に落ちたときと同じく、結果を書かずに
+ * 確認待ちへ回す。
+ */
+const uploadAndRecord = (postId: number, attemptId: number, prepared: PreparedPost) =>
+  Effect.gen(function* () {
+    const result = yield* sendPreparedPost(prepared).pipe(Effect.result);
+    const recordedAt = new Date(yield* Clock.currentTimeMillis).toISOString();
+    if (result._tag === "Failure" && result.failure._tag === "YouTubeResendDeadlinePassed") {
+      const skipped: AttemptOutcome = {
+        outcome: { kind: "scheduled_in_past", postId },
+        stopAccount: false,
+      };
+      return skipped;
+    }
+    if (result._tag === "Failure") {
+      return yield* resolveFailure(postId, attemptId, recordedAt, result.failure);
+    }
+    return result.success.kind === "indeterminate"
+      ? resolveIndeterminate(postId, result.success.cause)
+      : yield* resolveSuccess(postId, attemptId, recordedAt, result.success.result);
+  });
+
+/**
  * アダプタの入力を整え、試行を取り、送信の直前に予定時刻を再確認し、アダプタを呼び、結果を書く
  * (開始・外部 API・結果は 3 つの独立した書き込み)。獲得の後に残るのは、失敗しうる I/O ではなく
  * 予定時刻の再確認（P1-4）だけである。
@@ -326,14 +350,7 @@ const attemptUpload = (
       if ("outcome" in acquired) {
         return acquired.outcome;
       }
-      const result = yield* sendPreparedPost(prepared.prepared).pipe(Effect.result);
-      const recordedAt = new Date(yield* Clock.currentTimeMillis).toISOString();
-      if (result._tag === "Failure") {
-        return yield* resolveFailure(postId, acquired.attemptId, recordedAt, result.failure);
-      }
-      return result.success.kind === "indeterminate"
-        ? resolveIndeterminate(postId, result.success.cause)
-        : yield* resolveSuccess(postId, acquired.attemptId, recordedAt, result.success.result);
+      return yield* uploadAndRecord(postId, acquired.attemptId, prepared.prepared);
     }),
   );
 
