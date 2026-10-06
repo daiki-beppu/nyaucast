@@ -17,7 +17,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        # 本数は同時刻の計測で選んだ（2 本は平均約 120 秒、3 本は約 110 秒。#715 のコメント）
+        shard: [1, 2, 3]
     env:
       VITEST_SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
     # concurrency は job 側に置く。workflow レベルに置くと workflow_call 経由の
@@ -25,7 +26,7 @@ jobs:
     # 同じ group を要求して deadlock する。group 名に ${{ github.workflow }} を
     # 使わないのも同じ理由で、called workflow では呼び出し元の workflow 名
     # （Release）へ解決され、group 名は大文字小文字を区別しない。
-    # group に shard を含める。含めないと matrix の 2 つの job が同じ group を掴み、PR では互いを取り消す。
+    # group に shard を含める。含めないと matrix の job が同じ group を掴み、PR では互いを取り消す。
     concurrency:
       group: ci-quality-${{ github.event.pull_request.number || github.ref }}-${{ matrix.shard }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
