@@ -6,8 +6,19 @@ import { TestClock } from "effect/testing";
 
 import { explainerConfig } from "../../test/explainer-helpers.ts";
 import { runProgram, selectAll, setClock } from "../../test/helpers.ts";
+import {
+  containerStatusUrl,
+  instagramAuthLayer,
+  mediaCreateUrl,
+  mediaPublishUrl,
+  r2KeyFor,
+  r2ObjectUrl,
+  r2SecretsLayer,
+  statusSequence,
+} from "../../test/instagram-fake.ts";
 import { declareAccounts } from "../../test/post-draft-helpers.ts";
 import { channelNameOf, storeToken } from "../../test/publish-helpers.ts";
+import { fakeHttp, type Routes } from "../../test/sns-api.ts";
 import { withToolChannel } from "../../test/tool-helpers.ts";
 import {
   fakeYouTubeHttp,
@@ -138,7 +149,9 @@ const inPostsChannel = <A, E, R>(
       for (const platform of platforms) {
         yield* storeToken(channelRoot, platform);
       }
-      return yield* use(channelRoot);
+      // issue #555: Instagram のアダプタが長期トークンの解決を要求する。偽の認証は Instagram の
+      // 投稿を通すときだけ呼ばれ、YouTube・X だけの節では一度も呼ばれない。
+      return yield* use(channelRoot).pipe(Effect.provide(instagramAuthLayer));
     }),
   );
 
@@ -1571,6 +1584,486 @@ describe("nyaucast post run: the CLI entry point (not just the command tree)", (
           assert.deepStrictEqual(logs, [
             `succeeded: post ${postId} remoteId=VIDEO1 thumbnailSetFailed=true`,
           ]);
+        }),
+      ),
+  );
+});
+
+// issue #555: Instagram へのアダプタが足されたので、due の Instagram の投稿は no_adapter で
+// 飛ばされず、実際にアダプタ(R2 への PUT →メディアコンテナの作成 → polling → media_publish。
+// 順序・is_ai_generated・video_url・削除の直接証拠は src/instagram/post-adapter.test.ts が持つ)を
+// 通る。X はこの差分の対象外のままアダプタを持たない(C12)。
+const unusedYouTubeClientLayer = youtubeClientLayer(fakeYouTubeHttp([]).http);
+
+describe("runDuePosts: C10 - a due Instagram post is no longer skipped with no_adapter", () => {
+  it.effect(
+    "runs the Instagram post through to success (R2 upload, container, publish), not no_adapter",
+    () =>
+      inPostsChannel("nyaucast-due-posts-instagram-happy-", ["instagram"], (channelRoot) =>
+        Effect.gen(function* () {
+          yield* prepareVideoFacts(longCut);
+          const postId = yield* insertPost({ platform: "instagram" });
+          yield* setClock(defaultScheduledAt);
+          const key = r2KeyFor(channelNameOf(channelRoot), postId);
+          const r2Url = r2ObjectUrl(key);
+          const routes: Routes = {
+            [`PUT ${r2Url}`]: () => new Response(null, { status: 200 }),
+            [`DELETE ${r2Url}`]: () => new Response(null, { status: 204 }),
+            [`POST ${mediaCreateUrl()}`]: () => Response.json({ id: "CONTAINER1" }),
+            [`GET ${containerStatusUrl("CONTAINER1")}`]: statusSequence(["FINISHED"]),
+            [`POST ${mediaPublishUrl()}`]: () => Response.json({ id: "IG-POST-1" }),
+          };
+          const fixture = fakeHttp(routes);
+
+          const outcomes = yield* runDuePosts(60).pipe(
+            Effect.provide(unusedYouTubeClientLayer),
+            Effect.provide(r2SecretsLayer(channelRoot)),
+            Effect.provide(fixture.layer),
+          );
+
+          assert.deepStrictEqual(outcomes, [{ kind: "succeeded", postId, remoteId: "IG-POST-1" }]);
+          const [result] = yield* attemptResultRows;
+          assert.strictEqual(result?.["outcome"], "succeeded");
+          assert.strictEqual(result!["remote_id"], "IG-POST-1");
+          // R2 のオブジェクトは試行の終わりに削除されている(AC1。直接証拠は post-adapter.test.ts)。
+          assert.isDefined(fixture.requests.find((request) => request.key === `DELETE ${r2Url}`));
+        }),
+      ),
+  );
+});
+
+describe("runDuePosts: C12 - a due X post still has no adapter (out of scope for this issue)", () => {
+  it.effect("reports no_adapter for X, unaffected by adding the Instagram adapter", () =>
+    inPostsChannel("nyaucast-due-posts-x-no-adapter-", ["x"], (_channelRoot) =>
+      Effect.gen(function* () {
+        yield* prepareVideoFacts(longCut);
+        const postId = yield* insertPost({ platform: "x" });
+        yield* setClock(defaultScheduledAt);
+
+        const outcomes = yield* runDuePosts(60).pipe(
+          Effect.provide(unusedYouTubeClientLayer),
+          Effect.provide(r2SecretsLayer(_channelRoot)),
+        );
+
+        assert.deepStrictEqual(outcomes, [{ kind: "no_adapter", platform: "x", postId }]);
+        assert.strictEqual((yield* attemptRows).length, 0);
+      }),
+    ),
+  );
+});
+
+// C7: R2/Graph API の HTTP の失敗の分類が、YouTube と同じ一時的/恒久的の規則(classifyPostFailure)
+// に従うことを、新しく足した分岐で確認する(既存の分類の仕組み自体は YouTube の 429/401 のテストが
+// 確認済みなので、ここでは Instagram を初めて通す分岐だけを見る)。
+describe("runDuePosts: C7 - Instagram's Graph API failures are classified the same way YouTube's are", () => {
+  /**
+   * 同じチャンネル・同じアカウントで due の Instagram の投稿を 2 件用意する(2 件目は別のカットの
+   * 書き出しを足す)。1 件目の失敗が、同じ実行の中で 2 件目を止めるかどうかを見るための前提。
+   */
+  const twoDueInstagramPosts = Effect.gen(function* () {
+    yield* prepareVideoFacts(longCut);
+    const clip = "short-1-clip";
+    yield* appendCutExport({
+      compositionHash: "ig-c1",
+      cut: clip,
+      key: exportKeyOf(clip),
+      renderHash: "ig-r1",
+      videoId,
+    });
+    yield* appendCutPreview({ compositionHash: "ig-c1", cut: clip, videoId });
+    yield* (yield* VideoFiles).write(exportKeyOf(clip), Uint8Array.from([1, 1, 1]));
+    const first = yield* insertPost({ platform: "instagram" });
+    const second = yield* insertPost({ cut: clip, platform: "instagram" });
+    return { first, second };
+  });
+
+  it.effect(
+    "classifies a 429 from the container-creation call as temporary and leaves the post due",
+    () =>
+      inPostsChannel("nyaucast-due-posts-instagram-429-", ["instagram"], (channelRoot) =>
+        Effect.gen(function* () {
+          yield* prepareVideoFacts(longCut);
+          const postId = yield* insertPost({ platform: "instagram" });
+          yield* setClock(defaultScheduledAt);
+          const key = r2KeyFor(channelNameOf(channelRoot), postId);
+          const r2Url = r2ObjectUrl(key);
+          const routes: Routes = {
+            [`PUT ${r2Url}`]: () => new Response(null, { status: 200 }),
+            [`DELETE ${r2Url}`]: () => new Response(null, { status: 204 }),
+            [`POST ${mediaCreateUrl()}`]: () =>
+              Response.json({ error: { message: "rate limited" } }, { status: 429 }),
+          };
+          const fixture = fakeHttp(routes);
+
+          const outcomes = yield* runDuePosts(60).pipe(
+            Effect.provide(unusedYouTubeClientLayer),
+            Effect.provide(r2SecretsLayer(channelRoot)),
+            Effect.provide(fixture.layer),
+          );
+
+          assert.strictEqual(outcomes.length, 1);
+          assert.strictEqual((outcomes[0] as { kind: string }).kind, "temporary");
+          const [result] = yield* attemptResultRows;
+          assert.strictEqual(result?.["outcome"], "temporary");
+        }),
+      ),
+  );
+
+  it.effect(
+    "classifies a 401 from the container-creation call as permanent and stops the rest of that account's posts",
+    () =>
+      inPostsChannel("nyaucast-due-posts-instagram-401-", ["instagram"], (channelRoot) =>
+        Effect.gen(function* () {
+          const { first, second } = yield* twoDueInstagramPosts;
+          yield* setClock(defaultScheduledAt);
+          const key1 = r2KeyFor(channelNameOf(channelRoot), first);
+          const r2Url1 = r2ObjectUrl(key1);
+          const routes: Routes = {
+            [`PUT ${r2Url1}`]: () => new Response(null, { status: 200 }),
+            [`DELETE ${r2Url1}`]: () => new Response(null, { status: 204 }),
+            [`POST ${mediaCreateUrl()}`]: () =>
+              Response.json({ error: { message: "unauthorized" } }, { status: 401 }),
+          };
+          const fixture = fakeHttp(routes);
+
+          const outcomes = yield* runDuePosts(60).pipe(
+            Effect.provide(unusedYouTubeClientLayer),
+            Effect.provide(r2SecretsLayer(channelRoot)),
+            Effect.provide(fixture.layer),
+          );
+
+          const byPost = new Map(outcomes.map((outcome) => [outcome.postId, outcome]));
+          assert.strictEqual(
+            (byPost.get(first) as { kind: string } | undefined)?.kind,
+            "permanent",
+          );
+          assert.deepStrictEqual(byPost.get(second), { kind: "account_stopped", postId: second });
+          // 2 件目(同じアカウント)は試行すら取られない: 1 件目の PUT・メディア作成・削除の
+          // 3 件だけで、2 件目の R2 の PUT は 1 件も発生しない(fakeHttp は routes に無いキーで
+          // die するので、2 件目が R2/Graph へ届いていればこのテスト自体が死んで検出できる)。
+          assert.strictEqual(fixture.requests.length, 3);
+        }),
+      ),
+  );
+
+  // R2 の 5xx も Graph API と同じ status の規則を通る（一時的）。
+  it.effect("classifies a 5xx from the R2 PUT as temporary", () =>
+    inPostsChannel("nyaucast-due-posts-instagram-r2-500-", ["instagram"], (channelRoot) =>
+      Effect.gen(function* () {
+        yield* prepareVideoFacts(longCut);
+        const postId = yield* insertPost({ platform: "instagram" });
+        yield* setClock(defaultScheduledAt);
+        const r2Url = r2ObjectUrl(r2KeyFor(channelNameOf(channelRoot), postId));
+        const fixture = fakeHttp({
+          [`PUT ${r2Url}`]: () => new Response(null, { status: 500 }),
+          [`DELETE ${r2Url}`]: () => new Response(null, { status: 204 }),
+        });
+
+        const outcomes = yield* runDuePosts(60).pipe(
+          Effect.provide(unusedYouTubeClientLayer),
+          Effect.provide(r2SecretsLayer(channelRoot)),
+          Effect.provide(fixture.layer),
+        );
+
+        assert.deepStrictEqual(outcomes, [{ kind: "temporary", postId, tag: "R2HttpFailure" }]);
+        const [result] = yield* attemptResultRows;
+        assert.strictEqual(result?.["outcome"], "temporary");
+      }),
+    ),
+  );
+
+  // 2xx なのにコンテナ ID が読めない応答は、入力の検証と同じ恒久的な失敗（再試行しても変わらない）。
+  it.effect("classifies a container-creation response without an ID as permanent", () =>
+    inPostsChannel("nyaucast-due-posts-instagram-bad-body-", ["instagram"], (channelRoot) =>
+      Effect.gen(function* () {
+        yield* prepareVideoFacts(longCut);
+        const postId = yield* insertPost({ platform: "instagram" });
+        yield* setClock(defaultScheduledAt);
+        const r2Url = r2ObjectUrl(r2KeyFor(channelNameOf(channelRoot), postId));
+        const fixture = fakeHttp({
+          [`PUT ${r2Url}`]: () => new Response(null, { status: 200 }),
+          [`DELETE ${r2Url}`]: () => new Response(null, { status: 204 }),
+          [`POST ${mediaCreateUrl()}`]: () => Response.json({ unexpected: true }),
+        });
+
+        const outcomes = yield* runDuePosts(60).pipe(
+          Effect.provide(unusedYouTubeClientLayer),
+          Effect.provide(r2SecretsLayer(channelRoot)),
+          Effect.provide(fixture.layer),
+        );
+
+        assert.deepStrictEqual(outcomes, [
+          { kind: "permanent", postId, tag: "InstagramResponseInvalid" },
+        ]);
+        const [result] = yield* attemptResultRows;
+        assert.strictEqual(result?.["outcome"], "permanent");
+      }),
+    ),
+  );
+
+  // Graph API は同じ HTTP status を別の原因で使い回す(403 が利用制限にも権限エラーにも、400 が認証の
+  // 失敗にも入力の誤りにもなる)ので、status だけでは ADR-0009 決定 9 の「quota 切れは一時的」
+  // 「認証の失敗はそのアカウントの残りを試さない」を満たせない。本文のエラーコードで分かれることを、
+  // コードだけを変えた対の入力で確認する。
+  const graphErrorRoute = (body: unknown, status: number) => ({
+    [`POST ${mediaCreateUrl()}`]: () => Response.json(body, { status }),
+  });
+
+  // SCN-U1-P1 / N1 / N3: status・経路・投稿をすべて同じにして、本文の `error.code` だけを変える。
+  // 4 はアプリのレート制限(quota 切れ)なので一時的、100 は入力の誤りなので恒久的、数値でない値は
+  // 封筒の decode が失敗してコードなしに落ち、既存の status の規則(403 は quotaExceeded 以外は
+  // 恒久的)で決まる。どの場合も同じ実行の中で送り直さず、試行の終わりに R2 のオブジェクトを消す。
+  it.effect.each([
+    ["the app-level rate limit code 4", "temporary", { code: 4 }],
+    ["the non-rate-limit code 100", "permanent", { code: 100 }],
+    ["a non-numeric code", "permanent", { code: "4" }],
+  ] as const)(
+    "classifies a 403 from the container-creation call carrying %s as %s",
+    ([, expected, error]) =>
+      inPostsChannel(
+        `nyaucast-due-posts-instagram-graph-code-${error.code}-${expected}-`,
+        ["instagram"],
+        (channelRoot) =>
+          Effect.gen(function* () {
+            yield* prepareVideoFacts(longCut);
+            const postId = yield* insertPost({ platform: "instagram" });
+            yield* setClock(defaultScheduledAt);
+            const r2Url = r2ObjectUrl(r2KeyFor(channelNameOf(channelRoot), postId));
+            const fixture = fakeHttp({
+              [`PUT ${r2Url}`]: () => new Response(null, { status: 200 }),
+              [`DELETE ${r2Url}`]: () => new Response(null, { status: 204 }),
+              ...graphErrorRoute({ error }, 403),
+            });
+
+            const outcomes = yield* runDuePosts(60).pipe(
+              Effect.provide(unusedYouTubeClientLayer),
+              Effect.provide(r2SecretsLayer(channelRoot)),
+              Effect.provide(fixture.layer),
+            );
+
+            assert.deepStrictEqual(outcomes, [
+              { kind: expected, postId, tag: "InstagramHttpFailure" },
+            ]);
+            const [result] = yield* attemptResultRows;
+            assert.strictEqual(result?.["outcome"], expected);
+            assert.isNull(result?.["remote_id"] ?? null);
+            // 同じ実行の中では送り直さない(コンテナの作成は 1 回だけ)。試行の終わりの削除は呼ばれる。
+            assert.strictEqual(
+              fixture.requests.filter((request) => request.key === `POST ${mediaCreateUrl()}`)
+                .length,
+              1,
+            );
+            assert.isDefined(fixture.requests.find((request) => request.key === `DELETE ${r2Url}`));
+          }),
+      ),
+  );
+
+  // SCN-U1-P2: コード 190 は Invalid OAuth 2.0 Access Token。status が 401 でなくても認証の失敗
+  // なので、その実行ではそのアカウントの残りを試さない(ADR-0009 決定 9)。
+  it.effect(
+    "stops the rest of that account's posts when a 400 carries the Graph authentication error code (190)",
+    () =>
+      inPostsChannel("nyaucast-due-posts-instagram-graph-code-190-", ["instagram"], (channelRoot) =>
+        Effect.gen(function* () {
+          const { first, second } = yield* twoDueInstagramPosts;
+          yield* setClock(defaultScheduledAt);
+          const r2Url1 = r2ObjectUrl(r2KeyFor(channelNameOf(channelRoot), first));
+          const fixture = fakeHttp({
+            [`PUT ${r2Url1}`]: () => new Response(null, { status: 200 }),
+            [`DELETE ${r2Url1}`]: () => new Response(null, { status: 204 }),
+            ...graphErrorRoute(
+              {
+                error: {
+                  code: 190,
+                  error_subcode: 458,
+                  message: "Invalid OAuth 2.0 Access Token",
+                },
+              },
+              400,
+            ),
+          });
+
+          const outcomes = yield* runDuePosts(60).pipe(
+            Effect.provide(unusedYouTubeClientLayer),
+            Effect.provide(r2SecretsLayer(channelRoot)),
+            Effect.provide(fixture.layer),
+          );
+
+          const byPost = new Map(outcomes.map((outcome) => [outcome.postId, outcome]));
+          assert.deepStrictEqual(byPost.get(first), {
+            kind: "permanent",
+            postId: first,
+            tag: "InstagramHttpFailure",
+          });
+          assert.deepStrictEqual(byPost.get(second), { kind: "account_stopped", postId: second });
+          // 2 件目は試行すら取られない: 1 件目の PUT・メディア作成・削除の 3 件だけで、2 件目の
+          // R2 の PUT と Graph の呼び出しは 1 件も発生しない(fakeHttp は routes に無いキーで die
+          // するので、2 件目が R2/Graph へ届いていればこのテスト自体が死んで検出できる)。
+          assert.strictEqual(fixture.requests.length, 3);
+        }),
+      ),
+  );
+
+  // SCN-U1-N2: 同じ 400 でも、認証ではないコード(100)では後続の投稿を止めない。2 件目は自分の
+  // R2 の PUT と自分の試行結果を持つ。
+  it.effect(
+    "does not stop the rest of that account's posts when the same 400 carries a non-authentication error code (100)",
+    () =>
+      inPostsChannel(
+        "nyaucast-due-posts-instagram-graph-code-100-two-",
+        ["instagram"],
+        (channelRoot) =>
+          Effect.gen(function* () {
+            const { first, second } = yield* twoDueInstagramPosts;
+            yield* setClock(defaultScheduledAt);
+            const channel = channelNameOf(channelRoot);
+            const r2Url1 = r2ObjectUrl(r2KeyFor(channel, first));
+            const r2Url2 = r2ObjectUrl(r2KeyFor(channel, second));
+            const fixture = fakeHttp({
+              [`PUT ${r2Url1}`]: () => new Response(null, { status: 200 }),
+              [`DELETE ${r2Url1}`]: () => new Response(null, { status: 204 }),
+              [`PUT ${r2Url2}`]: () => new Response(null, { status: 200 }),
+              [`DELETE ${r2Url2}`]: () => new Response(null, { status: 204 }),
+              ...graphErrorRoute({ error: { code: 100, message: "Invalid parameter" } }, 400),
+            });
+
+            const outcomes = yield* runDuePosts(60).pipe(
+              Effect.provide(unusedYouTubeClientLayer),
+              Effect.provide(r2SecretsLayer(channelRoot)),
+              Effect.provide(fixture.layer),
+            );
+
+            const byPost = new Map(outcomes.map((outcome) => [outcome.postId, outcome]));
+            assert.deepStrictEqual(byPost.get(first), {
+              kind: "permanent",
+              postId: first,
+              tag: "InstagramHttpFailure",
+            });
+            assert.deepStrictEqual(byPost.get(second), {
+              kind: "permanent",
+              postId: second,
+              tag: "InstagramHttpFailure",
+            });
+            // 2 件目は自分のオブジェクトを置き、自分の試行結果を持つ。
+            assert.isDefined(fixture.requests.find((request) => request.key === `PUT ${r2Url2}`));
+            const results = yield* attemptResultRows;
+            assert.strictEqual(results.length, 2);
+            assert.deepStrictEqual(
+              results.map((row) => row["outcome"]),
+              ["permanent", "permanent"],
+            );
+          }),
+      ),
+  );
+});
+
+// AC3「コンテナが ERROR を返すと恒久的な失敗になる」の「恒久的な失敗になる」側。アダプタが
+// InstagramContainerFailed で止まること（src/instagram/post-adapter.test.ts）だけでは、その失敗が
+// classifyPostFailure でどう分類され、試行の結果として何が積まれるかは決まらない。分類が temporary へ
+// 回帰すると、公開されていない投稿が次回実行で自動的に再試行される。ここでは実際に積まれた行と
+// CLI が見る結果の両方を確認する。
+describe("runDuePosts: C6/AC3 - a permanent container status is recorded as a permanent attempt", () => {
+  it.effect.each(["ERROR", "EXPIRED"] as const)(
+    "records %s as a permanent attempt result (not temporary), so the post is not retried automatically",
+    (statusCode) =>
+      inPostsChannel(
+        `nyaucast-due-posts-instagram-${statusCode.toLowerCase()}-`,
+        ["instagram"],
+        (channelRoot) =>
+          Effect.gen(function* () {
+            yield* prepareVideoFacts(longCut);
+            const postId = yield* insertPost({ platform: "instagram" });
+            yield* setClock(defaultScheduledAt);
+            const r2Url = r2ObjectUrl(r2KeyFor(channelNameOf(channelRoot), postId));
+            const fixture = fakeHttp({
+              [`PUT ${r2Url}`]: () => new Response(null, { status: 200 }),
+              [`DELETE ${r2Url}`]: () => new Response(null, { status: 204 }),
+              [`POST ${mediaCreateUrl()}`]: () => Response.json({ id: "CONTAINER1" }),
+              [`GET ${containerStatusUrl("CONTAINER1")}`]: statusSequence([statusCode]),
+            });
+
+            const outcomes = yield* runDuePosts(60).pipe(
+              Effect.provide(unusedYouTubeClientLayer),
+              Effect.provide(r2SecretsLayer(channelRoot)),
+              Effect.provide(fixture.layer),
+            );
+
+            assert.deepStrictEqual(outcomes, [
+              { kind: "permanent", postId, tag: "InstagramContainerFailed" },
+            ]);
+            const [result] = yield* attemptResultRows;
+            assert.strictEqual(result?.["outcome"], "permanent");
+            assert.isNull(result?.["remote_id"] ?? null);
+            // 公開は呼ばれず、R2 のオブジェクトは消えている（AC1）。
+            assert.isUndefined(
+              fixture.requests.find((request) => request.key === `POST ${mediaPublishUrl()}`),
+            );
+            assert.isDefined(fixture.requests.find((request) => request.key === `DELETE ${r2Url}`));
+          }),
+      ),
+  );
+});
+
+// コンテナの polling の sleep（10 秒ごと）は 1 回ずつ登録されるので、1 回の TestClock.adjust では
+// まとめて解放できない。fiber が終わるまで 10 秒ずつ進める。上限の回数は、polling の上限（60 回）に
+// 必要な回数の十分な上側で、進めても終わらない場合に無限に回らないためだけに置く。
+const pollingSleepInterval = "10 seconds";
+const maximumPollingTicks = 200;
+
+/** polling の sleep をすべて解放してから、fiber の結果を受け取る。 */
+const joinAfterPolling = <A, E>(fiber: Fiber.Fiber<A, E>) =>
+  Effect.gen(function* () {
+    for (let tick = 0; tick < maximumPollingTicks && fiber.pollUnsafe() === undefined; tick += 1) {
+      yield* TestClock.adjust(pollingSleepInterval);
+    }
+    return yield* Fiber.join(fiber);
+  });
+
+// D5「polling の上限超過は一時的な失敗」の、分類と保存の側（上の C6/AC3 の兄弟条件）。アダプタが
+// InstagramContainerNotReady で止まること（src/instagram/post-adapter.test.ts）だけでは、その失敗が
+// classifyPostFailure でどう分類され、試行の結果として何が積まれるかは決まらない。分類が permanent へ
+// 回帰すると、media_publish を一度も呼んでいない（公開されていない）投稿が次回実行の due から外れる。
+describe("runDuePosts: D5 - exceeding the polling limit is recorded as a temporary attempt", () => {
+  it.effect(
+    "records InstagramContainerNotReady as a temporary attempt result (not permanent), so the post stays due for the next run",
+    () =>
+      inPostsChannel("nyaucast-due-posts-instagram-not-ready-", ["instagram"], (channelRoot) =>
+        Effect.gen(function* () {
+          yield* prepareVideoFacts(longCut);
+          const postId = yield* insertPost({ platform: "instagram" });
+          yield* setClock(defaultScheduledAt);
+          const r2Url = r2ObjectUrl(r2KeyFor(channelNameOf(channelRoot), postId));
+          const fixture = fakeHttp({
+            [`PUT ${r2Url}`]: () => new Response(null, { status: 200 }),
+            [`DELETE ${r2Url}`]: () => new Response(null, { status: 204 }),
+            [`POST ${mediaCreateUrl()}`]: () => Response.json({ id: "CONTAINER1" }),
+            [`GET ${containerStatusUrl("CONTAINER1")}`]: statusSequence(
+              Array.from({ length: 61 }, () => "IN_PROGRESS"),
+            ),
+          });
+
+          const fiber = yield* Effect.forkChild(
+            runDuePosts(60).pipe(
+              Effect.provide(unusedYouTubeClientLayer),
+              Effect.provide(r2SecretsLayer(channelRoot)),
+              Effect.provide(fixture.layer),
+            ),
+          );
+          // 投稿が due かどうかの判定・再確認はアダプタを呼ぶ前に終わっているので、polling のあいだに
+          // 時計が進んでも、この実行での due の扱いは変わらない。
+          const outcomes = yield* joinAfterPolling(fiber);
+
+          assert.deepStrictEqual(outcomes, [
+            { kind: "temporary", postId, tag: "InstagramContainerNotReady" },
+          ]);
+          const [result] = yield* attemptResultRows;
+          assert.strictEqual(result?.["outcome"], "temporary");
+          assert.isNull(result?.["remote_id"] ?? null);
+          // 公開は一度も呼ばれず、R2 のオブジェクトは消えている（AC1）。
+          assert.isUndefined(
+            fixture.requests.find((request) => request.key === `POST ${mediaPublishUrl()}`),
+          );
+          assert.isDefined(fixture.requests.find((request) => request.key === `DELETE ${r2Url}`));
         }),
       ),
   );

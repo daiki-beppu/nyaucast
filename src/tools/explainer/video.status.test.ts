@@ -1598,7 +1598,12 @@ describe("video.status: posts (execution-time readiness and the approval-toleran
   const exportKey = "videos/V1/cuts/long/long.mp4";
 
   // 公開ゲートの対話を経由せず、動画・サムネイルの選択・カットの書き出し・投稿を直に積む最小の fixture。
-  const prepareReadyPost = (accountId = "youtube-id") =>
+  // platform は既定で youtube（title/description）。instagram/x は body だけを必須にする
+  // （post-text.ts の platform ごとの形と同じ。due-posts.test.ts の postTextFieldsFor と同じ区別）。
+  const prepareReadyPost = (
+    accountId = "youtube-id",
+    platform: "instagram" | "x" | "youtube" = "youtube",
+  ) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* sql`INSERT INTO explainer_videos (id, created_at) VALUES ('V1', ${videoCreatedAt})`;
@@ -1625,7 +1630,11 @@ describe("video.status: posts (execution-time readiness and the approval-toleran
       });
       yield* appendCutPreview({ compositionHash: "c1", cut: longCut, videoId: "V1" });
       yield* (yield* VideoFiles).write(exportKey, Uint8Array.from([1, 2, 3]));
-      yield* sql`INSERT INTO explainer_posts (video_id, cut, platform, account_id, title, description, body, scheduled_at, created_at) VALUES ('V1', ${longCut}, 'youtube', ${accountId}, 'T', 'D', NULL, ${scheduledAt}, ${postCreatedAt})`;
+      const { body, description, title } =
+        platform === "youtube"
+          ? { body: null, description: "D", title: "T" }
+          : { body: "b", description: null, title: null };
+      yield* sql`INSERT INTO explainer_posts (video_id, cut, platform, account_id, title, description, body, scheduled_at, created_at) VALUES ('V1', ${longCut}, ${platform}, ${accountId}, ${title}, ${description}, ${body}, ${scheduledAt}, ${postCreatedAt})`;
     });
 
   const postIn = (
@@ -1749,6 +1758,94 @@ describe("video.status: posts (execution-time readiness and the approval-toleran
             });
           }),
       ),
+    );
+  });
+
+  // issue #555 決定 8（#554 からの持ち越し。ADR-0009 決定 13）: SNS 側で予約を持つのは YouTube
+  // だけなので、Instagram/X の成功した試行は reserved を経由せず、直接 published になる。これが
+  // derivePostState（post-state.test.ts で確認済み）どおりに video_status の read model へ実際に
+  // 伝わることを、callTool を通した結果で確認する。
+  describe("C9: a post whose last attempt succeeded on a non-YouTube platform", () => {
+    // C13: description はこの導出(deriveFromSucceededAttempt)が述べる契約そのものなので、
+    // 「reserved」の説明が YouTube に限られ、「published」の説明が Instagram/X にも及ぶことを、
+    // 各状態の記述の範囲(次の状態名が始まるまでの区間)に限定して確認する。全文一致ではなく、
+    // 語の近さを使うことで表現の言い換えには影響されない(自然言語の契約を文字列固定にしない)。
+    it("documents that YouTube alone reserves pending confirmation, while a succeeded Instagram or X attempt is published directly (C9, ADR-0009 decision 13)", () => {
+      const description = ExplainerVideoStatusTool.description;
+      if (description === undefined) {
+        return assert.fail("video_status must document the statuses it returns");
+      }
+      const reservedStart = description.indexOf('"reserved"');
+      const failedStart = description.indexOf('"failed"');
+      const publishedStart = description.indexOf('"published"');
+      const canceledStart = description.indexOf('"canceled"');
+      assert.isAbove(reservedStart, -1);
+      assert.isAbove(failedStart, reservedStart);
+      assert.isAbove(publishedStart, failedStart);
+      assert.isAbove(canceledStart, publishedStart);
+
+      const reservedClause = description.slice(reservedStart, failedStart);
+      const publishedClause = description.slice(publishedStart, canceledStart);
+      assert.include(reservedClause, "YouTube");
+      assert.include(publishedClause, "Instagram");
+      assert.include(publishedClause, "X");
+    });
+
+    it.effect.each(["instagram", "x"] as const)(
+      "is published with the saved remote ID for %s, not reserved, read through callTool",
+      (platform) =>
+        withToolChannel(
+          `nyaucast-video-status-posts-published-${platform}-`,
+          { config: explainerConfig },
+          (channelRoot) =>
+            Effect.gen(function* () {
+              declareAccounts(channelRoot, [platform]);
+              yield* storeToken(channelRoot, platform);
+              yield* prepareReadyPost(`${platform}-id`, platform);
+              const sql = yield* SqlClient.SqlClient;
+              yield* sql`INSERT INTO explainer_post_attempts (post_id, started_at) VALUES (1, '2026-10-05T00:00:00.000Z')`;
+              yield* sql`INSERT INTO explainer_post_attempt_results (attempt_id, outcome, remote_id, recorded_at) VALUES (1, 'succeeded', 'REMOTE-1', '2026-10-05T00:00:01.000Z')`;
+              // reserved が YouTube の確認待ちの期限を持つのとは対照的に、鮮度も許容時間も超えて
+              // 大きく時間が経っても published のままであることを確認する(C9 は時限ではない)。
+              yield* setClock("2026-10-10T00:00:00.000Z");
+
+              const status = yield* callTool("video_status", { videoId: "V1" });
+
+              assert.deepStrictEqual(postIn(status, platform), {
+                accountId: `${platform}-id`,
+                cut: longCut,
+                id: 1,
+                platform,
+                remoteId: "REMOTE-1",
+                status: "published",
+              });
+            }),
+        ),
+    );
+
+    it.effect(
+      "completes the video's lifecycle on its own, without any explicit publication record " +
+        "(the #554 carry-over this issue resolves: a sole Instagram/X post must reach a terminal " +
+        "status from its attempt alone, or lifecycleComplete never derives true for it)",
+      () =>
+        withToolChannel(
+          "nyaucast-video-status-posts-published-lifecycle-",
+          { config: explainerConfig },
+          (channelRoot) =>
+            Effect.gen(function* () {
+              declareAccounts(channelRoot, ["instagram"]);
+              yield* storeToken(channelRoot, "instagram");
+              yield* prepareReadyPost("instagram-id", "instagram");
+              const sql = yield* SqlClient.SqlClient;
+              yield* sql`INSERT INTO explainer_post_attempts (post_id, started_at) VALUES (1, '2026-10-05T00:00:00.000Z')`;
+              yield* sql`INSERT INTO explainer_post_attempt_results (attempt_id, outcome, remote_id, recorded_at) VALUES (1, 'succeeded', 'IG-REMOTE-1', '2026-10-05T00:00:01.000Z')`;
+              yield* setClock(scheduledAt);
+
+              const status = yield* callTool("video_status", { videoId: "V1" });
+
+              assert.isTrue(status.lifecycleComplete);
+            }),
+        ),
     );
   });
 

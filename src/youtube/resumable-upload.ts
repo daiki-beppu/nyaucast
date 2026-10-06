@@ -1,11 +1,9 @@
 import { Effect, Option, Schema } from "effect";
 import { HttpBody } from "effect/http";
 
-import type { FileReader } from "../videos/video-files.ts";
+import { type FileReader, readUploadChunk } from "../videos/video-files.ts";
 import { YouTubeClient, type YouTubeClientFailure } from "./client.ts";
 
-// チャンクは 256KB の倍数（issue 決定 8）。最後のチャンクだけ端数。
-const chunkBytes = 262_144;
 const resumedStatus = 308;
 
 // 失敗は、タグだけを持つ。開始の応答に Location が無い／完了の応答が video ID を持たない、いずれも事実のまま。
@@ -69,12 +67,6 @@ const startSession = (input: ResumableUploadInput) =>
     });
     const location = response.headers["location"];
     return location === undefined ? yield* new ResumableUploadFailed() : location;
-  });
-
-const readChunk = (file: FileReader, start: number) =>
-  Effect.tryPromise({
-    catch: () => new ChunkReadFailed(),
-    try: () => file.read(start, Math.min(start + chunkBytes, file.size)),
   });
 
 const putChunk = (input: ResumableUploadInput, session: string, bytes: Uint8Array, start: number) =>
@@ -194,7 +186,7 @@ const sendChunkFrom = (
   YouTubeClient
 > =>
   Effect.gen(function* () {
-    const bytes = yield* readChunk(input.file, start);
+    const bytes = yield* readUploadChunk(input.file, start, () => new ChunkReadFailed());
     const putOutcome = yield* putChunk(input, session, bytes, start).pipe(Effect.result);
     if (putOutcome._tag === "Success") {
       return yield* continueDirectly(input, session, putOutcome.success);

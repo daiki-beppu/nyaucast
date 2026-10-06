@@ -131,6 +131,8 @@ const youtubeClient = YouTubeClient.layer.pipe(
   Layer.provide(YouTubeAuth.layerProduction),
   Layer.provide(authDependencies),
 );
+// Instagram のアダプタ（issue #555）が使うもの: Graph API と R2 への HTTP、長期トークンの解決、
+// R2 の 4 値を解決する静的なシークレット。
 const post = Layer.mergeAll(
   localStore,
   ChannelSettings.layer(channelRoot),
@@ -138,6 +140,9 @@ const post = Layer.mergeAll(
   DeclaredAccounts.layer(channelRoot),
   VideoFiles.layer(channelRoot),
   youtubeClient,
+  InstagramAuth.layerProduction.pipe(Layer.provide(authDependencies)),
+  StaticSecrets.layer({ configRoot }),
+  NodeHttpClient.layerUndici,
 );
 
 Stdio.Stdio.use(({ args }) =>
