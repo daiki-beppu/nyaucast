@@ -15,8 +15,13 @@ function chunk(type: string, data: Uint8Array): Uint8Array {
   return Buffer.concat([length, body, checksum]);
 }
 
-/** 8 bit RGB の PNG。pixel は (x, y) の色を返す。 */
-function png(width: number, height: number, pixel: (x: number, y: number) => Rgb): Uint8Array {
+/** 8 bit RGB の PNG。pixel は (x, y) の色を返す。level は zlib の圧縮レベル（0 は無圧縮）。 */
+function png(
+  width: number,
+  height: number,
+  pixel: (x: number, y: number) => Rgb,
+  level?: number,
+): Uint8Array {
   const header = Buffer.alloc(13);
   header.writeUInt32BE(width, 0);
   header.writeUInt32BE(height, 4);
@@ -36,7 +41,7 @@ function png(width: number, height: number, pixel: (x: number, y: number) => Rgb
   return Buffer.concat([
     pngSignature,
     chunk("IHDR", header),
-    chunk("IDAT", deflateSync(raw)),
+    chunk("IDAT", deflateSync(raw, level === undefined ? {} : { level })),
     chunk("IEND", new Uint8Array()),
   ]);
 }
@@ -56,11 +61,15 @@ function randomSource(seed: number): () => number {
   };
 }
 
-/** 灰色を中心に、各チャンネルへ ±amplitude の一様なノイズを足した PNG。amplitude が大きいほど JPEG が大きくなる。 */
+/**
+ * 灰色を中心に、各チャンネルへ ±amplitude の一様なノイズを足した PNG。amplitude が大きいほど JPEG が大きくなる。
+ * ノイズはほとんど縮まないので無圧縮で書く。既定のレベルでは 1920x1080 の圧縮だけで約 300 ms の CPU を使い、
+ * 縮むのは 0.01 % に満たない（#680）。
+ */
 export function noisePng(width: number, height: number, amplitude: number, seed = 1): Uint8Array {
   const random = randomSource(seed);
   const channel = () => Math.round(128 + (random() * 2 - 1) * amplitude);
-  return png(width, height, () => [channel(), channel(), channel()]);
+  return png(width, height, () => [channel(), channel(), channel()], 0);
 }
 
 const u16 = (bytes: Uint8Array, at: number) => ((bytes[at] ?? 0) << 8) | (bytes[at + 1] ?? 0);
