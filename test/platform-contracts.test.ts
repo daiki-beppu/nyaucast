@@ -191,6 +191,21 @@ describe("K1 three identical check surfaces", () => {
     expect(testGates).toEqual(["vp test run ${VITEST_SHARD:+--shard=$VITEST_SHARD}"]);
   });
 
+  // ルールセット「main: CI 必須」は quality という名前の check を必須にしている。shard の job の名前は
+  // shard ごとに変わるので、すべての shard の成功を要求する quality job が無いと PR がマージできなくなる。
+  test("a job named quality passes only when every CI shard passes", () => {
+    const jobs = requireRecord(readWorkflow("ci.yml")["jobs"], "CI jobs");
+    const quality = requireRecord(jobs["quality"], "quality job");
+    const shardJob = Object.keys(jobs).find((id) => id !== "quality");
+
+    expect(shardJob).toBeDefined();
+    expect(requireRecord(jobs[shardJob ?? ""], "shard job")["strategy"]).toBeDefined();
+    expect(quality["needs"]).toBe(shardJob);
+    expect(quality["if"]).toBe("always()");
+    expect(JSON.stringify(quality["steps"])).toContain(`\${{ needs.${shardJob}.result }}`);
+    expect(JSON.stringify(quality["steps"])).toContain('= \\"success\\"');
+  });
+
   test("the declared check gate set includes the lockfile gate without duplicates", () => {
     const manifest = readJson(join(packageRoot, "package.json"));
     const scripts = requireRecord(manifest["scripts"], "package scripts");

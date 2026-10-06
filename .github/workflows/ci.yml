@@ -8,7 +8,8 @@ on:
   workflow_call: {}
 
 jobs:
-  quality:
+  quality-shard:
+    name: quality ${{ matrix.shard }}/2
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     # 同じ pnpm run check を shard ごとに走らせ、テストの部分だけを分ける（#715）。
@@ -101,3 +102,18 @@ jobs:
       # 割り戻すと列挙が複製され、CI とローカルが食い違う経路が再び開く。
       - name: Check
         run: pnpm run check
+
+  # ルールセット「main: CI 必須」は quality という名前の check を必須にしている。shard の job は
+  # 名前が shard ごとに変わるので、すべての shard が成功したときだけ成功する job をこの名前で置く。
+  # always() で、shard が失敗・取り消しになったときも走らせ、成功以外を失敗として報告する。
+  quality:
+    needs: quality-shard
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Require every shard to pass
+        env:
+          SHARDS_RESULT: ${{ needs.quality-shard.result }}
+        run: test "$SHARDS_RESULT" = "success"
