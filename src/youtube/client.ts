@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Option, Random, Result, Schema } from "effect";
+import { Clock, Context, Effect, Layer, Option, Random, Result, Schema } from "effect";
 import { HttpClient, type HttpBody, HttpClientRequest, type HttpClientResponse } from "effect/http";
 
 import { YouTubeAuth, type YouTubeAuthFailure } from "./auth.ts";
@@ -14,7 +14,7 @@ const youtubeUploadApiPaths = new Set([
 ]);
 
 // 失敗は、タグと事実（URL・HTTP status・Google の reason）だけを持つ。認証情報は持たない。
-// 呼び出し側は YouTubeClientFailure（union）と _tag の文字列だけを見るので、この 4 つは export しない。
+// 呼び出し側は YouTubeClientFailure（union）と _tag の文字列だけを見るので、これらのクラスは export しない。
 class UntrustedYouTubeUrl extends Schema.TaggedError<UntrustedYouTubeUrl>()("UntrustedYouTubeUrl", {
   url: Schema.String,
 }) {}
@@ -30,12 +30,18 @@ class YouTubeHttpBoundaryFailed extends Schema.TaggedError<YouTubeHttpBoundaryFa
   "YouTubeHttpBoundaryFailed",
   {},
 ) {}
+// 401 の後のトークンの更新の間に、呼び出し側が渡した期限（notAfter）を過ぎたので送り直さなかった（#657）。
+class YouTubeResendDeadlinePassed extends Schema.TaggedError<YouTubeResendDeadlinePassed>()(
+  "YouTubeResendDeadlinePassed",
+  { notAfter: Schema.String },
+) {}
 
 export type YouTubeClientFailure =
   | UntrustedYouTubeUrl
   | YouTubeAuthFailure
   | YouTubeHttpBoundaryFailed
   | YouTubeHttpFailure
+  | YouTubeResendDeadlinePassed
   | YouTubeResponseInvalid;
 
 const GoogleError = Schema.Struct({
@@ -65,6 +71,12 @@ type YouTubeRequest<Output> = BaseRequest & { schema: Schema.Decoder<Output> };
 type YouTubeExchangeRequest = BaseRequest & {
   accepted?: ReadonlyArray<number>;
   accessToken?: string;
+  /**
+   * 401 の後に送り直してよい期限（ISO 8601）。トークンの更新を終えた時点で過ぎていたら、送り直さずに
+   * YouTubeResendDeadlinePassed で失敗する（#657: 予定時刻を過ぎた upload の開始は即時公開になる）。
+   * 最初の送信は止めない（その前の確認は呼び出し側が持つ）。
+   */
+  notAfter?: string;
 };
 
 interface YouTubeExchangeResult {
@@ -86,6 +98,7 @@ type Recovery = { kind: "fail" } | { kind: "refresh" } | { delay: number; kind: 
 // exchange は status・ヘッダー・本文（あれば）をそのまま返す。retryTransient は selectRecovery が参照する。
 interface Exchange<Output> {
   readonly accepted: ReadonlySet<number>;
+  readonly notAfter?: string;
   readonly finalize: (
     response: HttpClientResponse.HttpClientResponse,
   ) => Effect.Effect<Output, YouTubeResponseInvalid>;
@@ -179,6 +192,16 @@ const toExchangeResult = (response: HttpClientResponse.HttpClientResponse) =>
     status: response.status,
   }));
 
+// 401 の後の再送の前に、呼び出し側が渡した期限を確かめる（#657）。期限が無ければ常に通す。
+const ensureBeforeResendDeadline = (notAfter: string | undefined) =>
+  notAfter === undefined
+    ? Effect.void
+    : Effect.flatMap(Clock.currentTimeMillis, (now) =>
+        now > Date.parse(notAfter)
+          ? Effect.fail(new YouTubeResendDeadlinePassed({ notAfter }))
+          : Effect.void,
+      );
+
 // 2xx、または呼び出し側が accept した status（resumable upload の 308 など）。
 const isAcceptedStatus = (status: number, accepted: ReadonlySet<number>): boolean =>
   (status >= 200 && status < 300) || accepted.has(status);
@@ -240,6 +263,7 @@ function makeYouTubeClient() {
         }
         if (recovery.kind === "refresh") {
           const accessToken = yield* auth.refreshAccessToken(request.channel);
+          yield* ensureBeforeResendDeadline(exchange.notAfter);
           return yield* execute(exchange, request, url, {
             ...state,
             accessToken,
@@ -283,6 +307,7 @@ function makeYouTubeClient() {
         {
           accepted: new Set(request.accepted ?? []),
           finalize: toExchangeResult,
+          ...(request.notAfter === undefined ? {} : { notAfter: request.notAfter }),
           retryTransient: false,
         },
         request,

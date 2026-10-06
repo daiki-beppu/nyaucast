@@ -8,18 +8,18 @@ Issues and PRDs for this repo live as GitHub issues. Use the `gh` CLI for all op
 
 takt は host が供給する開発 orchestration tool であり、nyaucast の runtime / package dependency には含めない（ADR-0008）。導入・更新は host 側の責務で、repository の依存管理には現れない。
 
-pipeline を開始する前に、次の preflight を実行する:
+takt にタスクを積む前に、次の preflight を実行する:
 
 ```sh
 command -v takt
 takt --version
 ```
 
-`command -v takt` で存在を確認できたら、後続の pipeline 手順へ進む。不在の場合は host 側で導入し、preflight をやり直す。`takt --version` の出力は記録として残すだけで、特定の版を進行条件にしない。版の互換確認は、下記「共通の規約」の takt 更新時の `takt workflow doctor` で行う。
+`command -v takt` で存在を確認できたら、後続の手順へ進む。不在の場合は host 側で導入し、preflight をやり直す。`takt --version` の出力は記録として残すだけで、特定の版を進行条件にしない。版の互換確認は、下記「共通の規約」の takt 更新時の `takt workflow doctor` で行う。
 
 nyaucast 固有の workflow 資産は持たない — `.takt/` は `config.yaml` と、それ以外を無視する `.gitignore` のみで、実装は builtin workflow を直用する（[ADR-0008](../adr/0008-takt-dedicated-workflow.md)）。用途ごとの使い分け:
 
-- **新機能・機能拡張の実装** — builtin **`default`**（ADR-0008）。Orca の worktree 内で `takt --pipeline --auto-pr -b issue-<N>-<slug> -w default -i <N>`。
+- **新機能・機能拡張の実装** — builtin **`default`**（ADR-0008）。`worktree: true` のキューに積み（takt MCP の `takt_enqueue_task`。`autoPr: true`・ブランチ `issue-<N>-<slug>`・base `main`）、repo root で常駐する `takt watch` が隔離 clone で実行して PR を作る。手順は takt skill（`/takt`）。
   要求追跡は builtin の Completion Contracts ledger + `SCN-{contract ID}-P/N`（Given/When/Then）構造が持つ。品質装置（並列レビュー → review-adjudication → 検証付き remediation → final-gate、test-first）も builtin 側。
 - **バグ修正の実装** — **takt を使わない**。Matt Pocock の **`/implement`**（Claude Code 直接。worktree とブランチを作り、`/implement` の `/tdd` → `/code-review` → commit の後、PR 作成 → CI green まで監視する）で実装し、品質ゲートは `/implement` に含まれる `/code-review` が担う（ADR-0008）。
 - **PR のレビュー** — builtin workflow **`review-fix`**（remediation ループ内蔵）。単体起動専用。
@@ -27,8 +27,8 @@ nyaucast 固有の workflow 資産は持たない — `.takt/` は `config.yaml`
 共通の規約:
 
 - worktree 必須。メイン作業ツリーで直接ブランチを切らない。worktree は `git fetch origin` の後に `orca worktree create --repo name:nyaucast --name <slug> --base-branch origin/main` で作る（置き場は Orca の workspace、ブランチは Orca が作る。依存 install は `orca.yaml` の setup script が自動で実行する）。手動の `git worktree add` は使わない
-- feature は origin/main から作った Orca の worktree 内で pipeline 実行する（pipeline は Orca が作ったブランチの上から `-b` の新しいブランチを切る）。review-adjudication 経路の隔離 clone 実走行が未検証のため、検証完了までは既知の pipeline 経路を維持する
-- `--auto-pr` は `--pipeline` 専用で、pipeline の issue 指定には `-i` が必要である。pipeline が `git checkout -b` するため、`-b` は未作成のブランチ名に限る
+- feature はキュー実行で流す。runner の `takt watch` は repo root に 1 本だけ常駐させ、2 本目を起動しない（起動時に `running` のタスクを `failed` にするため、先の runner の実行を潰す）。隔離 clone での review-adjudication 経路は #564 で走りきることを確かめた（2026-10-06）
+- 積む前に、ブランチ名が未使用であることと、依頼外の pending が積まれていないことを確かめる
 - takt 更新時は、名前指定の builtin × `.takt/config.yaml` 整合検査を手動で実行する: `takt workflow doctor <workflow名>`（引数なし起動は自作 workflow ゼロのため no-op。ADR-0008）
 - 着手前に main を `git pull --ff-only` で最新化する
 
@@ -96,6 +96,6 @@ Used by `/wayfinder`. The **map** is a single issue with **child** issues as tic
 takt には map issue ではなく、**self-contained な実装 issue を起票して渡す**（ADR-0008）:
 
 1. wayfinder が地図を描き終えたら（全 ticket closed・`Not yet specified` が空）、map と決定 ticket を `/to-spec` で spec issue にまとめ、その spec を `/to-tickets` で self-contained な実装 issue へ分割して起票する。spec issue を親とし、実装 issue はすべて GitHub のネイティブな sub-issue として紐付け、issue 間の blocking 関係も設定する（例: spec #536 と #538〜#557）。各 issue は「takt に渡す issue の書き方」の節に従う。決定の本体は各 ticket の resolution コメントにあり、map の Decisions-so-far は索引として扱う。`Out of scope` は実装対象から明示的に除外する
-2. 起票した実装 issue を経路へ渡す — feature は `takt --pipeline --auto-pr -b issue-<N>-<slug> -w default -i <N>`、fix は `/implement`
+2. 起票した実装 issue を経路へ渡す — feature は takt のキューに積む（`/takt`）、fix は `/implement`
 
 実装 issue は map を参照しなくても着手できる内容にする。決定の未決を issue へ写さない（写すと下流で BLOCKED 相当の手戻りになる）。地図の claim / resolve / close は wayfinder セッションの責務のまま。
