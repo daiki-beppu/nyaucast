@@ -21,7 +21,7 @@ nyaucast 固有の workflow 資産は持たない — `.takt/` は `config.yaml`
 
 - **新機能・機能拡張の実装** — builtin **`default`**（ADR-0008）。`worktree: true` のキューに積み（takt MCP の `takt_enqueue_task`。`autoPr: true`・ブランチ `issue-<N>-<slug>`・base `main`）、repo root で常駐する `takt watch` が隔離 clone で実行して PR を作る。手順は takt skill（`/takt`）。
   要求追跡は builtin の Completion Contracts ledger + `SCN-{contract ID}-P/N`（Given/When/Then）構造が持つ。品質装置（並列レビュー → review-adjudication → 検証付き remediation → final-gate、test-first）も builtin 側。
-- **バグ修正の実装** — **takt を使わない**。Matt Pocock の **`/implement`**（Claude Code 直接。worktree とブランチを作り、`/implement` の `/tdd` → `/code-review` → commit の後、PR 作成 → CI green まで監視する）で実装し、品質ゲートは `/implement` に含まれる `/code-review` が担う（ADR-0008）。
+- **バグ修正の実装** — **takt を使わない**。Matt Pocock の **`/implement`**（Claude Code 直接。worktree とブランチを作り、`/implement` の `/tdd` → `/code-review` → commit の後、PR 作成 → CI green まで監視する）で実装し、品質ゲートは `/implement` に含まれる `/code-review` が担う（ADR-0008）。エージェントが自分で進めるときは Skill ツールで `/tdd` → `/code-review` を順に呼ぶ。
 - **PR のレビュー** — builtin workflow **`review-fix`**（remediation ループ内蔵）。単体起動専用。
 
 共通の規約:
