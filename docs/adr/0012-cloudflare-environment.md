@@ -34,14 +34,13 @@ Instagram へ投稿するには、動画を R2 に置いて URL で渡す必要�
    - 解決の順は「環境変数 → `secrets.json` の参照 → `environment.json` の秘密のブロック」（ADR-0009 決定 6 の例外）。利用者に `export` させず、環境変数は上書きの口としてだけ残す。シェルの profile と下流リポの `.env` には書かない。apply の最後に、`R2_*` の環境変数があれば「こちらが優先される」と警告する
    - 置き場は常に 1 つに保つ。ファイルで運用していた利用者が `op` を入れると、次の apply で 1Password に移し、ファイルの秘密のブロックを消す。`secrets.json` に R2 の参照があるのに `op whoami` が失敗したときは、ファイルへ移さずにエラーで止め、サインインを促す。1Password をやめる利用者は、`secrets.json` から R2 の参照を消す（案内に書く）
 10. **Cloudflare 環境は `nyaucast cloudflare` で作る。**（改訂 2026-10-06 / #667）
-
-- `nyaucast cloudflare` は、plan・確認・apply を 1 回で行う。チャンネルを引数に取らない（決定 8）。`nyaucast cloudflare status` は、`environment.json` と `secrets.json` だけを読み、作成済みかと、アカウント・bucket・アクセスキーの置き場を表示する。ネットワークに出ない
-- `cf` のログインは nyaucast が起こす。nyaucast 専用の `cf` のプロファイルで `cf auth whoami` を確かめ、未ログインなら、スコープを R2 の書き込みと `account_api_tokens:create` に絞った `cf auth login` を子プロセスで起こす。標準入出力を引き継ぐので、device flow の URL がそのまま表示される。利用者がほかの用途で使う `cf` のログインには触れない
-- plan には、資源ごとの作成・更新・変更なし、対象のアカウント、アクセスキーの書き先（決定 9）を出す。TTY では `y/N` で確認する。TTY が無く `--yes` も無いときは、plan を出して、確認が要ることを示す専用の非 0 の終了コードで止める。plan だけを見るフラグ（`--dry-run`）は置かない
-- 人間にしかできない手順は、plan の前に検出して案内する。ログインしてもアカウントが見つからないときと、R2 が購入されていないときは、ダッシュボードの URL と次の手順を出して止め、済んだら再実行してもらう。案内では「checkout を完了する」とだけ書き、支払い情報が要るとは断定しない（#650）
-- アカウントが 1 つならそれを使う。複数あれば、TTY では選ばせ、TTY が無ければ `--account <id>` を必須にする。選んだ ID は `environment.json` に記録し、再実行ではそれを使う。記録と違う `--account` は拒む（v0.1 では 1 人の利用者につき 1 アカウント。決定 8）
-- 再実行で plan がすべて変更なしなら、確認を出さずに要約を表示し、0 で終える
-- bucket の名前は `nyaucast-media` に固定し、変えるフラグは置かない。location hint は指定しない
+    - `nyaucast cloudflare` は、plan・確認・apply を 1 回で行う。チャンネルを引数に取らない（決定 8）。`nyaucast cloudflare status` は、`environment.json` と `secrets.json` だけを読み、作成済みかと、アカウント・bucket・アクセスキーの置き場を表示する。ネットワークに出ない
+    - `cf` のログインは nyaucast が起こす。nyaucast 専用の `cf` のプロファイルで `cf auth whoami` を確かめ、未ログインなら、スコープを R2 の書き込みと `account_api_tokens:create` に絞った `cf auth login` を子プロセスで起こす。標準入出力を引き継ぐので、device flow の URL がそのまま表示される。利用者がほかの用途で使う `cf` のログインには触れない
+    - plan には、資源ごとの作成・更新・変更なし、対象のアカウント、アクセスキーの書き先（決定 9）を出す。TTY では `y/N` で確認する。TTY が無く `--yes` も無いときは、plan を出して、確認が要ることを示す専用の非 0 の終了コードで止める。plan だけを見るフラグ（`--dry-run`）は置かない
+    - 人間にしかできない手順は、plan の前に検出して案内する。ログインしてもアカウントが見つからないときと、R2 が購入されていないときは、ダッシュボードの URL と次の手順を出して止め、済んだら再実行してもらう。案内では「checkout を完了する」とだけ書き、支払い情報が要るとは断定しない（#650）
+    - アカウントが 1 つならそれを使う。複数あれば、TTY では選ばせ、TTY が無ければ `--account <id>` を必須にする。選んだ ID は `environment.json` に記録し、再実行ではそれを使う。記録と違う `--account` は拒む（v0.1 では 1 人の利用者につき 1 アカウント。決定 8）
+    - 再実行で plan がすべて変更なしなら、確認を出さずに要約を表示し、0 で終える
+    - bucket の名前は `nyaucast-media` に固定し、変えるフラグは置かない。location hint は指定しない
 
 ## Why
 
