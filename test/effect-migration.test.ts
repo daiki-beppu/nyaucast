@@ -4,6 +4,8 @@ import { join, relative, resolve } from "node:path";
 import { assert, describe, expect, it } from "@effect/vitest";
 import { parse } from "yaml";
 
+import { checkGates } from "./check-gates.ts";
+
 const packageRoot = resolve(import.meta.dirname, "..");
 const exactVersion = /^\d+\.\d+\.\d+$/u;
 
@@ -99,15 +101,11 @@ describe("full migration to Effect 4.0", () => {
 
   it("runs the @effect/tsgo diagnostics inside check", () => {
     const scripts = requireRecord(manifest()["scripts"], "scripts") as Record<string, string>;
-    const gates = String(scripts["check"])
-      .split("&&")
-      .map((gate) => gate.trim());
 
-    const diagnosticGates = gates.filter((gate) => {
-      const script = gate.startsWith("pnpm run ") ? scripts[gate.slice("pnpm run ".length)] : gate;
-      return script?.includes("effect-tsgo") === true && script.includes("diagnostics");
-    });
-    assert.strictEqual(diagnosticGates.length, 1);
+    const diagnostics = checkGates(scripts)
+      .flatMap(({ commands }) => commands)
+      .filter((command) => command.includes("effect-tsgo") && command.includes("diagnostics"));
+    assert.strictEqual(diagnostics.length, 1);
   });
 
   describe("under src/", () => {
