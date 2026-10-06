@@ -138,6 +138,8 @@ export const postToYouTube = (
       channel: input.channel,
       contentType: videoContentType,
       file: input.video,
+      // 開始の POST が 401 を返したとき、トークンの更新の間に予定時刻を過ぎたら送り直さない（#657）。
+      notAfter: input.scheduledAt,
       resource: uploadResource(input),
       startUrl: uploadStartUrl,
     });
