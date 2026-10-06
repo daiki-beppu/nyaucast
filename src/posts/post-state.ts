@@ -134,23 +134,25 @@ const deriveTimeStatus = (input: DerivePostStateInput): DerivedPostState =>
   input.platform === "youtube" ? deriveYouTubeTimeStatus(input) : deriveToleranceTimeStatus(input);
 
 /**
- * succeeded の投稿の状態。YouTube は予定時刻 + 許容時間を過ぎても公開済みの事実（terminal.published）
- * が無ければ、公開の確認が取れない確認待ちにする（issue 決定「許容時間を過ぎても確認が無ければ
+ * succeeded の投稿の状態。SNS 側の予約を持つのは YouTube だけで、Instagram/X は予定時刻に即時
+ * 投稿するので、試行の成功がそのまま公開済みを表す（ADR-0009 決定 13・GLOSSARY.md。#554 からの
+ * 持ち越しで、#556 で X のアダプタを足すときに直した。直さないと全投稿が終端にならず lifecycle の
+ * 1 周が導出されない）。YouTube は予定時刻 + 許容時間を過ぎても公開済みの事実（terminal.published）
+ * が無ければ、公開の確認が取れない確認待ちにする（#554 決定「許容時間を過ぎても確認が無ければ
  * 確認待ち」）。terminal.published があれば deriveFromTerminalFacts が先に拾うため、ここに
- * 来る時点で published ではない。Instagram/X の succeeded は常に reserved のまま（ADR-0009
- * 決定 13 の「試行の成功をもって公開済み」はこの issue のスコープ外）。
+ * 来る時点で published ではない。
  */
 const deriveFromSucceededAttempt = (
   input: DerivePostStateInput,
   remoteId: string,
 ): DerivedPostState => {
-  if (input.platform === "youtube") {
-    const deadlineMs = Date.parse(input.scheduledAt) + input.toleranceMinutes * 60_000;
-    if (input.now > deadlineMs) {
-      return awaitingCheck("publication_unconfirmed");
-    }
+  if (input.platform !== "youtube") {
+    return { remoteId, status: "published" };
   }
-  return { remoteId, status: "reserved" };
+  const deadlineMs = Date.parse(input.scheduledAt) + input.toleranceMinutes * 60_000;
+  return input.now > deadlineMs
+    ? awaitingCheck("publication_unconfirmed")
+    : { remoteId, status: "reserved" };
 };
 
 // 最後の試行だけで決まる状態（取る条件 "none"/"temporary" のときは undefined で、後続の検査に委ねる）。

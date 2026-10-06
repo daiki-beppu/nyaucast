@@ -80,10 +80,12 @@ describe("derivePostState: the classification of the last attempt decides whethe
     );
   });
 
-  it("is reserved with the saved remote ID when the last attempt succeeded", () => {
+  // 既定の platform は "x"。X/Instagram は即時に投稿する SNS なので、試行の成功がそのまま
+  // 公開済みを表す（ADR-0009 決定 13。C-PUBLISHED。YouTube だけが reserved を経由する）。
+  it("is published with the saved remote ID when the last attempt succeeded (non-YouTube)", () => {
     assert.deepStrictEqual(
-      derivePostState(input({ lastAttempt: "succeeded", remoteId: "yt-video-1" })),
-      { remoteId: "yt-video-1", status: "reserved" },
+      derivePostState(input({ lastAttempt: "succeeded", remoteId: "x-post-1" })),
+      { remoteId: "x-post-1", status: "published" },
     );
   });
 
@@ -382,8 +384,9 @@ describe("derivePostState: the publication-confirmation deadline for a succeeded
     assert.isUndefined(state.remoteId);
   });
 
-  it("does not apply the publication-confirmation deadline to Instagram or X (out of scope: ADR-0009 decision 13's succeeded-is-published rule for them)", () => {
-    // 非 YouTube の succeeded は、どれだけ時間が経っても reserved のまま（この issue では変えない。§9）。
+  it("does not apply the publication-confirmation deadline to Instagram or X: they are already published, regardless of elapsed time (C-PUBLISHED, ADR-0009 decision 13)", () => {
+    // 非 YouTube の succeeded は、試行の成功がそのまま公開済みを表すため、このテストの観点
+    // （時間が経っても reserved のまま確認待ちにならない）自体は変わらないが、結果は published になる。
     assert.deepStrictEqual(
       derivePostState(
         input({
@@ -394,7 +397,38 @@ describe("derivePostState: the publication-confirmation deadline for a succeeded
           toleranceMinutes: 60,
         }),
       ),
-      { remoteId: "x-post-1", status: "reserved" },
+      { remoteId: "x-post-1", status: "published" },
     );
   });
+});
+
+describe("derivePostState: a succeeded attempt on a non-YouTube platform is published (C-PUBLISHED, #554 carry-over, ADR-0009 decision 13)", () => {
+  // SNS 側の予約を持つのは YouTube だけ。Instagram/X は即時に投稿する SNS なので、試行の成功が
+  // そのまま公開を表す（GLOSSARY.md）。#554 からの持ち越し: このアダプタを足すときに直すこと。
+  it.each(["instagram", "x"] as const)(
+    "is published with the remote ID for %s, immediately (no tolerance window applies)",
+    (platform) => {
+      assert.deepStrictEqual(
+        derivePostState(input({ lastAttempt: "succeeded", platform, remoteId: "post-1" })),
+        { remoteId: "post-1", status: "published" },
+      );
+    },
+  );
+
+  it.each(["instagram", "x"] as const)(
+    "stays published for %s no matter how much time has passed since the scheduled time",
+    (platform) => {
+      assert.deepStrictEqual(
+        derivePostState(
+          input({
+            lastAttempt: "succeeded",
+            now: scheduledAtMs + 10_000 * minute,
+            platform,
+            remoteId: "post-1",
+          }),
+        ),
+        { remoteId: "post-1", status: "published" },
+      );
+    },
+  );
 });

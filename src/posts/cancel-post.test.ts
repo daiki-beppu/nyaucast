@@ -8,6 +8,7 @@ import { runProgram, selectAll, setClock } from "../../test/helpers.ts";
 import { declareAccounts } from "../../test/post-draft-helpers.ts";
 import { storeToken } from "../../test/publish-helpers.ts";
 import { withToolChannel } from "../../test/tool-helpers.ts";
+import { unusedXClientLayer } from "../../test/x-fake-client.ts";
 import {
   fakeYouTubeHttp,
   googleErrorResponse,
@@ -69,7 +70,9 @@ const inChannel = <A, E, R>(prefix: string, use: () => Effect.Effect<A, E, R>) =
 const cancellationRows = selectAll("explainer_post_cancellations");
 
 const runCancel = (postId: number) =>
-  runProgram(Command.runWith(postCommand, { version: "test" })(["cancel", String(postId)]));
+  runProgram(Command.runWith(postCommand, { version: "test" })(["cancel", String(postId)])).pipe(
+    Effect.provide(unusedXClientLayer),
+  );
 
 describe("nyaucast post cancel: a reserved YouTube post (C1/AC1)", () => {
   it.effect(
@@ -267,7 +270,10 @@ describe("nyaucast post cancel then post run-now (AC7)", () => {
         const runNowFixture = fakeYouTubeHttp([]);
         const { outcome } = yield* runProgram(
           Command.runWith(postCommand, { version: "test" })(["run-now", String(postId)]),
-        ).pipe(Effect.provide(youtubeClientLayer(runNowFixture.http)));
+        ).pipe(
+          Effect.provide(youtubeClientLayer(runNowFixture.http)),
+          Effect.provide(unusedXClientLayer),
+        );
 
         assert.strictEqual(outcome._tag, "Failure");
         assert.strictEqual(runNowFixture.calls.length, 0);
@@ -290,7 +296,10 @@ describe("nyaucast post cancel then post run (C-CANCEL-NOT-RUN)", () => {
         const runFixture = fakeYouTubeHttp([]);
         const { outcome } = yield* runProgram(
           Command.runWith(postCommand, { version: "test" })(["run"]),
-        ).pipe(Effect.provide(youtubeClientLayer(runFixture.http)));
+        ).pipe(
+          Effect.provide(youtubeClientLayer(runFixture.http)),
+          Effect.provide(unusedXClientLayer),
+        );
 
         assert.strictEqual(outcome._tag, "Success");
         assert.strictEqual(runFixture.calls.length, 0);

@@ -5,7 +5,8 @@ import type { AccountsDeclarationInvalid } from "../auth/accounts.ts";
 import { CredentialStore, type CredentialStoreFailure } from "../auth/credential-store.ts";
 import { DeclaredAccounts } from "../auth/declared-accounts.ts";
 import type { VideoFiles } from "../videos/video-files.ts";
-import { YouTubeClient } from "../youtube/client.ts";
+import type { XClient } from "../x/client.ts";
+import type { YouTubeClient } from "../youtube/client.ts";
 import type { ClassifiedPost } from "./post-classification.ts";
 import { type DuePostOutcome, runPostForced } from "./due-posts.ts";
 import { postStatuses } from "./post-state.ts";
@@ -27,7 +28,7 @@ export const runPostNow = (
 ): Effect.Effect<
   DuePostOutcome,
   AccountsDeclarationInvalid | CredentialStoreFailure | PostNotRunnable,
-  CredentialStore | DeclaredAccounts | SqlClient.SqlClient | VideoFiles | YouTubeClient
+  CredentialStore | DeclaredAccounts | SqlClient.SqlClient | VideoFiles | XClient | YouTubeClient
 > =>
   Effect.gen(function* () {
     const { status } = target.state;

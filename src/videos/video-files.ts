@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { open } from "node:fs/promises";
 
-import { Context, Effect, Exit, FileSystem, Layer, Option, Path, Scope } from "effect";
+import { Context, Effect, Exit, FileSystem, Layer, Option, Path, Schema, Scope } from "effect";
 
 import { atomicWriter } from "../files/atomic-write.ts";
 
@@ -15,6 +15,14 @@ export interface FileReader {
   /** 位置 [start, end) のバイト列（ファイルの終わりを超える分は含まない）。 */
   read(start: number, end: number): Promise<Uint8Array>;
 }
+
+/**
+ * 開いたハンドルからのバイト読み取り自体が失敗した（開いた後の I/O エラー）。`Effect.promise` は
+ * reject を defect にし、呼び出し側の `Effect.result` では捕まらずに実行全体を落としてしまうため、
+ * 型付きの失敗として運ぶ必要がある。送信前にチャンクを読むアダプタ（YouTube の resumable upload・
+ * X のメディアアップロード）が同じ意味・同じ変更理由で共有するので、読み取りの所有者であるここに置く。
+ */
+export class ChunkReadFailed extends Schema.TaggedError<ChunkReadFailed>()("ChunkReadFailed", {}) {}
 
 /** 動画のディレクトリのファイル（台本・ナレーションの成果物）の置き場。キーは、チャンネルルートからの相対パス。 */
 export class VideoFiles extends Context.Service<

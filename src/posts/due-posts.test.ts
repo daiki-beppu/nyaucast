@@ -8,12 +8,25 @@ import { explainerConfig } from "../../test/explainer-helpers.ts";
 import { runProgram, selectAll, setClock } from "../../test/helpers.ts";
 import { declareAccounts } from "../../test/post-draft-helpers.ts";
 import { channelNameOf, storeToken } from "../../test/publish-helpers.ts";
+import {
+  fakeHttp,
+  x,
+  xMediaAppendResponse,
+  xMediaAppendRoute,
+  xMediaFinalizeResponse,
+  xMediaFinalizeRoute,
+  xMediaInitializeResponse,
+  xMediaStatusResponse,
+  xTweetResponse,
+} from "../../test/sns-api.ts";
 import { withToolChannel } from "../../test/tool-helpers.ts";
+import { unusedXClientLayer, xClientLayer, xNetworkError } from "../../test/x-fake-client.ts";
 import {
   fakeYouTubeHttp,
   googleErrorResponse,
   jsonUploadResponse,
   locationResponse,
+  unusedYouTubeClientLayer,
   youtubeClientLayer,
 } from "../../test/youtube-fake-client.ts";
 import { AuthorizationFailed } from "../auth/adapter.ts";
@@ -21,6 +34,7 @@ import { CredentialStore } from "../auth/credential-store.ts";
 import { appendCutExport, appendCutPreview, longCut } from "../db/explainer-cuts.ts";
 import { appendCandidate, appendSelection, thumbnailKey } from "../db/explainer-thumbnails.ts";
 import { VideoFiles } from "../videos/video-files.ts";
+import { appendChunkBytes } from "../x/media-upload.ts";
 import { YouTubeAuth } from "../youtube/auth.ts";
 import { postCommand } from "./cli.ts";
 import { runDuePosts } from "./due-posts.ts";
@@ -44,8 +58,12 @@ const exportKeyOf = (cut: string) => `videos/${videoId}/cuts/${cut}/${cut}.mp4`;
 const sessionUrl =
   "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&upload_id=SESSION1";
 
-/** 動画・最後のサムネイルの選択・最後のカットの書き出しと、その実ファイルを用意する(鮮度と ③ の検査を通す前提)。 */
-const prepareVideoFacts = (cut: string) =>
+/**
+ * 動画・最後のサムネイルの選択・最後のカットの書き出しと、その実ファイルを用意する(鮮度と ③ の検査を
+ * 通す前提)。`content` は既定で 3 バイトの定数だが、チャンク分割を観測するテスト（X のメディア
+ * アップロード）はここに大きなバイト列を渡す。
+ */
+const prepareVideoFacts = (cut: string, content: Uint8Array = Uint8Array.from([1, 2, 3])) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`INSERT INTO explainer_videos (id, created_at) VALUES (${videoId}, ${videoCreatedAt})`;
@@ -69,11 +87,13 @@ const prepareVideoFacts = (cut: string) =>
       videoId,
     });
     yield* appendCutPreview({ compositionHash: "c1", cut, videoId });
-    yield* (yield* VideoFiles).write(exportKeyOf(cut), Uint8Array.from([1, 2, 3]));
+    yield* (yield* VideoFiles).write(exportKeyOf(cut), content);
   });
 
 interface PostFixture {
   readonly accountId?: string;
+  /** Instagram/X の本文。省略時は既定の "b"（C-X-TEXT の検査対象を個別に用意するテストが上書きする）。 */
+  readonly body?: string;
   readonly createdAt?: string;
   readonly cut?: string;
   readonly platform?: "instagram" | "x" | "youtube";
@@ -81,10 +101,10 @@ interface PostFixture {
 }
 
 // YouTube は title/description、Instagram/X は body（post-text.ts の platform ごとの形と同じ）。
-const postTextFieldsFor = (platform: "instagram" | "x" | "youtube") =>
+const postTextFieldsFor = (platform: "instagram" | "x" | "youtube", body: string) =>
   platform === "youtube"
     ? { body: null, description: "説明", title: "Night Drive" }
-    : { body: "b", description: null, title: null };
+    : { body, description: null, title: null };
 
 const resolvedIdentity = (fixture: PostFixture) => {
   const platform = fixture.platform ?? "youtube";
@@ -106,7 +126,7 @@ const insertPost = (fixture: PostFixture = {}) =>
     const sql = yield* SqlClient.SqlClient;
     const { accountId, cut, platform } = resolvedIdentity(fixture);
     const { createdAt, scheduledAt } = resolvedSchedule(fixture);
-    const { body, description, title } = postTextFieldsFor(platform);
+    const { body, description, title } = postTextFieldsFor(platform, fixture.body ?? "b");
     yield* sql`INSERT INTO explainer_posts (video_id, cut, platform, account_id, title, description, body, scheduled_at, created_at) VALUES (${videoId}, ${cut}, ${platform}, ${accountId}, ${title}, ${description}, ${body}, ${scheduledAt}, ${createdAt})`;
     const rows = yield* sql`SELECT last_insert_rowid() AS id`;
     return Number(rows[0]?.["id"]);
@@ -158,6 +178,7 @@ describe("runDuePosts: the happy path", () => {
 
           const outcomes = yield* runDuePosts(60).pipe(
             Effect.provide(youtubeClientLayer(fixture.http)),
+            Effect.provide(unusedXClientLayer),
           );
 
           // prepareVideoFacts はサムネイルの選択の事実だけを積み、ファイルは書かない(鮮度・ファイル
@@ -192,6 +213,7 @@ describe("runDuePosts: the happy path", () => {
 
           const outcomes = yield* runDuePosts(60).pipe(
             Effect.provide(youtubeClientLayer(fixture.http)),
+            Effect.provide(unusedXClientLayer),
           );
 
           assert.deepStrictEqual(outcomes, [
@@ -218,6 +240,7 @@ describe("runDuePosts: C1 - a YouTube post whose scheduled time is already past"
 
         const outcomes = yield* runDuePosts(60).pipe(
           Effect.provide(youtubeClientLayer(fixture.http)),
+          Effect.provide(unusedXClientLayer),
         );
 
         assert.deepStrictEqual(outcomes, []);
@@ -260,6 +283,7 @@ describe("runDuePosts: C8 - the scheduled time is re-checked immediately before 
 
           const outcomes = yield* runDuePosts(60).pipe(
             Effect.provide(youtubeClientLayer(fixture.http)),
+            Effect.provide(unusedXClientLayer),
             Effect.provide(advancingVideoFiles),
           );
 
@@ -306,6 +330,7 @@ describe(
 
             const outcomes = yield* runDuePosts(60).pipe(
               Effect.provide(youtubeClientLayer(fixture.http)),
+              Effect.provide(unusedXClientLayer),
               Effect.provide(advancingVideoFiles),
             );
 
@@ -378,6 +403,7 @@ describe(
 
             const outcomes = yield* runDuePosts(60).pipe(
               Effect.provide(youtubeClientLayer(fixture.http)),
+              Effect.provide(unusedXClientLayer),
               Effect.provide(mismatchingAfterFirstPrepare),
             );
 
@@ -411,6 +437,7 @@ describe("runDuePosts: C5/C16 - temporary failures stay due and are not retried 
 
           const outcomes = yield* runDuePosts(60).pipe(
             Effect.provide(youtubeClientLayer(fixture.http)),
+            Effect.provide(unusedXClientLayer),
           );
 
           assert.strictEqual(outcomes.length, 1);
@@ -434,6 +461,7 @@ describe("runDuePosts: C5/C16 - temporary failures stay due and are not retried 
 
         const outcomes = yield* runDuePosts(60).pipe(
           Effect.provide(youtubeClientLayer(fixture.http)),
+          Effect.provide(unusedXClientLayer),
         );
 
         assert.strictEqual((outcomes[0] as { kind: string }).kind, "temporary");
@@ -473,6 +501,7 @@ describe("runDuePosts: C5 - an authentication failure stops the rest of that acc
 
           const outcomes = yield* runDuePosts(60).pipe(
             Effect.provide(youtubeClientLayer(fixture.http)),
+            Effect.provide(unusedXClientLayer),
           );
 
           // どちらが先に処理されても構わない: 1 件が 401 を使い切って permanent になり、
@@ -524,6 +553,7 @@ describe("runDuePosts: D3/D4 - a thumbnails.set failure's classification decides
 
           const outcomes = yield* runDuePosts(60).pipe(
             Effect.provide(youtubeClientLayer(fixture.http)),
+            Effect.provide(unusedXClientLayer),
           );
 
           const byPost = new Map(outcomes.map((outcome) => [outcome.postId, outcome]));
@@ -571,6 +601,7 @@ describe("runDuePosts: D3/D4 - a thumbnails.set failure's classification decides
 
           const outcomes = yield* runDuePosts(60).pipe(
             Effect.provide(youtubeClientLayer(fixture.http)),
+            Effect.provide(unusedXClientLayer),
           );
 
           const byPost = new Map(outcomes.map((outcome) => [outcome.postId, outcome]));
@@ -638,6 +669,7 @@ describe("runDuePosts: C6 - atomic acquisition under real concurrency (same post
 
           const run = runDuePosts(60).pipe(
             Effect.provide(youtubeClientLayer(fixture.http)),
+            Effect.provide(unusedXClientLayer),
             Effect.provide(rendezvousVideoFiles),
           );
 
@@ -717,6 +749,7 @@ describe(
 
             const run = runDuePosts(60).pipe(
               Effect.provide(youtubeClientLayer(fixture.http)),
+              Effect.provide(unusedXClientLayer),
               Effect.provide(rendezvousVideoFiles),
             );
 
@@ -798,6 +831,7 @@ describe("runDuePosts: C7/C18 - a late run does not acquire after a success was 
           const bFiber = yield* Effect.forkChild(
             runDuePosts(60).pipe(
               Effect.provide(youtubeClientLayer(fixture.http)),
+              Effect.provide(unusedXClientLayer),
               Effect.provide(blockedVideoFiles),
             ),
           );
@@ -806,6 +840,7 @@ describe("runDuePosts: C7/C18 - a late run does not acquire after a success was 
           // A は止まらず最後まで進み、成功を書き終える。
           const outcomesA = yield* runDuePosts(60).pipe(
             Effect.provide(youtubeClientLayer(fixture.http)),
+            Effect.provide(unusedXClientLayer),
           );
           assert.deepStrictEqual(outcomesA, [
             { kind: "succeeded", postId, remoteId: "VIDEO-A", thumbnailSetFailed: true },
@@ -841,6 +876,7 @@ describe("runDuePosts: a resultless attempt excludes the post from this run inst
 
           const outcomes = yield* runDuePosts(60).pipe(
             Effect.provide(youtubeClientLayer(fixture.http)),
+            Effect.provide(unusedXClientLayer),
           );
 
           // 結果の無い試行がある投稿は due ではなく確認待ちなので、この実行は手を出さない
@@ -877,6 +913,7 @@ describe(
 
             const outcomes = yield* runDuePosts(60).pipe(
               Effect.provide(youtubeClientLayer(fixture.http)),
+              Effect.provide(unusedXClientLayer),
             );
 
             assert.deepStrictEqual(outcomes, [{ kind: "indeterminate", postId }]);
@@ -919,6 +956,7 @@ describe(
 
               const outcomes = yield* runDuePosts(60).pipe(
                 Effect.provide(youtubeClientLayer(fixture.http)),
+                Effect.provide(unusedXClientLayer),
               );
 
               assert.deepStrictEqual(outcomes, [{ kind: "indeterminate", postId }]);
@@ -953,6 +991,7 @@ describe(
 
           const outcomes = yield* runDuePosts(60).pipe(
             Effect.provide(youtubeClientLayer(fixture.http)),
+            Effect.provide(unusedXClientLayer),
           );
 
           assert.strictEqual((outcomes[0] as { kind: string }).kind, "succeeded");
@@ -1005,6 +1044,7 @@ describe(
 
             const outcomes = yield* runDuePosts(60).pipe(
               Effect.provide(youtubeClientLayer(fixture.http)),
+              Effect.provide(unusedXClientLayer),
             );
 
             const byPost = new Map(outcomes.map((outcome) => [outcome.postId, outcome]));
@@ -1058,6 +1098,7 @@ describe(
 
             const outcomes = yield* runDuePosts(60).pipe(
               Effect.provide(youtubeClientLayer(fixture.http)),
+              Effect.provide(unusedXClientLayer),
             );
 
             const byPost = new Map(outcomes.map((outcome) => [outcome.postId, outcome]));
@@ -1104,6 +1145,7 @@ describe("runDuePosts: P1 - the access token is resolved before the final due-ti
 
           const outcomes = yield* runDuePosts(60).pipe(
             Effect.provide(youtubeClientLayer(fixture.http, advancingAuth)),
+            Effect.provide(unusedXClientLayer),
           );
 
           assert.strictEqual(fixture.calls.length, 0);
@@ -1159,6 +1201,7 @@ describe(
 
             const outcomes = yield* runDuePosts(60).pipe(
               Effect.provide(youtubeClientLayer(fixture.http, failingAuth)),
+              Effect.provide(unusedXClientLayer),
             );
 
             const byPost = new Map(outcomes.map((outcome) => [outcome.postId, outcome]));
@@ -1225,6 +1268,7 @@ describe(
 
             const outcomes = yield* runDuePosts(60).pipe(
               Effect.provide(youtubeClientLayer(fixture.http)),
+              Effect.provide(unusedXClientLayer),
               Effect.provide(advanceClockAfterAttemptInsert),
             );
 
@@ -1268,6 +1312,7 @@ describe(
 
             const outcomes = yield* runDuePosts(60).pipe(
               Effect.provide(youtubeClientLayer(fixture.http)),
+              Effect.provide(unusedXClientLayer),
             );
 
             assert.deepStrictEqual(outcomes, [
@@ -1342,6 +1387,7 @@ describe(
 
             const outcomes = yield* runDuePosts(60).pipe(
               Effect.provide(youtubeClientLayer(fixture.http)),
+              Effect.provide(unusedXClientLayer),
               Effect.provide(staleAfterCheckVideoFiles),
             );
 
@@ -1421,6 +1467,7 @@ describe(
 
             const outcomes = yield* runDuePosts(60).pipe(
               Effect.provide(youtubeClientLayer(fixture.http)),
+              Effect.provide(unusedXClientLayer),
               Effect.provide(staleAfterCheckVideoFiles),
             );
 
@@ -1464,6 +1511,7 @@ describe(
 
             const outcomes = yield* runDuePosts(60).pipe(
               Effect.provide(youtubeClientLayer(fixture.http)),
+              Effect.provide(unusedXClientLayer),
             );
 
             assert.deepStrictEqual(outcomes, [{ kind: "indeterminate", postId }]);
@@ -1494,6 +1542,7 @@ describe(
 
           const outcomes = yield* runDuePosts(60).pipe(
             Effect.provide(youtubeClientLayer(fixture.http)),
+            Effect.provide(unusedXClientLayer),
           );
 
           assert.deepStrictEqual(outcomes, [
@@ -1527,7 +1576,10 @@ describe("nyaucast post run: the CLI entry point (not just the command tree)", (
 
           const { logs, outcome } = yield* runProgram(
             Command.runWith(postCommand, { version: "test" })(["run"]),
-          ).pipe(Effect.provide(youtubeClientLayer(fixture.http)));
+          ).pipe(
+            Effect.provide(youtubeClientLayer(fixture.http)),
+            Effect.provide(unusedXClientLayer),
+          );
 
           assert.strictEqual(outcome._tag, "Success");
           assert.deepStrictEqual(logs, [
@@ -1550,7 +1602,10 @@ describe("runDuePosts: #656 - the account stored on the post must match the curr
           yield* setClock(defaultScheduledAt);
           const fixture = fakeYouTubeHttp([]);
 
-          yield* runDuePosts(60).pipe(Effect.provide(youtubeClientLayer(fixture.http)));
+          yield* runDuePosts(60).pipe(
+            Effect.provide(youtubeClientLayer(fixture.http)),
+            Effect.provide(unusedXClientLayer),
+          );
 
           assert.strictEqual(fixture.calls.length, 0);
           assert.strictEqual((yield* attemptRows).length, 0);
@@ -1558,3 +1613,550 @@ describe("runDuePosts: #656 - the account stored on the post must match the curr
       ),
   );
 });
+
+// ---- #556: X への投稿（platform 非依存化、X のメディアアップロードと /2/tweets） ----
+
+describe(
+  "runDuePosts: C-X-REACHABLE-RUN - a due X post uploads its video and tweets it " +
+    "(SCN-C-X-TEXT-N1, C-X-DISCLOSURE, C-X-POSTID)",
+  () => {
+    it.effect(
+      "sends initialize/append/finalize/tweets in order, the tweet always carries made_with_ai " +
+        "and the uploaded media_id, and the tweet's id is recorded as remote_id",
+      () =>
+        inPostsChannel("nyaucast-due-posts-x-happy-", ["x"], (_channelRoot) =>
+          Effect.gen(function* () {
+            yield* prepareVideoFacts(longCut);
+            const text = "@nyaucast の新作 #解説 をどうぞ。";
+            const postId = yield* insertPost({ body: text, platform: "x" });
+            yield* setClock(defaultScheduledAt);
+            const fixture = fakeHttp({
+              [x.routes.mediaInitialize]: () => xMediaInitializeResponse(),
+              [xMediaAppendRoute(x.mediaId)]: () => xMediaAppendResponse(),
+              [xMediaFinalizeRoute(x.mediaId)]: () => xMediaFinalizeResponse(x.mediaId),
+              [x.routes.tweets]: () => xTweetResponse("tweet-happy-1", text),
+            });
+
+            const outcomes = yield* runDuePosts(60).pipe(
+              Effect.provide(xClientLayer(fixture.layer)),
+              Effect.provide(unusedYouTubeClientLayer),
+            );
+
+            assert.deepStrictEqual(outcomes, [
+              { kind: "succeeded", postId, remoteId: "tweet-happy-1" },
+            ]);
+            assert.deepStrictEqual(
+              fixture.requests.map((request) => request.key),
+              [
+                x.routes.mediaInitialize,
+                xMediaAppendRoute(x.mediaId),
+                xMediaFinalizeRoute(x.mediaId),
+                x.routes.tweets,
+              ],
+            );
+            const tweetRequest = fixture.requests.find(
+              (request) => request.key === x.routes.tweets,
+            );
+            const body = JSON.parse(new TextDecoder().decode(tweetRequest?.bodyBytes)) as Record<
+              string,
+              unknown
+            >;
+            assert.deepStrictEqual(body, {
+              made_with_ai: true,
+              media: { media_ids: [x.mediaId] },
+              text,
+            });
+            const [result] = yield* attemptResultRows;
+            assert.strictEqual(result?.["outcome"], "succeeded");
+            assert.strictEqual(result?.["remote_id"], "tweet-happy-1");
+          }),
+        ),
+    );
+  },
+);
+
+describe(
+  "runDuePosts: SCN-C-X-FLOW-P1 - a file 2.5x the chunk size is sent as 3 ascending chunks " +
+    "that reassemble into the original file",
+  () => {
+    it.effect(
+      "calls append 3 times with segment_index 0, 1, 2, and their concatenated bytes equal the original file",
+      () =>
+        inPostsChannel("nyaucast-due-posts-x-chunks-", ["x"], (_channelRoot) =>
+          Effect.gen(function* () {
+            const size = appendChunkBytes * 2 + Math.floor(appendChunkBytes / 2);
+            const content = Uint8Array.from({ length: size }, (_, index) => index % 256);
+            yield* prepareVideoFacts(longCut, content);
+            const postId = yield* insertPost({ platform: "x" });
+            yield* setClock(defaultScheduledAt);
+            const fixture = fakeHttp({
+              [x.routes.mediaInitialize]: () => xMediaInitializeResponse(),
+              [xMediaAppendRoute(x.mediaId)]: () => xMediaAppendResponse(),
+              [xMediaFinalizeRoute(x.mediaId)]: () => xMediaFinalizeResponse(x.mediaId),
+              [x.routes.tweets]: () => xTweetResponse("tweet-chunks-1", "b"),
+            });
+
+            const outcomes = yield* runDuePosts(60).pipe(
+              Effect.provide(xClientLayer(fixture.layer)),
+              Effect.provide(unusedYouTubeClientLayer),
+            );
+
+            assert.deepStrictEqual(outcomes, [
+              { kind: "succeeded", postId, remoteId: "tweet-chunks-1" },
+            ]);
+            const appendRequests = fixture.requests.filter(
+              (request) => request.key === xMediaAppendRoute(x.mediaId),
+            );
+            assert.strictEqual(appendRequests.length, 3);
+            const decoded = appendRequests.map((request) => {
+              const parsed = JSON.parse(new TextDecoder().decode(request.bodyBytes)) as {
+                media: string;
+                segment_index: number;
+              };
+              return {
+                bytes: Uint8Array.from(Buffer.from(parsed.media, "base64")),
+                segmentIndex: parsed.segment_index,
+              };
+            });
+            assert.deepStrictEqual(
+              decoded.map((entry) => entry.segmentIndex),
+              [0, 1, 2],
+            );
+            const reassembled = new Uint8Array(size);
+            let offset = 0;
+            for (const entry of decoded) {
+              reassembled.set(entry.bytes, offset);
+              offset += entry.bytes.length;
+            }
+            assert.deepStrictEqual(reassembled, content);
+          }),
+        ),
+      // この 1 本だけは、チャンクの境界を観測するために実ファイルで appendChunkBytes の 2.5 倍
+      // （約 10MB）を書き出し、base64 と JSON を通して再構成する。unit の既定の 5 秒は、スイート全体を
+      // 並行実行したときの負荷で越えることがあるため、この重さに見合う上限を明示する
+      // （vite.config.ts が contract のプロジェクトに 30 秒を与えているのと同じ理由）。
+      30_000,
+    );
+  },
+);
+
+describe("runDuePosts: C-KEEP-IG - Instagram posts remain no_adapter", () => {
+  it.effect("reports no_adapter for a due Instagram post, calling no HTTP at all", () =>
+    inPostsChannel("nyaucast-due-posts-instagram-no-adapter-", ["instagram"], (_channelRoot) =>
+      Effect.gen(function* () {
+        yield* prepareVideoFacts(longCut);
+        const postId = yield* insertPost({ platform: "instagram" });
+        yield* setClock(defaultScheduledAt);
+
+        const outcomes = yield* runDuePosts(60).pipe(
+          Effect.provide(unusedXClientLayer),
+          Effect.provide(unusedYouTubeClientLayer),
+        );
+
+        assert.deepStrictEqual(outcomes, [{ kind: "no_adapter", platform: "instagram", postId }]);
+        assert.strictEqual((yield* attemptRows).length, 0);
+      }),
+    ),
+  );
+});
+
+describe("runDuePosts: SCN-C-X-TEXT-P1 - a URL in the post text fails permanently before any HTTP call (C-X-TEXT)", () => {
+  it.effect("calls no HTTP and records a permanent InvalidPostText result", () =>
+    inPostsChannel("nyaucast-due-posts-x-url-text-", ["x"], (_channelRoot) =>
+      Effect.gen(function* () {
+        yield* prepareVideoFacts(longCut);
+        const postId = yield* insertPost({ body: "新作です example.com をどうぞ", platform: "x" });
+        yield* setClock(defaultScheduledAt);
+
+        const outcomes = yield* runDuePosts(60).pipe(
+          Effect.provide(unusedXClientLayer),
+          Effect.provide(unusedYouTubeClientLayer),
+        );
+
+        assert.deepStrictEqual(outcomes, [{ kind: "permanent", postId, tag: "InvalidPostText" }]);
+        const [result] = yield* attemptResultRows;
+        assert.strictEqual(result?.["outcome"], "permanent");
+        assert.isNull(result?.["remote_id"]);
+      }),
+    ),
+  );
+});
+
+describe(
+  "runDuePosts: C-X-STATUS-FAILED - a STATUS failed response ends the attempt as permanent " +
+    "without calling /2/tweets (AC2)",
+  () => {
+    it.effect(
+      "observes the same media_id move from in_progress to failed, then records a permanent " +
+        "result without tweeting",
+      () =>
+        inPostsChannel("nyaucast-due-posts-x-status-failed-", ["x"], (_channelRoot) =>
+          Effect.gen(function* () {
+            yield* prepareVideoFacts(longCut);
+            const postId = yield* insertPost({ platform: "x" });
+            yield* setClock(defaultScheduledAt);
+            let statusCalls = 0;
+            // finalize に届いたことを親へ知らせる。親はそれまで時計を進めない: 門（isStillReady /
+            // isStillDue）と local store の読みは実 promise なので、先に時計を進めると、この投稿が
+            // 許容時間を出て scheduled_in_past になり、STATUS の変化を観測できない。
+            const finalized = yield* Deferred.make<void>();
+            const fixture = fakeHttp({
+              [x.routes.mediaInitialize]: () => xMediaInitializeResponse(),
+              [xMediaAppendRoute(x.mediaId)]: () => xMediaAppendResponse(),
+              [xMediaFinalizeRoute(x.mediaId)]: () =>
+                Effect.gen(function* () {
+                  yield* Deferred.succeed(finalized, undefined);
+                  return xMediaFinalizeResponse(x.mediaId, { checkAfterSecs: 1, state: "pending" });
+                }),
+              [x.routes.mediaStatus]: () => {
+                statusCalls += 1;
+                return statusCalls === 1
+                  ? xMediaStatusResponse(x.mediaId, "in_progress", 1)
+                  : xMediaStatusResponse(x.mediaId, "failed");
+              },
+              [x.routes.tweets]: () => xTweetResponse("must-not-be-called", "unused"),
+            });
+
+            const outcomes = yield* Effect.gen(function* () {
+              const fiber = yield* Effect.forkChild(runDuePosts(60));
+              yield* Deferred.await(finalized);
+              // STATUS の待機（check_after_secs = 1 秒）を 2 回越える。許容時間（60 分）の中に収める。
+              yield* TestClock.adjust("1 minute");
+              return yield* Fiber.join(fiber);
+            }).pipe(
+              Effect.provide(xClientLayer(fixture.layer)),
+              Effect.provide(unusedYouTubeClientLayer),
+            );
+
+            assert.deepStrictEqual(outcomes, [
+              { kind: "permanent", postId, tag: "XMediaProcessingFailed" },
+            ]);
+            assert.strictEqual(statusCalls, 2);
+            assert.strictEqual(
+              fixture.requests.some((request) => request.key === x.routes.tweets),
+              false,
+            );
+            const [result] = yield* attemptResultRows;
+            assert.strictEqual(result?.["outcome"], "permanent");
+            assert.isNull(result?.["remote_id"]);
+          }),
+        ),
+    );
+  },
+);
+
+describe("runDuePosts: C-X-CLASSIFY - a 429 during the media upload is temporary and leaves the post due", () => {
+  it.effect("classifies the first 429 response as temporary, without retrying it", () =>
+    inPostsChannel("nyaucast-due-posts-x-429-", ["x"], (_channelRoot) =>
+      Effect.gen(function* () {
+        yield* prepareVideoFacts(longCut);
+        const postId = yield* insertPost({ platform: "x" });
+        yield* setClock(defaultScheduledAt);
+        const fixture = fakeHttp({
+          [x.routes.mediaInitialize]: () => Response.json({}, { status: 429 }),
+        });
+
+        const outcomes = yield* runDuePosts(60).pipe(
+          Effect.provide(xClientLayer(fixture.layer)),
+          Effect.provide(unusedYouTubeClientLayer),
+        );
+
+        assert.deepStrictEqual(outcomes, [{ kind: "temporary", postId, tag: "XHttpFailure" }]);
+        assert.strictEqual(fixture.requests.length, 1);
+        const [result] = yield* attemptResultRows;
+        assert.strictEqual(result?.["outcome"], "temporary");
+      }),
+    ),
+  );
+});
+
+describe(
+  "runDuePosts: SCN-C-X-CLASSIFY-P1 - media processing that never finishes within the wait budget " +
+    "is temporary and does not stop the account",
+  () => {
+    it.effect(
+      "classifies XMediaProcessingUnfinished as temporary, records it, and never calls /2/tweets",
+      () =>
+        inPostsChannel("nyaucast-due-posts-x-unfinished-", ["x"], (_channelRoot) =>
+          Effect.gen(function* () {
+            yield* prepareVideoFacts(longCut);
+            const postId = yield* insertPost({ platform: "x" });
+            yield* setClock(defaultScheduledAt);
+            let statusCalls = 0;
+            // C-X-STATUS-FAILED と同じ作法: finalize に届いたことを親へ知らせ、親はそれまで時計を
+            // 進めない。門(isStillReady / isStillDue)と local store の読みは実 promise なので、先に
+            // 時計を進めるとこの投稿が許容時間を出て scheduled_in_past になり、分類を観測できない。
+            const finalized = yield* Deferred.make<void>();
+            const fixture = fakeHttp({
+              [x.routes.mediaInitialize]: () => xMediaInitializeResponse(),
+              [xMediaAppendRoute(x.mediaId)]: () => xMediaAppendResponse(),
+              [xMediaFinalizeRoute(x.mediaId)]: () =>
+                Effect.gen(function* () {
+                  yield* Deferred.succeed(finalized, undefined);
+                  return xMediaFinalizeResponse(x.mediaId, {
+                    checkAfterSecs: 60,
+                    state: "pending",
+                  });
+                }),
+              // 処理は終わらない想定: STATUS は常に in_progress を返し、待機の上限で切り上がる。
+              [x.routes.mediaStatus]: () => {
+                statusCalls += 1;
+                return xMediaStatusResponse(x.mediaId, "in_progress", 60);
+              },
+              [x.routes.tweets]: () => xTweetResponse("must-not-be-called", "unused"),
+            });
+
+            const outcomes = yield* Effect.gen(function* () {
+              const fiber = yield* Effect.forkChild(runDuePosts(60));
+              yield* Deferred.await(finalized);
+              // 待機の予算(10 分)を越えるまで進める。待機は獲得・予定時刻の再確認より後なので、
+              // runDuePosts(60) の門には影響しない。
+              yield* TestClock.adjust("15 minutes");
+              return yield* Fiber.join(fiber);
+            }).pipe(
+              Effect.provide(xClientLayer(fixture.layer)),
+              Effect.provide(unusedYouTubeClientLayer),
+            );
+
+            // 一時的な失敗。temporaryTags から XMediaProcessingUnfinished が外れると、分類は既定の
+            // 認証扱い(permanent + そのアカウントを止める)へ落ちるので、この kind で区別できる。
+            assert.deepStrictEqual(outcomes, [
+              { kind: "temporary", postId, tag: "XMediaProcessingUnfinished" },
+            ]);
+            assert.isAtLeast(statusCalls, 1);
+            // 投稿は 1 回も送らない。許可値の不在ではなく、tweets 宛の件数が 0 であることを数える。
+            assert.strictEqual(
+              fixture.requests.filter((request) => request.key === x.routes.tweets).length,
+              0,
+            );
+            const [result] = yield* attemptResultRows;
+            assert.strictEqual(result?.["outcome"], "temporary");
+            assert.isNull(result?.["remote_id"]);
+          }),
+        ),
+    );
+  },
+);
+
+describe(
+  "runDuePosts: SCN-C-X-CLASSIFY-N1 - a media upload whose 2xx body has no media id is permanent " +
+    "but does not stop the account",
+  () => {
+    it.effect(
+      "records both X posts of the same account as permanent XResponseInvalid, reaching initialize twice",
+      () =>
+        inPostsChannel("nyaucast-due-posts-x-media-unreadable-", ["x"], (_channelRoot) =>
+          Effect.gen(function* () {
+            yield* prepareVideoFacts(longCut);
+            const clip = "short-1-clip";
+            yield* appendCutExport({
+              compositionHash: "cx1",
+              cut: clip,
+              key: exportKeyOf(clip),
+              renderHash: "rx1",
+              videoId,
+            });
+            yield* appendCutPreview({ compositionHash: "cx1", cut: clip, videoId });
+            yield* (yield* VideoFiles).write(exportKeyOf(clip), Uint8Array.from([4, 5, 6]));
+            const first = yield* insertPost({ platform: "x" });
+            const second = yield* insertPost({ cut: clip, platform: "x" });
+            yield* setClock(defaultScheduledAt);
+            // status 200 だが data.id が無く schema を満たさない。XClient は 2xx を受理したあとの
+            // 本文の decode で落ち、メディアアップロード段の XResponseInvalid になる(投稿はまだ
+            // 1 回も送っていないので、tweet 段の 2xx 本文不読 = C-X-INDETERMINATE とは別の経路)。
+            const fixture = fakeHttp({
+              [x.routes.mediaInitialize]: () => Response.json({ data: {} }),
+            });
+
+            const outcomes = yield* runDuePosts(60).pipe(
+              Effect.provide(xClientLayer(fixture.layer)),
+              Effect.provide(unusedYouTubeClientLayer),
+            );
+
+            const byPost = new Map(outcomes.map((outcome) => [outcome.postId, outcome]));
+            assert.deepStrictEqual(byPost.get(first), {
+              kind: "permanent",
+              postId: first,
+              tag: "XResponseInvalid",
+            });
+            // 認証の失敗ではないので、同じアカウントの 2 件目は account_stopped にならず試される。
+            // noStopPermanentTags から XResponseInvalid が外れると既定の認証扱いへ落ち、2 件目が
+            // account_stopped（initialize は合計 1 件）に変わるので、この対で区別できる。
+            assert.deepStrictEqual(byPost.get(second), {
+              kind: "permanent",
+              postId: second,
+              tag: "XResponseInvalid",
+            });
+            assert.strictEqual(fixture.requests.length, 2);
+            const results = yield* attemptResultRows;
+            assert.strictEqual(results.length, 2);
+            for (const row of results) {
+              assert.strictEqual(row["outcome"], "permanent");
+              assert.isNull(row["remote_id"]);
+            }
+          }),
+        ),
+    );
+  },
+);
+
+describe("runDuePosts: C-X-STOP-ACCOUNT - a 401 stops the rest of that account's X posts", () => {
+  it.effect("does not call the upload API for the second X post after a 401 on the first", () =>
+    inPostsChannel("nyaucast-due-posts-x-401-", ["x"], (_channelRoot) =>
+      Effect.gen(function* () {
+        yield* prepareVideoFacts(longCut);
+        const clip = "short-1-clip";
+        yield* appendCutExport({
+          compositionHash: "cx1",
+          cut: clip,
+          key: exportKeyOf(clip),
+          renderHash: "rx1",
+          videoId,
+        });
+        yield* appendCutPreview({ compositionHash: "cx1", cut: clip, videoId });
+        yield* (yield* VideoFiles).write(exportKeyOf(clip), Uint8Array.from([4, 5, 6]));
+        const first = yield* insertPost({ platform: "x" });
+        const second = yield* insertPost({ cut: clip, platform: "x" });
+        yield* setClock(defaultScheduledAt);
+        // X の send は再送しない(401 の 1 回更新を持たない)。1 つの 401 だけで恒久的な失敗に確定する。
+        const fixture = fakeHttp({
+          [x.routes.mediaInitialize]: () => Response.json({}, { status: 401 }),
+        });
+
+        const outcomes = yield* runDuePosts(60).pipe(
+          Effect.provide(xClientLayer(fixture.layer)),
+          Effect.provide(unusedYouTubeClientLayer),
+        );
+
+        const byPost = new Map(outcomes.map((outcome) => [outcome.postId, outcome]));
+        assert.deepStrictEqual(byPost.get(first), {
+          kind: "permanent",
+          postId: first,
+          tag: "XHttpFailure",
+        });
+        assert.deepStrictEqual(byPost.get(second), { kind: "account_stopped", postId: second });
+        // 2 件目には 1 件もリクエストが届かない。
+        assert.strictEqual(fixture.requests.length, 1);
+      }),
+    ),
+  );
+});
+
+describe("runDuePosts: C-X-INDETERMINATE - a tweet with no definite response leaves no result", () => {
+  it.effect(
+    "writes no result for the attempt and reports indeterminate when /2/tweets never gets a response",
+    () =>
+      inPostsChannel("nyaucast-due-posts-x-indeterminate-", ["x"], (_channelRoot) =>
+        Effect.gen(function* () {
+          yield* prepareVideoFacts(longCut);
+          const postId = yield* insertPost({ platform: "x" });
+          yield* setClock(defaultScheduledAt);
+          const fixture = fakeHttp({
+            [x.routes.mediaInitialize]: () => xMediaInitializeResponse(),
+            [xMediaAppendRoute(x.mediaId)]: () => xMediaAppendResponse(),
+            [xMediaFinalizeRoute(x.mediaId)]: () => xMediaFinalizeResponse(x.mediaId),
+            [x.routes.tweets]: () => xNetworkError("POST", x.routes.tweets),
+          });
+
+          const outcomes = yield* runDuePosts(60).pipe(
+            Effect.provide(xClientLayer(fixture.layer)),
+            Effect.provide(unusedYouTubeClientLayer),
+          );
+
+          assert.deepStrictEqual(outcomes, [{ kind: "indeterminate", postId }]);
+          assert.strictEqual((yield* attemptRows).length, 1);
+          assert.strictEqual((yield* attemptResultRows).length, 0);
+        }),
+      ),
+  );
+
+  // 同じ否定契約の、もう 1 つの到達経路: 2xx は返ったが本文から投稿の ID を確定できない場合。
+  // 恒久的な失敗として結果を書くと状態が failed になり、post run-now が再投稿を許して消せない投稿が
+  // 二重に出る（ADR-0009 決定 13 は公開後に投稿を消す操作を持たない）。結果を書かずに残す。
+  it.effect("writes no result either when /2/tweets answers 2xx without a readable post id", () =>
+    inPostsChannel("nyaucast-due-posts-x-unreadable-tweet-", ["x"], (_channelRoot) =>
+      Effect.gen(function* () {
+        yield* prepareVideoFacts(longCut);
+        const postId = yield* insertPost({ platform: "x" });
+        yield* setClock(defaultScheduledAt);
+        const fixture = fakeHttp({
+          [x.routes.mediaInitialize]: () => xMediaInitializeResponse(),
+          [xMediaAppendRoute(x.mediaId)]: () => xMediaAppendResponse(),
+          [xMediaFinalizeRoute(x.mediaId)]: () => xMediaFinalizeResponse(x.mediaId),
+          [x.routes.tweets]: () => Response.json({ data: {} }),
+        });
+
+        const outcomes = yield* runDuePosts(60).pipe(
+          Effect.provide(xClientLayer(fixture.layer)),
+          Effect.provide(unusedYouTubeClientLayer),
+        );
+
+        assert.deepStrictEqual(outcomes, [{ kind: "indeterminate", postId }]);
+        assert.strictEqual((yield* attemptRows).length, 1);
+        assert.strictEqual((yield* attemptResultRows).length, 0);
+      }),
+    ),
+  );
+});
+
+describe(
+  "runDuePosts: SCN-C-X-FLOW-N1 - re-acquiring a post whose last attempt failed temporarily starts " +
+    "a fresh media session instead of continuing a prior one (C-X-NO-CACHE)",
+  () => {
+    it.effect(
+      "re-initializes with a new media_id and sends append from segment_index 0, leaving the prior " +
+        "temporary attempt's result unchanged",
+      () =>
+        inPostsChannel("nyaucast-due-posts-x-fresh-session-", ["x"], (_channelRoot) =>
+          Effect.gen(function* () {
+            yield* prepareVideoFacts(longCut);
+            const postId = yield* insertPost({ platform: "x" });
+            // 一度 append の途中で失敗して結果が temporary の X の投稿(前回の試行自体は upload を
+            // 呼ばず結果だけ直に積む。local store に media_id を保存する列・表はそもそも無いので、
+            // 再実行が initialize からやり直す以外の経路はない)。
+            const priorAttemptId = yield* insertAttempt(postId, "2026-10-04T12:00:00.000Z");
+            const sql = yield* SqlClient.SqlClient;
+            yield* sql`INSERT INTO explainer_post_attempt_results (attempt_id, outcome, recorded_at) VALUES (${priorAttemptId}, 'temporary', '2026-10-04T12:00:01.000Z')`;
+            yield* setClock(defaultScheduledAt);
+            const freshMediaId = "9999999999999999002";
+            const fixture = fakeHttp({
+              [x.routes.mediaInitialize]: () => xMediaInitializeResponse(freshMediaId),
+              [xMediaAppendRoute(freshMediaId)]: () => xMediaAppendResponse(),
+              [xMediaFinalizeRoute(freshMediaId)]: () => xMediaFinalizeResponse(freshMediaId),
+              [x.routes.tweets]: () => xTweetResponse("tweet-fresh-1", "b"),
+            });
+
+            const outcomes = yield* runDuePosts(60).pipe(
+              Effect.provide(xClientLayer(fixture.layer)),
+              Effect.provide(unusedYouTubeClientLayer),
+            );
+
+            assert.deepStrictEqual(outcomes, [
+              { kind: "succeeded", postId, remoteId: "tweet-fresh-1" },
+            ]);
+            assert.deepStrictEqual(
+              fixture.requests.map((request) => request.key),
+              [
+                x.routes.mediaInitialize,
+                xMediaAppendRoute(freshMediaId),
+                xMediaFinalizeRoute(freshMediaId),
+                x.routes.tweets,
+              ],
+            );
+            const append = JSON.parse(new TextDecoder().decode(fixture.requests[1]?.bodyBytes)) as {
+              segment_index: number;
+            };
+            assert.strictEqual(append.segment_index, 0);
+            const rows = yield* attemptRows;
+            assert.strictEqual(rows.length, 2);
+            const results = yield* attemptResultRows;
+            const priorResult = results.find((row) => row["attempt_id"] === priorAttemptId);
+            assert.strictEqual(priorResult?.["outcome"], "temporary");
+            const newResult = results.find((row) => row["attempt_id"] !== priorAttemptId);
+            assert.strictEqual(newResult?.["outcome"], "succeeded");
+            assert.strictEqual(newResult?.["remote_id"], "tweet-fresh-1");
+          }),
+        ),
+    );
+  },
+);

@@ -4,7 +4,8 @@ import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { NodeServices } from "@effect/platform-node";
-import { ConfigProvider, Effect, Layer, Result, Schema, Sink, Stream } from "effect";
+import { ConfigProvider, Context, Effect, Layer, Result, Schema, Sink, Stream } from "effect";
+import type { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import { SqlClient } from "effect/sql";
 import { TestClock, TestConsole } from "effect/testing";
@@ -19,6 +20,7 @@ import { ThumbnailFiles } from "../src/thumbnails/thumbnail-files.ts";
 import { VideoFiles } from "../src/videos/video-files.ts";
 import { StdinTerminal } from "../src/videos/stdin-terminal.ts";
 import { XAuth } from "../src/x/auth.ts";
+import { XClient } from "../src/x/client.ts";
 import { YouTubeClient } from "../src/youtube/client.ts";
 import { YouTubeAuth } from "../src/youtube/auth.ts";
 
@@ -94,8 +96,26 @@ export const unusedPostLayer = Layer.mergeAll(
   Layer.effect(CredentialStore, notUsed),
   Layer.effect(DeclaredAccounts, notUsed),
   Layer.effect(VideoFiles, notUsed),
+  Layer.effect(XClient, notUsed),
   Layer.effect(YouTubeClient, notUsed),
 );
+
+/**
+ * 偽の認証と偽の `HttpClient` の上に、本物の client の Layer を組む関数を作る。SNS ごとの fixture
+ * （`test/x-fake-client.ts` / `test/youtube-fake-client.ts`）は、client・認証の tag・既定の偽の認証
+ * だけを渡す。組み立て自体はどの SNS でも同じで、`Client.layer` の依存が変われば一緒に変わる。
+ */
+export const clientLayerOnFakes =
+  <Client, Auth, AuthService>(
+    client: Layer.Layer<Client, never, Auth | HttpClient.HttpClient>,
+    authTag: Context.Key<Auth, AuthService>,
+    defaultAuth: () => AuthService,
+  ) =>
+  (
+    http: Layer.Layer<HttpClient.HttpClient>,
+    auth: AuthService = defaultAuth(),
+  ): Layer.Layer<Client> =>
+    client.pipe(Layer.provide(Layer.succeed(authTag, auth)), Layer.provide(http));
 
 /**
  * CLI のプログラムを in-process で実行する。観測点は 3 つ: 成功・失敗（outcome）、stdout の行（logs）、stderr の行（errors）。

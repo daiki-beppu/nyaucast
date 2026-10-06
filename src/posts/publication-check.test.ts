@@ -8,6 +8,7 @@ import { runProgram, selectAll, setClock } from "../../test/helpers.ts";
 import { declareAccounts } from "../../test/post-draft-helpers.ts";
 import { storeToken } from "../../test/publish-helpers.ts";
 import { callTool, withToolChannel } from "../../test/tool-helpers.ts";
+import { unusedXClientLayer } from "../../test/x-fake-client.ts";
 import {
   fakeYouTubeHttp,
   googleErrorResponse,
@@ -348,7 +349,10 @@ describe("nyaucast post run: performs the publication check in the same executio
 
           const { outcome } = yield* runProgram(
             Command.runWith(postCommand, { version: "test" })(["run"]),
-          ).pipe(Effect.provide(youtubeClientLayer(fixture.http)));
+          ).pipe(
+            Effect.provide(youtubeClientLayer(fixture.http)),
+            Effect.provide(unusedXClientLayer),
+          );
 
           assert.strictEqual(outcome._tag, "Success");
           assert.strictEqual(fixture.calls.length, 1);
@@ -382,7 +386,10 @@ describe("nyaucast post run: performs the publication check in the same executio
 
           const { outcome } = yield* runProgram(
             Command.runWith(postCommand, { version: "test" })(["run"]),
-          ).pipe(Effect.provide(youtubeClientLayer(fixture.http)));
+          ).pipe(
+            Effect.provide(youtubeClientLayer(fixture.http)),
+            Effect.provide(unusedXClientLayer),
+          );
 
           assert.strictEqual(outcome._tag, "Success");
           assert.strictEqual(fixture.calls[0]?.method, "GET"); // 公開の確認が先。

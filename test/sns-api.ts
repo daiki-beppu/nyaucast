@@ -117,10 +117,19 @@ export const x = {
   clientId: "X_CLIENT_ID_SENTINEL",
   clientSecret: "X_CLIENT_SECRET_SENTINEL",
   expiresIn: 7200,
+  // メディアアップロードの既定の `media_id`（issue #556）。URL のパス片に入るので digits 限定
+  // （`^[0-9]{1,19}$`）。`media_key` の形（`3_<id>`）は X の実応答を模す。
+  mediaId: "9999999999999999001",
+  mediaKey: "3_9999999999999999001",
   refreshToken: "X_NEW_REFRESH_TOKEN_SENTINEL",
   routes: {
     me: "GET https://api.x.com/2/users/me",
+    // メディアアップロードは media_id が URL のパスに入るため、append/finalize だけは
+    // route 定数ではなく xMediaAppendRoute/xMediaFinalizeRoute（下）で組む。
+    mediaInitialize: "POST https://api.x.com/2/media/upload/initialize",
+    mediaStatus: "GET https://api.x.com/2/media/upload",
     token: "POST https://api.x.com/2/oauth2/token",
+    tweets: "POST https://api.x.com/2/tweets",
   },
   scope: "tweet.read tweet.write users.read media.write offline.access",
 } as const;
@@ -143,3 +152,70 @@ export const xRoutes = (overrides: Routes = {}): Routes => ({
     Response.json({ data: { id: x.accountId, name: "Nyaucast", username: "nyaucast_x" } }),
   ...overrides,
 });
+
+// ---- X: v2 のメディアアップロードと投稿（issue #556） ----
+
+/** `append`・`finalize` は media_id を URL のパスに含むため、route のキーはメディアごとに組む。 */
+export const xMediaAppendRoute = (mediaId: string) =>
+  `POST https://api.x.com/2/media/upload/${mediaId}/append`;
+export const xMediaFinalizeRoute = (mediaId: string) =>
+  `POST https://api.x.com/2/media/upload/${mediaId}/finalize`;
+
+/** `initialize` の正常な応答。 */
+export const xMediaInitializeResponse = (
+  mediaId: string = x.mediaId,
+  overrides: { expiresAfterSecs?: number; mediaKey?: string } = {},
+) =>
+  Response.json({
+    data: {
+      expires_after_secs: overrides.expiresAfterSecs ?? 86_400,
+      id: mediaId,
+      media_key: overrides.mediaKey ?? x.mediaKey,
+    },
+  });
+
+/** `append` の正常な応答。本文（expires_at）は呼び出し側の契約では読まれないが、形は実応答に合わせる。 */
+export const xMediaAppendResponse = (expiresAt = "2026-01-01T00:00:00.000Z") =>
+  Response.json({ data: { expires_at: expiresAt } });
+
+export type XMediaProcessingState = "failed" | "in_progress" | "pending" | "succeeded";
+
+/** `finalize` の応答。`processingInfo` を省くと、処理不要で直ちに完了した応答になる。 */
+export const xMediaFinalizeResponse = (
+  mediaId: string,
+  processingInfo?: { checkAfterSecs?: number; state: XMediaProcessingState },
+) =>
+  Response.json({
+    data: {
+      id: mediaId,
+      ...(processingInfo === undefined
+        ? {}
+        : {
+            processing_info: {
+              ...(processingInfo.checkAfterSecs === undefined
+                ? {}
+                : { check_after_secs: processingInfo.checkAfterSecs }),
+              state: processingInfo.state,
+            },
+          }),
+    },
+  });
+
+/** `STATUS`（`GET .../media/upload?media_id=...&command=STATUS`）の応答。 */
+export const xMediaStatusResponse = (
+  mediaId: string,
+  state: XMediaProcessingState,
+  checkAfterSecs?: number,
+) =>
+  Response.json({
+    data: {
+      id: mediaId,
+      processing_info: {
+        ...(checkAfterSecs === undefined ? {} : { check_after_secs: checkAfterSecs }),
+        state,
+      },
+    },
+  });
+
+/** `POST /2/tweets` の正常な応答。 */
+export const xTweetResponse = (id: string, text: string) => Response.json({ data: { id, text } });

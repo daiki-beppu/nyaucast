@@ -1,7 +1,7 @@
 import { Effect, Option, Schema } from "effect";
 import { HttpBody } from "effect/http";
 
-import type { FileReader } from "../videos/video-files.ts";
+import { ChunkReadFailed, type FileReader } from "../videos/video-files.ts";
 import { YouTubeClient, type YouTubeClientFailure } from "./client.ts";
 
 // チャンクは 256KB の倍数（issue 決定 8）。最後のチャンクだけ端数。
@@ -13,14 +13,6 @@ export class ResumableUploadFailed extends Schema.TaggedError<ResumableUploadFai
   "ResumableUploadFailed",
   {},
 ) {}
-
-/**
- * 送信前のチャンクの読み取り自体が失敗した（ファイルを開いた後の I/O エラー）。サムネイルの読み取り
- * 失敗（post-adapter.ts の ThumbnailReadFailed）と同じ理由で、型付きの失敗として運ぶ必要がある。
- * Effect.promise は reject を defect にし、呼び出し側の Effect.result では捕まらず、試行が結果の
- * 無いまま実行全体を落としてしまう。
- */
-export class ChunkReadFailed extends Schema.TaggedError<ChunkReadFailed>()("ChunkReadFailed", {}) {}
 
 /**
  * チャンクの送信が中断し、中断からの再開の照会そのものも失敗（通信の中断・429/5xx・401 などの応答）

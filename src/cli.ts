@@ -15,6 +15,7 @@ import { videoCommand } from "./videos/cli.ts";
 import type { StdinTerminal } from "./videos/stdin-terminal.ts";
 import type { VideoFiles } from "./videos/video-files.ts";
 import type { XAuth } from "./x/auth.ts";
+import type { XClient } from "./x/client.ts";
 import type { YouTubeAuth } from "./youtube/auth.ts";
 import type { YouTubeClient } from "./youtube/client.ts";
 
@@ -41,13 +42,14 @@ interface CliEnvironment<E2, R2, E3, R3, E4, R4, E5, R5> {
     E4,
     R4
   >;
-  // 時刻が来た投稿を実行する CLI（issue #553）。video.status の read model と同じ 6 つの service。
+  // 時刻が来た投稿を実行する CLI（issue #553）。アダプタのある SNS（YouTube・X。#556）の client も含む。
   readonly post: Layer.Layer<
     | ChannelSettings
     | CredentialStore
     | DeclaredAccounts
     | SqlClient.SqlClient
     | VideoFiles
+    | XClient
     | YouTubeClient,
     E5,
     R5
