@@ -168,7 +168,7 @@ describe("K1 three identical check surfaces", () => {
   // どの job も pass したまま、一部のテストが CI で一度も走らなくなる。
   test("the CI shards cover every test file exactly once", () => {
     const quality = workflowJobs(readWorkflow("ci.yml")).find(
-      (job) => job["runs-on"] !== undefined,
+      (job) => job["strategy"] !== undefined,
     );
     const strategy = requireRecord(quality?.["strategy"], "quality strategy");
     const shards = requireRecord(strategy["matrix"], "quality matrix")["shard"];
@@ -176,10 +176,11 @@ describe("K1 three identical check surfaces", () => {
 
     expect(Array.isArray(shards)).toBe(true);
     const count = (shards as unknown[]).length;
-    expect([...(shards as unknown[])].sort()).toEqual(
+    expect([...(shards as number[])].sort((left, right) => left - right)).toEqual(
       Array.from({ length: count }, (_, at) => at + 1),
     );
-    expect(environment["VITEST_SHARD"]).toBe(`\${{ matrix.shard }}/${count}`);
+    // 分母は matrix の数から取る。shard の数を書くのは matrix の一覧だけ
+    expect(environment["VITEST_SHARD"]).toBe("${{ matrix.shard }}/${{ strategy.job-total }}");
 
     const manifest = readJson(join(packageRoot, "package.json"));
     const check = String(requireRecord(manifest["scripts"], "package scripts")["check"]);
