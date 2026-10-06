@@ -4,6 +4,7 @@ import { TestClock } from "effect/testing";
 
 import { YouTubeAuth, type YouTubeAuthFailure } from "../src/youtube/auth.ts";
 import { YouTubeClient } from "../src/youtube/client.ts";
+import { clientLayerOnFakes } from "./helpers.ts";
 
 /**
  * resumable upload・投稿アダプタ・runDuePosts の統合テストが共有する、偽の YouTube HTTP と YouTubeClient の Layer。
@@ -68,10 +69,25 @@ const fakeYouTubeAuth = (overrides: FakeYouTubeAuthOverrides = {}) =>
       overrides.refreshAccessToken ?? (() => Effect.succeed(youtubeRefreshedAccessToken)),
   });
 
-export const youtubeClientLayer = (
-  http: Layer.Layer<HttpClient.HttpClient>,
-  auth: ReturnType<typeof fakeYouTubeAuth> = fakeYouTubeAuth(),
-) => YouTubeClient.layer.pipe(Layer.provide(Layer.succeed(YouTubeAuth, auth)), Layer.provide(http));
+export const youtubeClientLayer = clientLayerOnFakes(
+  YouTubeClient.layer,
+  YouTubeAuth,
+  fakeYouTubeAuth,
+);
+
+/**
+ * YouTube へ到達しないはずの経路（X の投稿だけを検査するテスト）が `post` の木へ渡す `YouTubeClient`。
+ * 組めることは必要だが、実際に呼ばれたら platform の振り分けが崩れているので defect にする。
+ * 組んだ時点では落とさず、メソッドが呼ばれたときだけ落とす（fakeYouTubeAuth の authorize と同じ作法）。
+ */
+export const unusedYouTubeClientLayer = Layer.succeed(
+  YouTubeClient,
+  YouTubeClient.of({
+    exchange: () => Effect.die("YouTubeClient.exchange must not be called"),
+    request: () => Effect.die("YouTubeClient.request must not be called"),
+    resolveAccessToken: () => Effect.die("YouTubeClient.resolveAccessToken must not be called"),
+  }),
+);
 
 /** YouTubeClient の再試行の Effect.sleep を越えて、fiber を最後まで走らせる（client.test.ts と同じ作法）。 */
 export const runWithYouTubeClient = <A, E>(

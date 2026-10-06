@@ -4,40 +4,36 @@ import type { HttpClient } from "effect/http";
 import type { Platform } from "../auth/account-key.ts";
 import { DeclaredAccounts } from "../auth/declared-accounts.ts";
 import type { StaticSecrets } from "../auth/secrets.ts";
-import { longCut, type CutExport } from "../db/explainer-cuts.ts";
+import { longCut } from "../db/explainer-cuts.ts";
 import type { PostRecord } from "../db/explainer-posts.ts";
 import type { ThumbnailSelection } from "../db/explainer-thumbnails.ts";
 import { InstagramAuth } from "../instagram/auth.ts";
 import { type InstagramPostInput, postToInstagram } from "../instagram/post-adapter.ts";
 import { resolveR2Config } from "../r2/object.ts";
 import { VideoFiles } from "../videos/video-files.ts";
+import type { XClient } from "../x/client.ts";
+import { postToX, prepareXPost, type XPostInput } from "../x/post-adapter.ts";
 import { YouTubeClient } from "../youtube/client.ts";
 import { type YouTubePostInput, postToYouTube } from "../youtube/post-adapter.ts";
 import type { PostAdapterFailure } from "./post-outcome.ts";
+import type { ReadyFacts } from "./post-readiness.ts";
 
 /**
- * どの SNS をどのアダプタが担うか、と、SNS をまたいで同じ形になる送信の結果。SNS を足すときに変わる
- * のはここだけで、試行の獲得と 3 つの独立した書き込み（due-posts.ts）はそのままにする。
+ * どの SNS をどのアダプタが担うか、と、SNS をまたいで同じ形になる送信の結果。SNS を足すときの振り分けは
+ * ここに集め、試行の獲得と 3 つの独立した書き込み（due-posts.ts）はそのままにする（失敗の分類は
+ * post-outcome.ts、アダプタが使うサービスは due-posts.ts の PostRunServices と entry point が持つ）。
  */
-
-/**
- * readiness の再評価（due-posts.ts の `isStillReady`）で読んだ、送信前処理が再利用する事実。
- * チェック対象と使用対象の不一致を避けるため、送信前処理はこれらを再び読み直さない。
- */
-export interface ReadyFacts {
-  readonly lastExport: CutExport;
-  readonly thumbnailSelection: ThumbnailSelection | undefined;
-}
 
 export type PreparedPost =
   | { readonly input: InstagramPostInput; readonly kind: "instagram" }
+  | { readonly input: XPostInput; readonly kind: "x" }
   | { readonly input: YouTubePostInput; readonly kind: "youtube" };
 
 export interface PostAttemptResult {
   readonly remoteId: string;
   /**
    * 投稿の結果は変えないが、同じ分類処理（classifyPostFailure）に通して stopAccount を決めるための
-   * 応答そのもの（長尺の YouTube のサムネイルの設定だけが使う）。
+   * 応答そのもの（長尺の YouTube のサムネイルの設定だけが使う。X の投稿はサムネイルを付けない）。
    */
   readonly thumbnailFailure?: PostAdapterFailure;
   readonly thumbnailSetFailed?: boolean;
@@ -47,9 +43,9 @@ export type PostAttemptOutcome =
   | { readonly cause: PostAdapterFailure; readonly kind: "indeterminate" }
   | { readonly kind: "completed"; readonly result: PostAttemptResult };
 
-/** アダプタを持つ SNS。X はこの差分の対象外で、`no_adapter` のまま（issue #555）。 */
+/** アダプタを持つ SNS（YouTube は #553、Instagram は #555、X は #556）。 */
 export const hasAdapter = (platform: Platform) =>
-  platform === "instagram" || platform === "youtube";
+  platform === "instagram" || platform === "x" || platform === "youtube";
 
 /**
  * 長尺の投稿にだけ、最後に選んだサムネイルの入力を渡す（ショートには渡さない。ADR-0009 決定 8）。
@@ -145,7 +141,13 @@ export const prepareAdapterInput = (
 ): Effect.Effect<
   PreparedPost,
   PostAdapterFailure,
-  DeclaredAccounts | InstagramAuth | Scope.Scope | StaticSecrets | VideoFiles | YouTubeClient
+  | DeclaredAccounts
+  | InstagramAuth
+  | Scope.Scope
+  | StaticSecrets
+  | VideoFiles
+  | XClient
+  | YouTubeClient
 > => {
   if (record.platform === "youtube") {
     return Effect.map(prepareYouTubeUpload(record, facts), (input) => ({
@@ -159,6 +161,11 @@ export const prepareAdapterInput = (
       kind: "instagram",
     }));
   }
+  if (record.platform === "x") {
+    // X の送信前処理は投稿文の検査（InvalidPostText）を最初に通す。URL を含む投稿文は、外部呼び出しを
+    // 1 回もせずに恒久的な失敗として記録される（#556）。
+    return Effect.map(prepareXPost(record, facts), (input) => ({ input, kind: "x" }));
+  }
   // hasAdapter が偽にする platform なので、ここへ来るのは配線の誤り（defect）。
   return Effect.die(`no adapter for ${record.platform}`);
 };
@@ -166,5 +173,12 @@ export const prepareAdapterInput = (
 /** 整えた入力をその SNS のアダプタへ渡す。due-posts.ts 側は SNS の名前を知らない。 */
 export const sendPreparedPost = (
   prepared: PreparedPost,
-): Effect.Effect<PostAttemptOutcome, PostAdapterFailure, HttpClient.HttpClient | YouTubeClient> =>
-  prepared.kind === "youtube" ? postToYouTube(prepared.input) : postToInstagram(prepared.input);
+): Effect.Effect<
+  PostAttemptOutcome,
+  PostAdapterFailure,
+  HttpClient.HttpClient | XClient | YouTubeClient
+> => {
+  if (prepared.kind === "youtube") return postToYouTube(prepared.input);
+  if (prepared.kind === "x") return postToX(prepared.input);
+  return postToInstagram(prepared.input);
+};

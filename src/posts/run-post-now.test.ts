@@ -7,12 +7,24 @@ import { explainerConfig } from "../../test/explainer-helpers.ts";
 import { runProgram, selectAll, setClock } from "../../test/helpers.ts";
 import { instagramAuthLayer } from "../../test/instagram-fake.ts";
 import { declareAccounts } from "../../test/post-draft-helpers.ts";
+import {
+  fakeHttp,
+  x,
+  xMediaAppendResponse,
+  xMediaAppendRoute,
+  xMediaFinalizeResponse,
+  xMediaFinalizeRoute,
+  xMediaInitializeResponse,
+  xTweetResponse,
+} from "../../test/sns-api.ts";
 import { storeToken } from "../../test/publish-helpers.ts";
 import { withToolChannel } from "../../test/tool-helpers.ts";
+import { unusedXClientLayer, xClientLayer } from "../../test/x-fake-client.ts";
 import {
   fakeYouTubeHttp,
   jsonUploadResponse,
   locationResponse,
+  unusedYouTubeClientLayer,
   youtubeClientLayer,
 } from "../../test/youtube-fake-client.ts";
 import { appendCutExport, appendCutPreview, longCut } from "../db/explainer-cuts.ts";
@@ -67,14 +79,14 @@ const insertPost = Effect.gen(function* () {
   return Number(rows[0]?.["id"]);
 });
 
-const insertAttempt = (postId: number, outcome: "permanent" | "resultless") =>
+const insertAttempt = (postId: number, outcome: "permanent" | "resultless" | "temporary") =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`INSERT INTO explainer_post_attempts (post_id, started_at) VALUES (${postId}, '2026-10-04T12:00:00.000Z')`;
     const rows = yield* sql`SELECT last_insert_rowid() AS id`;
     const attemptId = Number(rows[0]?.["id"]);
-    if (outcome === "permanent") {
-      yield* sql`INSERT INTO explainer_post_attempt_results (attempt_id, outcome, recorded_at) VALUES (${attemptId}, 'permanent', '2026-10-04T12:00:01.000Z')`;
+    if (outcome !== "resultless") {
+      yield* sql`INSERT INTO explainer_post_attempt_results (attempt_id, outcome, recorded_at) VALUES (${attemptId}, ${outcome}, '2026-10-04T12:00:01.000Z')`;
     }
     return attemptId;
   });
@@ -110,6 +122,7 @@ describe("nyaucast post run-now: a post that fails the freshness check is not ex
 
         const { outcome } = yield* runNow(postId).pipe(
           Effect.provide(youtubeClientLayer(fixture.http)),
+          Effect.provide(unusedXClientLayer),
         );
 
         assert.strictEqual(outcome._tag, "Success");
@@ -135,6 +148,7 @@ describe("nyaucast post run-now: a permanently failed post is re-opened and uplo
 
         const { outcome } = yield* runNow(postId).pipe(
           Effect.provide(youtubeClientLayer(fixture.http)),
+          Effect.provide(unusedXClientLayer),
         );
 
         assert.strictEqual(outcome._tag, "Success");
@@ -164,6 +178,7 @@ describe("nyaucast post run-now: YouTube still refuses to upload once the schedu
 
           const { logs, outcome } = yield* runNow(postId).pipe(
             Effect.provide(youtubeClientLayer(fixture.http)),
+            Effect.provide(unusedXClientLayer),
           );
 
           assert.strictEqual(outcome._tag, "Success");
@@ -194,6 +209,7 @@ describe("nyaucast post run-now: a resultless attempt is not acquired, even forc
 
           const { outcome } = yield* runNow(postId).pipe(
             Effect.provide(youtubeClientLayer(fixture.http)),
+            Effect.provide(unusedXClientLayer),
           );
 
           assert.strictEqual(outcome._tag, "Success");
@@ -215,11 +231,70 @@ describe("nyaucast post run-now: a post that is not awaiting_check or failed", (
 
         const { outcome } = yield* runNow(postId).pipe(
           Effect.provide(youtubeClientLayer(fixture.http)),
+          Effect.provide(unusedXClientLayer),
         );
 
         assert.strictEqual(outcome._tag, "Failure");
         assert.strictEqual(fixture.calls.length, 0);
         assert.strictEqual((yield* attemptRows).length, 0);
+      }),
+    ),
+  );
+});
+
+// ---- #556: X への投稿も run-now で実行できる（C-X-REACHABLE-FORCED）----
+
+const insertXPost = (body: string) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`INSERT INTO explainer_posts (video_id, cut, platform, account_id, title, description, body, scheduled_at, created_at) VALUES (${videoId}, ${longCut}, 'x', 'x-id', NULL, NULL, ${body}, ${scheduledAt}, ${postCreatedAt})`;
+    const rows = yield* sql`SELECT last_insert_rowid() AS id`;
+    return Number(rows[0]?.["id"]);
+  });
+
+const inXChannel = <A, E, R>(
+  prefix: string,
+  use: (channelRoot: string) => Effect.Effect<A, E, R>,
+) =>
+  withToolChannel(prefix, { config: explainerConfig }, (channelRoot) =>
+    Effect.gen(function* () {
+      declareAccounts(channelRoot, ["x"]);
+      yield* storeToken(channelRoot, "x");
+      // issue #555 の Instagram の認証は、X の節では一度も呼ばれない（inChannel と同じ偽を置く）。
+      return yield* use(channelRoot).pipe(Effect.provide(instagramAuthLayer));
+    }),
+  );
+
+describe("nyaucast post run-now: a permanently failed X post is re-opened and tweeted (C-X-REACHABLE-FORCED)", () => {
+  it.effect("acquires a new attempt despite the last permanent failure, and tweets", () =>
+    inXChannel("nyaucast-run-now-x-failed-", () =>
+      Effect.gen(function* () {
+        yield* prepareVideoFacts;
+        const postId = yield* insertXPost("猫は窓が好き");
+        yield* insertAttempt(postId, "permanent");
+        yield* setClock(scheduledAt);
+        const fixture = fakeHttp({
+          [x.routes.mediaInitialize]: () => xMediaInitializeResponse(),
+          [xMediaAppendRoute(x.mediaId)]: () => xMediaAppendResponse(),
+          [xMediaFinalizeRoute(x.mediaId)]: () => xMediaFinalizeResponse(x.mediaId),
+          [x.routes.tweets]: () => xTweetResponse("tweet-retry-1", "猫は窓が好き"),
+        });
+
+        const { outcome } = yield* runNow(postId).pipe(
+          Effect.provide(xClientLayer(fixture.layer)),
+          Effect.provide(unusedYouTubeClientLayer),
+        );
+
+        assert.strictEqual(outcome._tag, "Success");
+        assert.strictEqual(
+          fixture.requests.some((request) => request.key === x.routes.tweets),
+          true,
+        );
+        const rows = yield* attemptRows;
+        assert.strictEqual(rows.length, 2);
+        const results = yield* attemptResultRows;
+        const newResult = results.find((row) => row["outcome"] === "succeeded");
+        assert.strictEqual(newResult?.["remote_id"], "tweet-retry-1");
       }),
     ),
   );

@@ -2,13 +2,9 @@ import { Effect, Schema } from "effect";
 import { HttpBody } from "effect/http";
 
 import { longCut } from "../db/explainer-cuts.ts";
-import type { FileReader } from "../videos/video-files.ts";
+import type { ChunkReadFailed, FileReader } from "../videos/video-files.ts";
 import { YouTubeClient, type YouTubeClientFailure } from "./client.ts";
-import {
-  type ChunkReadFailed,
-  type ResumableUploadFailed,
-  uploadResumable,
-} from "./resumable-upload.ts";
+import { type ResumableUploadFailed, uploadResumable } from "./resumable-upload.ts";
 
 const uploadStartUrl =
   "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status";

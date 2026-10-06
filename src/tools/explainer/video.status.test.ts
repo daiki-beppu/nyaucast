@@ -2082,6 +2082,71 @@ describe("video.status: posts (execution-time readiness and the approval-toleran
         ),
     );
   });
+
+  describe(
+    "C-LIFECYCLE: a non-YouTube post's succeeded attempt alone (without a publication fact) " +
+      "makes the video's lifecycle complete (#554 carry-over, ADR-0009 decision 13)",
+    () => {
+      it.effect(
+        "reports the X post as published with its remote ID, and lifecycleComplete as true, from " +
+          "the succeeded attempt alone (no explainer_post_publications row)",
+        () =>
+          withToolChannel(
+            "nyaucast-video-status-x-lifecycle-",
+            { config: explainerConfig },
+            (channelRoot) =>
+              Effect.gen(function* () {
+                declareAccounts(channelRoot, ["x"]);
+                yield* storeToken(channelRoot, "x");
+                const sql = yield* SqlClient.SqlClient;
+                yield* sql`INSERT INTO explainer_videos (id, created_at) VALUES ('V1', ${videoCreatedAt})`;
+                yield* sql`INSERT INTO explainer_plans (video_id, plan_key, title, points, sources, hit_pattern, recorded_at) VALUES ('V1', 'title:T', 'T', '[]', '[]', 'shock', ${videoCreatedAt})`;
+                yield* insertCandidate({
+                  createdAt: thumbnailSelectedAt,
+                  number: 1,
+                  round: 1,
+                  videoId: "V1",
+                });
+                yield* insertSelection({
+                  number: 1,
+                  round: 1,
+                  selectedAt: thumbnailSelectedAt,
+                  videoId: "V1",
+                });
+                yield* setClock(cutExportedAt);
+                yield* appendCutExport({
+                  compositionHash: "c-x-lifecycle",
+                  cut: longCut,
+                  key: exportKey,
+                  renderHash: "r-x-lifecycle",
+                  videoId: "V1",
+                });
+                yield* appendCutPreview({
+                  compositionHash: "c-x-lifecycle",
+                  cut: longCut,
+                  videoId: "V1",
+                });
+                yield* (yield* VideoFiles).write(exportKey, Uint8Array.from([1, 2, 3]));
+                yield* sql`INSERT INTO explainer_posts (video_id, cut, platform, account_id, title, description, body, scheduled_at, created_at) VALUES ('V1', ${longCut}, 'x', 'x-id', NULL, NULL, 'b', ${scheduledAt}, ${postCreatedAt})`;
+                yield* sql`INSERT INTO explainer_post_attempts (post_id, started_at) VALUES (1, ${scheduledAt})`;
+                yield* sql`INSERT INTO explainer_post_attempt_results (attempt_id, outcome, remote_id, recorded_at) VALUES (1, 'succeeded', 'x-post-1', ${scheduledAt})`;
+
+                const status = yield* callTool("video_status", { videoId: "V1" });
+
+                assert.deepStrictEqual(postIn(status, "x"), {
+                  accountId: "x-id",
+                  cut: longCut,
+                  id: 1,
+                  platform: "x",
+                  remoteId: "x-post-1",
+                  status: "published",
+                });
+                assert.isTrue(status.lifecycleComplete);
+              }),
+          ),
+      );
+    },
+  );
 });
 
 describe("video.status: unknown keys", () => {

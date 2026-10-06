@@ -59,7 +59,7 @@ const requireRemoteId = (entry: ClassifiedPost): Effect.Effect<string> =>
     : Effect.succeed(entry.state.remoteId);
 
 // readiness がアカウントの照合済みとは限らない(reserved は最後の試行だけで決まる。post-state.ts)。
-// それでも宣言が無ければ(due-posts.ts の prepareYouTubeUpload と同じ扱いで)defect とする。
+// それでも宣言が無ければ(post-send.ts の prepareYouTubeUpload と同じ扱いで)defect とする。
 const resolveChannel = (platform: Platform): Effect.Effect<string, never, DeclaredAccounts> =>
   DeclaredAccounts.pipe(Effect.flatMap((accounts) => accounts.require(platform))).pipe(
     Effect.map((account) => account.channel),

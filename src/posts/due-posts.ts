@@ -15,17 +15,17 @@ import {
 import { readAllPostRecords, type PostRecord } from "../db/explainer-posts.ts";
 import { InstagramAuth } from "../instagram/auth.ts";
 import { VideoFiles } from "../videos/video-files.ts";
+import type { XClient } from "../x/client.ts";
 import { YouTubeClient } from "../youtube/client.ts";
 import { classifyPost, type ClassifiedPost } from "./post-classification.ts";
 import { classifyPostFailure, type PostAdapterFailure } from "./post-outcome.ts";
-import { checkPostReadiness } from "./post-readiness.ts";
+import { checkPostReadiness, type ReadyFacts } from "./post-readiness.ts";
 import {
   hasAdapter,
   prepareAdapterInput,
   sendPreparedPost,
   type PostAttemptResult,
   type PreparedPost,
-  type ReadyFacts,
 } from "./post-send.ts";
 import { derivePostState, isPastYouTubeSchedule, toLastAttemptInput } from "./post-state.ts";
 
@@ -38,6 +38,7 @@ export type PostRunServices =
   | SqlClient.SqlClient
   | StaticSecrets
   | VideoFiles
+  | XClient
   | YouTubeClient;
 
 export type DuePostOutcome =
@@ -238,6 +239,9 @@ const acquireNow = (
  * 現れない。アダプタ自身の失敗と同じ経路（試行を取り、分類し、結果を書く）で扱うことで、
  * この投稿を同じ要求のとおり恒久的な失敗（failed）として記録し、次回実行では due に戻らないように
  * する。試行を取れなければ、既存の not_acquired の意味のまま返す（並行する実行が先に記録した場合）。
+ *
+ * #556: X の送信前処理は投稿文の検査（InvalidPostText）もここへ運ぶ。URL を含む投稿文は、外部
+ * 呼び出しを 1 回もせずに恒久的な失敗として記録される。
  */
 const recordPrepareFailure = (
   postId: number,

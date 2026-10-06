@@ -31,6 +31,7 @@ import { StdinTerminal } from "./videos/stdin-terminal.ts";
 import { VideoFiles } from "./videos/video-files.ts";
 import { VideoIds } from "./videos/video-ids.ts";
 import { XAuth } from "./x/auth.ts";
+import { XClient } from "./x/client.ts";
 import { YouTubeAuth } from "./youtube/auth.ts";
 import { YouTubeClient } from "./youtube/client.ts";
 
@@ -126,9 +127,13 @@ const video = Layer.mergeAll(
   thumbnailFiles,
 );
 
-// 時刻が来た投稿を実行する CLI（issue #553）。YouTube の resumable upload が使う client を、認証（本番）と結んで組む。
+// 時刻が来た投稿を実行する CLI（issue #553・#556）。各 SNS のアダプタが使う client を、認証（本番）と結んで組む。
 const youtubeClient = YouTubeClient.layer.pipe(
   Layer.provide(YouTubeAuth.layerProduction),
+  Layer.provide(authDependencies),
+);
+const xClient = XClient.layer.pipe(
+  Layer.provide(XAuth.layerProduction),
   Layer.provide(authDependencies),
 );
 // Instagram のアダプタ（issue #555）が使うもの: Graph API と R2 への HTTP、長期トークンの解決、
@@ -139,6 +144,7 @@ const post = Layer.mergeAll(
   credentialStore,
   DeclaredAccounts.layer(channelRoot),
   VideoFiles.layer(channelRoot),
+  xClient,
   youtubeClient,
   InstagramAuth.layerProduction.pipe(Layer.provide(authDependencies)),
   StaticSecrets.layer({ configRoot }),

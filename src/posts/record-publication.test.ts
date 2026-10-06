@@ -9,6 +9,7 @@ import { runProgram, selectAll, setClock } from "../../test/helpers.ts";
 import { instagramAuthLayer } from "../../test/instagram-fake.ts";
 import { declareAccounts } from "../../test/post-draft-helpers.ts";
 import { storeToken } from "../../test/publish-helpers.ts";
+import { unusedXClientLayer } from "../../test/x-fake-client.ts";
 import { fakeYouTubeHttp, youtubeClientLayer } from "../../test/youtube-fake-client.ts";
 import { postCommand } from "./cli.ts";
 
@@ -67,6 +68,7 @@ const runMarkPublished = (postId: number, url: string) => {
     Command.runWith(postCommand, { version: "test" })(["mark-published", String(postId), url]),
   ).pipe(
     Effect.provide(youtubeClientLayer(fixture.http)),
+    Effect.provide(unusedXClientLayer),
     Effect.map((result) => ({ ...result, youtubeCalls: fixture.calls.length })),
   );
 };

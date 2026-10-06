@@ -83,6 +83,18 @@ const checkStaleFacts = (
     return { lastExport, stale: !exists, thumbnailSelection: facts.selection };
   });
 
+/**
+ * 実行の直前の検査(獲得・アダプタの入力を整える前の最後の読み取り。issue #553 論点 3)で読んだ、
+ * 送信前処理が再利用する事実(P3)。チェック対象と使用対象の不一致を避けるため、各アダプタの
+ * 送信前処理(post-send.ts の prepareYouTubeUpload・prepareInstagramPost と x/post-adapter.ts の
+ * prepareXPost)はこれらを再び読み直さない。準備できていた
+ * (None でない)ときの検査結果そのものなので、lastExport は Option を解いた形で持つ。
+ */
+export interface ReadyFacts {
+  readonly lastExport: CutExport;
+  readonly thumbnailSelection: ThumbnailSelection | undefined;
+}
+
 export interface PostReadinessCheck {
   /** P3: 送信前処理（due-posts.ts）が再利用する、検査で読んだ最後の書き出し。再び読み直さない。 */
   readonly lastExport: Option.Option<CutExport>;

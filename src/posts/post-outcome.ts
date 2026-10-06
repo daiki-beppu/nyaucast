@@ -1,8 +1,12 @@
 import type { AdapterFailure } from "../auth/adapter.ts";
 import type { InstagramPostFailure } from "../instagram/post-adapter.ts";
 import type { ThumbnailReadFailed } from "../youtube/post-adapter.ts";
-import type { ChunkReadFailed, ResumableUploadFailed } from "../youtube/resumable-upload.ts";
+import type { ChunkReadFailed } from "../videos/video-files.ts";
+import type { XClientFailure } from "../x/client.ts";
+import type { XMediaProcessingFailed, XMediaProcessingUnfinished } from "../x/media-upload.ts";
+import type { ResumableUploadFailed } from "../youtube/resumable-upload.ts";
 import { isRetryableFailure, type YouTubeClientFailure } from "../youtube/client.ts";
+import type { InvalidPostText } from "./post-text.ts";
 
 export type PostFailureCategory = "permanent" | "temporary";
 
@@ -10,13 +14,19 @@ export type PostFailureCategory = "permanent" | "temporary";
  * 投稿のアダプタの経路に届く失敗。`AdapterFailure`（認証・静的なシークレット）は YouTube の
  * `YouTubeClientFailure` にも含まれるが、Instagram の経路（`InstagramAuth.getAccessToken` と
  * `resolveR2Config`）からも同じ形で届くため、ここに明示して分類の対象であることを示す。
+ * X の経路（#556）は、送信前処理の投稿文の検査（`InvalidPostText`）と、`XClient.send` と
+ * メディアアップロードの失敗を運ぶ。
  */
 export type PostAdapterFailure =
   | AdapterFailure
   | ChunkReadFailed
   | InstagramPostFailure
+  | InvalidPostText
   | ResumableUploadFailed
   | ThumbnailReadFailed
+  | XClientFailure
+  | XMediaProcessingFailed
+  | XMediaProcessingUnfinished
   | YouTubeClientFailure;
 
 /**
@@ -30,31 +40,41 @@ export interface ClassifiedPostFailure {
 }
 
 // 一時的で、そのアカウントを止めない失敗（応答より前の通信の失敗・処理の完了を待ち切れなかった）。
+// X のメディア処理が待機の上限までに終わらなかった場合も、投稿は 1 回も送っていないのでここに入る。
 const temporaryTags = new Set<string>([
   "InstagramBoundaryFailed",
   "InstagramContainerNotReady",
   "R2BoundaryFailed",
+  "XHttpBoundaryFailed",
+  "XMediaProcessingUnfinished",
   "YouTubeHttpBoundaryFailed",
 ]);
 
 // 恒久的で、かつそのアカウントを止めない失敗（入力の検証・レスポンスの形・ローカルのファイル I/O・
-// コンテナの恒久的な失敗。いずれも認証ではない）。
+// コンテナ・X のメディア処理の恒久的な失敗。いずれも認証ではない）。
 const noStopPermanentTags = new Set<string>([
   "ChunkReadFailed",
   "InstagramContainerFailed",
   "InstagramResponseInvalid",
+  "InvalidPostText",
   "R2PayloadReadFailed",
   "ResumableUploadFailed",
   "ThumbnailReadFailed",
   "UntrustedYouTubeUrl",
+  "XMediaProcessingFailed",
+  "XResponseInvalid",
   // due-posts が先に拾って結果を書かない（#657）。ここに届いても同じアカウントは止めない。
   "YouTubeResendDeadlinePassed",
   "YouTubeResponseInvalid",
 ]);
 
-// HTTP の status で一時的／恒久的が決まる失敗。2 つの境界（YouTube・R2）が同じ規則を共有する。
+// HTTP の status で一時的／恒久的が決まる失敗。3 つの境界（YouTube・R2・X）が同じ規則を共有する。
 // Graph API（InstagramHttpFailure）は、本文のエラーコードを先に見てから同じ規則へ落ちる。
-const httpStatusFailureTags = new Set<string>(["R2HttpFailure", "YouTubeHttpFailure"]);
+const httpStatusFailureTags = new Set<string>([
+  "R2HttpFailure",
+  "XHttpFailure",
+  "YouTubeHttpFailure",
+]);
 
 const isHttpStatusFailure = (
   failure: PostAdapterFailure,
@@ -102,7 +122,7 @@ const classifyGraphHttpFailure = (failure: GraphHttpFailure): ClassifiedPostFail
 
 /**
  * 投稿のアダプタの失敗を分類する（ADR-0009 決定 9）。一時的（通信の失敗・5xx・429・quota 切れ）と
- * 恒久的（入力の検証・認証・権限）。どの境界（YouTube の exchange・Graph API・R2）も一時的な失敗を
+ * 恒久的（入力の検証・認証・権限）。どの境界（YouTube の exchange・Graph API・R2・X の send）も一時的な失敗を
  * 再送しないので、ここに届く一時的な失敗は 1 回目の応答そのもので、アダプタは再試行を足さない。
  */
 export const classifyPostFailure = (failure: PostAdapterFailure): ClassifiedPostFailure => {

@@ -1,6 +1,7 @@
 import { Clock, Context, Effect, Layer, Option, Random, Result, Schema } from "effect";
 import { HttpClient, type HttpBody, HttpClientRequest, type HttpClientResponse } from "effect/http";
 
+import { decodeJsonBody } from "../http/json-body.ts";
 import { YouTubeAuth, type YouTubeAuthFailure } from "./auth.ts";
 
 const maximumAttempts = 3;
@@ -170,14 +171,6 @@ const resolveYouTubeApiUrl = (input: string) =>
     return url.toString();
   });
 
-const decodeBody =
-  <Output>(schema: Schema.Decoder<Output>) =>
-  (response: HttpClientResponse.HttpClientResponse) =>
-    response.json.pipe(
-      Effect.flatMap(Schema.decodeUnknownEffect(schema)),
-      Effect.mapError(() => new YouTubeResponseInvalid()),
-    );
-
 // 本文が無い（resumable upload の開始の応答など）ことを失敗にせず、空として返す。
 const readOptionalBody = (response: HttpClientResponse.HttpClientResponse) =>
   response.json.pipe(
@@ -296,7 +289,11 @@ function makeYouTubeClient() {
 
     const requestOnce = <Output>(request: YouTubeRequest<Output>) =>
       run(
-        { accepted: new Set(), finalize: decodeBody(request.schema), retryTransient: true },
+        {
+          accepted: new Set(),
+          finalize: decodeJsonBody(request.schema, () => new YouTubeResponseInvalid()),
+          retryTransient: true,
+        },
         request,
       );
 
