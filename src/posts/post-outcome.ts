@@ -21,6 +21,8 @@ const noStopPermanentTags = new Set<string>([
   "ResumableUploadFailed",
   "ThumbnailReadFailed",
   "ChunkReadFailed",
+  // due-posts が先に拾って結果を書かない（#657）。ここに届いても同じアカウントは止めない。
+  "YouTubeResendDeadlinePassed",
 ]);
 
 // 401 は恒久的かつアカウントを止める。それ以外は、再試行が尽きた 429/503/quotaExceeded だけ一時的。
