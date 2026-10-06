@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 
 import { NodeServices } from "@effect/platform-node";
-import { Effect, type FileSystem, Layer, type Path, Stream } from "effect";
+import { Effect, type FileSystem, Layer, type Path, Semaphore, Stream } from "effect";
 import type { Toolkit } from "effect/ai";
 import { AiError, Tool } from "effect/ai";
 
@@ -19,6 +19,7 @@ import {
 } from "../src/mcp.ts";
 import { ThumbnailFiles } from "../src/thumbnails/thumbnail-files.ts";
 import { VideoFiles } from "../src/videos/video-files.ts";
+import { RenderLock } from "../src/videos/render-lock.ts";
 import type { VideoIds } from "../src/videos/video-ids.ts";
 import { fakeCodex, type FakeCodex } from "./codex-helpers.ts";
 import { withVideoChannel } from "./explainer-helpers.ts";
@@ -132,6 +133,8 @@ export const withToolChannel = <A, E, R>(
               options.collectionIds ?? CollectionIds.layer,
               ThumbnailFiles.layer(channelRoot),
               (options.videoFiles ?? VideoFiles.layer)(channelRoot),
+              // 描画のロックはチャンネルごと。同じチャンネルの中は本番と同じく直列で、別のチャンネルのテストとは並走できる。
+              Layer.succeed(RenderLock, Semaphore.makeUnsafe(1)),
               gemini.http,
               gemini.secrets,
               codex.layer,
