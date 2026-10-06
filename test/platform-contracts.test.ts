@@ -464,13 +464,19 @@ describe("Chrome download cache in CI", () => {
     }
     return jobSteps(quality);
   };
+  // フォントや Vitest の cache も actions/cache を使うので、Chrome の cache は id で特定する。
+  const isChromeCache = (step: ReturnType<typeof qualitySteps>[number]) =>
+    step["id"] === "chrome-cache";
   const cacheStep = () => {
-    const step = qualitySteps().find(
-      (candidate) =>
-        typeof candidate.uses === "string" && candidate.uses.startsWith("actions/cache@"),
-    );
-    if (step === undefined) {
-      throw new Error("CI quality job must restore a Chrome cache with actions/cache");
+    const step = qualitySteps().find(isChromeCache);
+    if (
+      step === undefined ||
+      typeof step.uses !== "string" ||
+      !step.uses.startsWith("actions/cache@")
+    ) {
+      throw new Error(
+        "CI quality job must restore a Chrome cache with actions/cache (id: chrome-cache)",
+      );
     }
     return step;
   };
@@ -486,9 +492,7 @@ describe("Chrome download cache in CI", () => {
     const steps = qualitySteps();
     const check = steps.findIndex((step) => step.run?.trim() === canonicalCheckCommand);
 
-    const cache = steps.findIndex(
-      (step) => typeof step.uses === "string" && step.uses.startsWith("actions/cache@"),
-    );
+    const cache = steps.findIndex(isChromeCache);
 
     expect(cache).toBeGreaterThanOrEqual(0);
     expect(cache).toBeLessThan(check);
