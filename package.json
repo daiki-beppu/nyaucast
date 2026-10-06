@@ -35,7 +35,8 @@
     "mutation": "pnpm exec stryker run",
     "prepack": "tsc --project tsconfig.build.json",
     "prepare": "vp hooks enable",
-    "effect:check": "effect-tsgo diagnostics --project tsconfig.json"
+    "effect:check": "effect-tsgo diagnostics --project tsconfig.json",
+    "shard-weights:update": "vp test run --reporter=json --outputFile=node_modules/.cache/nyaucast/test-report.json && node scripts/update-shard-weights.ts node_modules/.cache/nyaucast/test-report.json"
   },
   "dependencies": {
     "@audio/loudness-lufs": "1.2.0",
