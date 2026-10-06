@@ -153,6 +153,33 @@ describe.concurrent("video.renderCut: parameters", () => {
   });
 });
 
+// プロセス全体の arrayBuffers の伸びを測るが、並走するほかのテストは 1 秒の音声しか扱わないので、並列のまとまりに入れる。
+// ファイルで最も長いテストなので、描画するテストの先頭に置いて最初に始める（#738）。
+describe.concurrent("video.renderCut: memory on a long audio track", () => {
+  it.effect(
+    "does not hold the audio track or the mp4 in memory while rendering 10 minutes of audio",
+    () =>
+      withInputs("nyaucast-render-memory-", (channelRoot) =>
+        Effect.gen(function* () {
+          // ネイティブのライブラリの初回の読み込みを測定に含めないよう、先に短い音声で 1 度書き出しておく
+          yield* render();
+          writeTrack(channelRoot, trackWav(600));
+          const stop = startPeakBufferGrowth();
+
+          // 失敗・中断でも計測のタイマーを止める（止めないとテストプロセスが終わらない）
+          const result = yield* render().pipe(Effect.ensuring(Effect.sync(stop)));
+
+          const growthMegabytes = stop();
+          assert.strictEqual(result.rendered, true);
+          // 600 秒の音声は約 115 MB（float に展開すると約 230 MB）。全体を持つ実装は、これらを足した分だけ増える。
+          // 流して書く実装は、入力の長さによらず小さく収まる（計測値は単独で約 21 MB、並走させて 12〜24 MB。#738）
+          assert.isBelow(growthMegabytes, 150);
+        }),
+      ),
+    slow,
+  );
+});
+
 describe.concurrent("video.renderCut: a real render", () => {
   it.effect(
     "writes an mp4 with an H.264 video and an AAC audio track of the composition's size and length, and records one export",
@@ -566,32 +593,6 @@ describe.concurrent("video.renderCut: the audio track replaced during a render",
           }),
         compositionHtml(),
         replacedAfterFirstRead,
-      ),
-    slow,
-  );
-});
-
-// プロセス全体の arrayBuffers の伸びを測るので、並走させない。並列ではないスイートは並列のまとまりを区切るので、単独で走る。
-describe("video.renderCut: memory on a long audio track", () => {
-  it.effect(
-    "does not hold the audio track or the mp4 in memory while rendering 10 minutes of audio",
-    () =>
-      withInputs("nyaucast-render-memory-", (channelRoot) =>
-        Effect.gen(function* () {
-          // ネイティブのライブラリの初回の読み込みを測定に含めないよう、先に短い音声で 1 度書き出しておく
-          yield* render();
-          writeTrack(channelRoot, trackWav(600));
-          const stop = startPeakBufferGrowth();
-
-          // 失敗・中断でも計測のタイマーを止める（止めないとテストプロセスが終わらない）
-          const result = yield* render().pipe(Effect.ensuring(Effect.sync(stop)));
-
-          const growthMegabytes = stop();
-          assert.strictEqual(result.rendered, true);
-          // 600 秒の音声は約 115 MB（float に展開すると約 230 MB）。全体を持つ実装は、これらを足した分だけ増える。
-          // 流して書く実装は、入力の長さによらず約 60 MB（計測値。600 秒でも 1500 秒でも同じ）で収まる
-          assert.isBelow(growthMegabytes, 150);
-        }),
       ),
     slow,
   );
