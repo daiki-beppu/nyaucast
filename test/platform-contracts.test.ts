@@ -164,6 +164,33 @@ describe("K1 three identical check surfaces", () => {
     expect(ciRuns).toEqual([canonicalCheckCommand]);
   });
 
+  // CI は同じ check を shard ごとに走らせる（#715）。shard の集合が 1/N〜N/N を漏れなく重複なく覆わないと、
+  // どの job も pass したまま、一部のテストが CI で一度も走らなくなる。
+  test("the CI shards cover every test file exactly once", () => {
+    const quality = workflowJobs(readWorkflow("ci.yml")).find(
+      (job) => job["runs-on"] !== undefined,
+    );
+    const strategy = requireRecord(quality?.["strategy"], "quality strategy");
+    const shards = requireRecord(strategy["matrix"], "quality matrix")["shard"];
+    const environment = requireRecord(quality?.["env"], "quality env");
+
+    expect(Array.isArray(shards)).toBe(true);
+    const count = (shards as unknown[]).length;
+    expect([...(shards as unknown[])].sort()).toEqual(
+      Array.from({ length: count }, (_, at) => at + 1),
+    );
+    expect(environment["VITEST_SHARD"]).toBe(`\${{ matrix.shard }}/${count}`);
+
+    const manifest = readJson(join(packageRoot, "package.json"));
+    const check = String(requireRecord(manifest["scripts"], "package scripts")["check"]);
+    const testGates = check
+      .split("&&")
+      .map((gate) => gate.trim())
+      .filter((gate) => gate.startsWith("vp test"));
+    // VITEST_SHARD の無いローカル・pre-push では、shard の引数が消えて全件が走る
+    expect(testGates).toEqual(["vp test run ${VITEST_SHARD:+--shard=$VITEST_SHARD}"]);
+  });
+
   test("the declared check gate set includes the lockfile gate without duplicates", () => {
     const manifest = readJson(join(packageRoot, "package.json"));
     const scripts = requireRecord(manifest["scripts"], "package scripts");
