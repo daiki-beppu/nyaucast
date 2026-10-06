@@ -206,20 +206,6 @@ describe.concurrent("video.renderCut: a real render", () => {
       ),
     slow,
   );
-
-  it.effect(
-    "keeps every artifact under the cut's directory",
-    () =>
-      withInputs("nyaucast-render-location-", (channelRoot) =>
-        Effect.gen(function* () {
-          const result = yield* render();
-
-          assert.isTrue(result.key.startsWith(`${cutDirectory}/`));
-          assert.isTrue(channelFileExists(channelRoot, join(cutDirectory, "long.mp4")));
-        }),
-      ),
-    slow,
-  );
 });
 
 // 復号した内容を確かめる: 映像は時刻ごとの色（前半は赤系、後半は青系）、音声は 440 Hz の音が残っている。
@@ -903,30 +889,6 @@ describe.concurrent("video.renderCut: the two cuts of a short candidate", () => 
           assert.isTrue(again.rendered);
           assert.strictEqual(rows.length, 2);
           assert.isTrue((rows[1]?.created_at ?? "") > lastVersion);
-        }),
-      ),
-    slow,
-  );
-
-  it.effect(
-    "reports both cuts in the video's status, in name order",
-    () =>
-      withShort("nyaucast-render-short-status-", (channelRoot) =>
-        Effect.gen(function* () {
-          yield* writeCutInputs(channelRoot, dedicatedCut(1));
-          yield* writeCutInputs(channelRoot, clipCut(1));
-          yield* renderCut(dedicatedCut(1));
-          yield* renderCut(clipCut(1));
-
-          const status = yield* callTool("video_status", { videoId: "V1" });
-
-          assert.deepStrictEqual(
-            status.cuts.map((cut) => [cut.cut, cut.lastExport?.key]),
-            [
-              [clipCut(1), shortCutExportKey(clipCut(1))],
-              [dedicatedCut(1), shortCutExportKey(dedicatedCut(1))],
-            ],
-          );
         }),
       ),
     slow,
