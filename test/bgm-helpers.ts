@@ -29,19 +29,25 @@ export const poolPath = "config/channel/bgm-pool.json";
 
 // ---- 信号の生成 ----
 
-export const sine = (seconds: number, hertz: number, amplitude: number): Float32Array =>
-  Float32Array.from(
-    { length: Math.round(seconds * sampleRate) },
-    (_, index) => amplitude * Math.sin((2 * Math.PI * hertz * index) / sampleRate),
-  );
+// 長い fixture（600 秒で 1 チャンネル 2880 万サンプル）も作るので、サンプルごとのコールバック（Float32Array.from）を使わずループで回す（#727）。
+
+export const sine = (seconds: number, hertz: number, amplitude: number): Float32Array => {
+  const signal = new Float32Array(Math.round(seconds * sampleRate));
+  for (let index = 0; index < signal.length; index += 1) {
+    signal[index] = amplitude * Math.sin((2 * Math.PI * hertz * index) / sampleRate);
+  }
+  return signal;
+};
 
 /** 種の決まった擬似乱数のノイズ（毎回同じ）。 */
 export const noise = (seconds: number, seed: number, amplitude: number): Float32Array => {
   let state = seed >>> 0 || 1;
-  return Float32Array.from({ length: Math.round(seconds * sampleRate) }, () => {
+  const signal = new Float32Array(Math.round(seconds * sampleRate));
+  for (let index = 0; index < signal.length; index += 1) {
     state = (Math.imul(state, 1_664_525) + 1_013_904_223) >>> 0;
-    return amplitude * ((state / 0xff_ff_ff_ff) * 2 - 1);
-  });
+    signal[index] = amplitude * ((state / 0xff_ff_ff_ff) * 2 - 1);
+  }
+  return signal;
 };
 
 export const silence = (seconds: number): Float32Array =>
@@ -77,9 +83,11 @@ export const stereoWav = (left: Float32Array, right: Float32Array): Uint8Array =
   file.writeUInt16LE(16, 34);
   file.write("data", 36);
   file.writeUInt32LE(frames * 4, 40);
+  // サンプルごとに Buffer のメソッドを呼ばず、DataView で書く（#727）
+  const view = new DataView(file.buffer, file.byteOffset, file.byteLength);
   for (let frame = 0; frame < frames; frame += 1) {
-    file.writeInt16LE(toInt16(left[frame] ?? 0), 44 + frame * 4);
-    file.writeInt16LE(toInt16(right[frame] ?? 0), 46 + frame * 4);
+    view.setInt16(44 + frame * 4, toInt16(left[frame] ?? 0), true);
+    view.setInt16(46 + frame * 4, toInt16(right[frame] ?? 0), true);
   }
   return new Uint8Array(file);
 };
@@ -122,12 +130,15 @@ export const decodeWav = (bytes: Uint8Array): DecodedWav => {
   }
   const count = file.readUInt16LE(format.body + 2);
   const frames = Math.floor(data.size / (2 * count));
-  const channels = Array.from({ length: count }, (_, channel) =>
-    Float32Array.from(
-      { length: frames },
-      (_unused, frame) => file.readInt16LE(data.body + (frame * count + channel) * 2) / 32_768,
-    ),
-  );
+  // サンプルごとに Buffer のメソッドを呼ばず、DataView で読む（#727）
+  const view = new DataView(file.buffer, file.byteOffset, file.byteLength);
+  const channels = Array.from({ length: count }, (_, channel) => {
+    const samples = new Float32Array(frames);
+    for (let frame = 0; frame < frames; frame += 1) {
+      samples[frame] = view.getInt16(data.body + (frame * count + channel) * 2, true) / 32_768;
+    }
+    return samples;
+  });
   return {
     bitsPerSample: file.readUInt16LE(format.body + 14),
     channels,
