@@ -16,6 +16,24 @@ export interface FileReader {
   read(start: number, end: number): Promise<Uint8Array>;
 }
 
+/** 送信のために読む 1 チャンクの大きさ。256KB の倍数（ADR-0009 の resumable upload の決定）。 */
+export const uploadChunkBytes = 262_144;
+
+/**
+ * 送信用に [start, start + uploadChunkBytes) を読む（ファイルの終わりで端数になる）。読み取りの失敗を
+ * どの型付きの失敗にするかは呼び出し側が決める: `Effect.promise` の reject は defect になり、
+ * 呼び出し側の `Effect.result` では捕まらないため、各境界が自分の失敗へ変換する必要がある。
+ */
+export const readUploadChunk = <Failure>(
+  file: FileReader,
+  start: number,
+  onReadFailure: () => Failure,
+): Effect.Effect<Uint8Array, Failure> =>
+  Effect.tryPromise({
+    catch: onReadFailure,
+    try: () => file.read(start, Math.min(start + uploadChunkBytes, file.size)),
+  });
+
 /** 動画のディレクトリのファイル（台本・ナレーションの成果物）の置き場。キーは、チャンネルルートからの相対パス。 */
 export class VideoFiles extends Context.Service<
   VideoFiles,

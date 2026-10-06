@@ -6,6 +6,7 @@ import { SqlClient } from "effect/sql";
 import { explainerConfig } from "../../test/explainer-helpers.ts";
 import { callTool, withToolChannel } from "../../test/tool-helpers.ts";
 import { runProgram, selectAll, setClock } from "../../test/helpers.ts";
+import { instagramAuthLayer } from "../../test/instagram-fake.ts";
 import { declareAccounts } from "../../test/post-draft-helpers.ts";
 import { storeToken } from "../../test/publish-helpers.ts";
 import { fakeYouTubeHttp, youtubeClientLayer } from "../../test/youtube-fake-client.ts";
@@ -49,7 +50,9 @@ const inChannel = <A, E, R>(prefix: string, use: () => Effect.Effect<A, E, R>) =
     Effect.gen(function* () {
       declareAccounts(channelRoot, ["youtube"]);
       yield* storeToken(channelRoot, "youtube");
-      return yield* use();
+      // issue #555: 投稿の実行の経路は Instagram のアダプタを持つので InstagramAuth を要求する。
+      // この節の投稿はすべて YouTube なので、偽の認証は一度も呼ばれない。
+      return yield* use().pipe(Effect.provide(instagramAuthLayer));
     }),
   );
 

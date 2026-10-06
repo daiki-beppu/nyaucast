@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 
 import { NodeServices } from "@effect/platform-node";
 import { ConfigProvider, Effect, Layer, Result, Schema, Sink, Stream } from "effect";
+import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import { SqlClient } from "effect/sql";
 import { TestClock, TestConsole } from "effect/testing";
@@ -12,6 +13,7 @@ import { TestClock, TestConsole } from "effect/testing";
 import { ChannelAccounts } from "../src/auth/accounts.ts";
 import { CredentialStore } from "../src/auth/credential-store.ts";
 import { DeclaredAccounts } from "../src/auth/declared-accounts.ts";
+import { StaticSecrets } from "../src/auth/secrets.ts";
 import { ChannelSettings } from "../src/channel/channel-settings.ts";
 import { LocalStore } from "../src/db/local-store.ts";
 import { InstagramAuth } from "../src/instagram/auth.ts";
@@ -93,6 +95,9 @@ export const unusedPostLayer = Layer.mergeAll(
   Layer.effect(ChannelSettings, notUsed),
   Layer.effect(CredentialStore, notUsed),
   Layer.effect(DeclaredAccounts, notUsed),
+  Layer.effect(HttpClient.HttpClient, notUsed),
+  Layer.effect(InstagramAuth, notUsed),
+  Layer.effect(StaticSecrets, notUsed),
   Layer.effect(VideoFiles, notUsed),
   Layer.effect(YouTubeClient, notUsed),
 );

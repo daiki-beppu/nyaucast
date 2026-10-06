@@ -1,13 +1,9 @@
 import { Effect, Schema } from "effect";
-import type { SqlClient } from "effect/sql";
 
 import type { AccountsDeclarationInvalid } from "../auth/accounts.ts";
-import { CredentialStore, type CredentialStoreFailure } from "../auth/credential-store.ts";
-import { DeclaredAccounts } from "../auth/declared-accounts.ts";
-import type { VideoFiles } from "../videos/video-files.ts";
-import { YouTubeClient } from "../youtube/client.ts";
+import type { CredentialStoreFailure } from "../auth/credential-store.ts";
 import type { ClassifiedPost } from "./post-classification.ts";
-import { type DuePostOutcome, runPostForced } from "./due-posts.ts";
+import { type DuePostOutcome, type PostRunServices, runPostForced } from "./due-posts.ts";
 import { postStatuses } from "./post-state.ts";
 
 /** 今すぐ実行の対象ではない投稿に `post run-now` を叩いたときの型付きの失敗（issue 決定・AC3）。 */
@@ -27,7 +23,7 @@ export const runPostNow = (
 ): Effect.Effect<
   DuePostOutcome,
   AccountsDeclarationInvalid | CredentialStoreFailure | PostNotRunnable,
-  CredentialStore | DeclaredAccounts | SqlClient.SqlClient | VideoFiles | YouTubeClient
+  PostRunServices
 > =>
   Effect.gen(function* () {
     const { status } = target.state;
