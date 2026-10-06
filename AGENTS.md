@@ -8,7 +8,7 @@ YouTube チャンネル運営を自動化するツールキット。skill に蓄
 
 ## 環境
 
-- ランタイムは Node。ローカルはホスト供給で強制せず、開発・CI の版は `package.json` の `devEngines.runtime`（24.x 線）が SSOT — CI（setup-node）だけが pin を読んで導入する。**ローカルと CI の版ずれは許容し、CI を裁定者とする**
+- ランタイムは Node。ローカルはホスト供給で強制せず、開発・CI の版は `package.json` の `devEngines.runtime`（24.x 線）が SSOT — CI（`pnpm/setup`。release の publish job は #744 まで `actions/setup-node`）だけが pin を読んで導入する。**ローカルと CI の版ずれは許容し、CI を裁定者とする**
 - パッケージマネージャは pnpm v12。`packageManager` フィールドの exact pin が SSOT。旧 pnpm からの自動切替は native binary の build と複数 document lockfile を発生させるため使わず、ローカルには pin 版を事前導入する。`pnpm-workspace.yaml` の `pmOnFail: ignore` は GitHub dependency graph が読める単一 document lockfile を維持するための明示設定。corepack は使わない
 - test / lint / format / 型検査は Vite+（npm パッケージ `vite-plus`、`vp` CLI）が一元管理する。同梱ツールは exact pin で、個別ツールを devDependencies に重複して置かない
 - **パッケージ操作は `vp install` を正とし（lockfile 検出で pnpm へ委譲）、vp が覆わない操作（任意 script 実行・pack 等）は pnpm を使う。npm / yarn / bun とそのラッパを使わない** — 例外条項なし（publish も pnpm）

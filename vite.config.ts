@@ -1,6 +1,6 @@
 import { defineConfig } from "vite-plus";
 
-import { SizeShardSequencer } from "./vitest.shard.config.ts";
+import { WeightShardSequencer } from "./vitest.shard.config.ts";
 
 export default defineConfig({
   fmt: {
@@ -41,7 +41,7 @@ export default defineConfig({
   },
   test: {
     // CI の shard の分け方（#715）
-    sequence: { sequencer: SizeShardSequencer },
+    sequence: { sequencer: WeightShardSequencer },
     passWithNoTests: true,
     projects: [
       {

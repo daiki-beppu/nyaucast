@@ -7,6 +7,7 @@ import { parse } from "yaml";
 
 import { chromeCacheDirectory } from "../src/lib/chrome.ts";
 import { chromeHeadlessShellBuildId } from "../src/lib/chrome-pin.ts";
+import { checkGates } from "./check-gates.ts";
 import { withTemporaryDirectory } from "./helpers";
 
 const packageRoot = resolve(import.meta.dirname, "..");
@@ -214,12 +215,13 @@ describe("K1 three identical check surfaces", () => {
     if (typeof check !== "string") {
       throw new TypeError("scripts.check must be a string");
     }
-    const gates = check.split("&&").map((gate) => gate.trim());
+    const gates = checkGates(scripts as Record<string, string>);
 
-    expect(gates).toContain("pnpm run lockfile:check");
-    expect(new Set(gates).size).toBe(gates.length);
-    for (const gate of gates.filter((gate) => gate.startsWith("pnpm run "))) {
-      expect(scripts).toHaveProperty(gate.slice("pnpm run ".length));
+    expect(gates.map(({ gate }) => gate)).toContain("pnpm run lockfile:check");
+    expect(new Set(gates.map(({ gate }) => gate)).size).toBe(gates.length);
+    // script の名前や正規表現が何にも当たらないと、そのゲートは何も検査せずに通る
+    for (const { commands, gate } of gates) {
+      expect(commands.length, gate).toBeGreaterThan(0);
     }
   });
 
@@ -473,6 +475,20 @@ describe("K4 credential and concurrency contracts", () => {
     expect(checkoutSteps.length).toBeGreaterThan(0);
     for (const step of checkoutSteps) {
       expect(step.with?.["persist-credentials"]).toBe(false);
+    }
+  });
+
+  // pnpm/setup は既定で lockfile が無くても install して lockfile を作り、成功してしまう（#739）
+  test("every pnpm/setup install requires the lockfile", () => {
+    const setupSteps = readdirSync(join(packageRoot, ".github/workflows"))
+      .filter((name) => /\.ya?ml$/.test(name))
+      .flatMap((name) => workflowJobs(readWorkflow(name)))
+      .flatMap(jobSteps)
+      .filter((step) => typeof step.uses === "string" && step.uses.startsWith("pnpm/setup@"));
+
+    expect(setupSteps.length).toBeGreaterThan(0);
+    for (const step of setupSteps) {
+      expect(step.with?.["require-lockfile"]).toBe(true);
     }
   });
 
