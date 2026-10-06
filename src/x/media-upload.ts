@@ -9,7 +9,7 @@ const mediaCategory = "tweet_video";
 const mediaType = "video/mp4";
 
 /**
- * `append` の 1 チャンクの大きさ。X の上限は 5MB（order.md 決定 2）で、MB（10 進の 5_000_000）と
+ * `append` の 1 チャンクの大きさ。X の上限は 5MB（#556 の決定 2）で、MB（10 進の 5_000_000）と
  * MiB（2 進の 5_242_880）のどちらで解釈しても下回る値にする。
  */
 export const appendChunkBytes = 4 * 1024 * 1024;
@@ -32,7 +32,7 @@ export class XMediaProcessingUnfinished extends Schema.TaggedError<XMediaProcess
   {},
 ) {}
 
-/** `finalize` または `STATUS` が処理の失敗を報告した（恒久的。投稿は送らない。order.md AC2）。 */
+/** `finalize` または `STATUS` が処理の失敗を報告した（恒久的。投稿は送らない。#556 の AC）。 */
 export class XMediaProcessingFailed extends Schema.TaggedError<XMediaProcessingFailed>()(
   "XMediaProcessingFailed",
   {},
@@ -153,7 +153,7 @@ const classifyMediaProcessing = (processing: ProcessingInfo): ProcessingDecision
  * 処理中だから照会しているので、`STATUS` の応答に `processing_info` が無いのは X が自身の契約を
  * 破った応答である。`finalize` の欠落（処理不要で完了）と同じ意味に読むと、未処理のメディアで
  * `POST /2/tweets` へ進んでしまうため、完了とは読まない。処理中のまま待ち続け、待機の上限で一時的な
- * 失敗にする（投稿は 1 回も送らない。order.md 決定 2「`STATUS` が `succeeded` まで待つ」）。
+ * 失敗にする（投稿は 1 回も送らない。#556 の決定 2「`STATUS` が `succeeded` まで待つ」）。
  */
 const polledProcessing = (processing: ProcessingInfo | undefined): ProcessingInfo =>
   processing ?? { state: "in_progress" };
@@ -190,7 +190,7 @@ const awaitProcessed = (
   });
 
 /**
- * 1 回の試行の中で X v2 のメディアアップロードを通し、`media_id` を返す（order.md 決定 2）。
+ * 1 回の試行の中で X v2 のメディアアップロードを通し、`media_id` を返す（#556 の決定 2）。
  * `initialize` → `append`（5MB 以下のチャンクを `segment_index` 昇順に 1 回ずつ）→ `finalize` →
  * （処理が要るなら）`STATUS` が `succeeded` になるまで待つ。`media_id` は 24 時間で失効するので
  * 戻り値だけで運び、local store には保存しない（呼び出しごとに `initialize` からやり直す）。

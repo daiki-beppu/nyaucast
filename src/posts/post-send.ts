@@ -19,8 +19,9 @@ import type { PostAdapterFailure } from "./post-outcome.ts";
 import type { ReadyFacts } from "./post-readiness.ts";
 
 /**
- * どの SNS をどのアダプタが担うか、と、SNS をまたいで同じ形になる送信の結果。SNS を足すときに変わる
- * のはここだけで、試行の獲得と 3 つの独立した書き込み（due-posts.ts）はそのままにする。
+ * どの SNS をどのアダプタが担うか、と、SNS をまたいで同じ形になる送信の結果。SNS を足すときの振り分けは
+ * ここに集め、試行の獲得と 3 つの独立した書き込み（due-posts.ts）はそのままにする（失敗の分類は
+ * post-outcome.ts、アダプタが使うサービスは due-posts.ts の PostRunServices と entry point が持つ）。
  */
 
 export type PreparedPost =

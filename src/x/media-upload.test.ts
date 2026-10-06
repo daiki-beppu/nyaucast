@@ -35,7 +35,7 @@ function fileReaderOf(bytes: Uint8Array): FileReader {
 const sequentialBytes = (length: number) => Uint8Array.from({ length }, (_, index) => index % 256);
 
 /**
- * order.md 決定 2 の「1 チャンク 5MB 以下」。MB（10 進の 5,000,000）と MiB（2 進の 5,242,880）の
+ * #556 の決定 2 の「1 チャンク 5MB 以下」。MB（10 進の 5,000,000）と MiB（2 進の 5,242,880）の
  * どちらの解釈でも超えない、厳しい側の上限を実装の `appendChunkBytes` とは独立に書く。実装側の定数を
  * この上限より大きくすると、実 API に当てる前にこのテストが落ちる。
  */
@@ -127,7 +127,7 @@ describe("uploadXMedia: splitting a file larger than one chunk", () => {
           appends.map((append) => append.segmentIndex),
           [0, 1, 2],
         );
-        // order.md 決定 2: 実際に送った 1 チャンクが仕様の上限（5MB）以下であること。先頭 2 つは
+        // #556 の決定 2: 実際に送った 1 チャンクが仕様の上限（5MB）以下であること。先頭 2 つは
         // 丸ごと 1 チャンク分なので、ここが上限の効く境界になる。
         for (const append of appends) {
           assert.isAtMost(append.bytes.length, appendChunkByteLimit);
@@ -234,7 +234,7 @@ describe("uploadXMedia: waiting for asynchronous processing via STATUS", () => {
       }),
   );
 
-  // order.md 決定 2「STATUS が succeeded まで待つ」: 処理中だから照会しているので、processing_info を
+  // #556 の決定 2「STATUS が succeeded まで待つ」: 処理中だから照会しているので、processing_info を
   // 落とした STATUS の応答を「処理不要で完了」と読んで投稿へ進んではいけない（finalize の欠落だけが
   // 処理不要を表す）。未処理のメディアで POST /2/tweets を送る退行を防ぐ。
   it.effect(

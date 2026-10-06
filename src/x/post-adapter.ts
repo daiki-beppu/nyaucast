@@ -49,7 +49,7 @@ type XPostSendFailure =
  * 解決する）。獲得の前に呼ぶ（due-posts.ts の prepareAndCheckDue）。
  *
  * 投稿文の検査（#551 が所有する同じ `checkPostText`）を最初に通すのは、URL を含む投稿文を、課金され
- * うる外部呼び出し（メディアアップロード）より前に落とすため（order.md 決定 4）。
+ * うる外部呼び出し（メディアアップロード）より前に落とすため（#556 の決定 4）。
  *
  * P3: 最後の書き出しは、実行の直前の検査（isStillReady）が既に読んだ事実（facts）をそのまま使う。
  * P1: アクセストークンをここで解決し、送信の各段へ渡す（予定時刻の再確認と送信の間に認証取得の
@@ -93,7 +93,7 @@ const isIndeterminateTweetFailure = (failure: XClientFailure): boolean =>
   failure._tag === "XHttpBoundaryFailed" || failure._tag === "XResponseInvalid";
 
 /**
- * 投稿 1 件を X へ出す（order.md 決定 2・3）。同じ試行の中でメディアアップロードを完了させ、その直後に
+ * 投稿 1 件を X へ出す（#556 の決定 2・3）。同じ試行の中でメディアアップロードを完了させ、その直後に
  * `POST /2/tweets` へ `media_ids` を渡す。`made_with_ai` は常にリテラルの `true` で、呼び出し側から
  * 外せる引数・設定を持たない（ADR-0009 決定 9）。
  */

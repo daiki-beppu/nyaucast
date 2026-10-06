@@ -23,7 +23,7 @@ import { VideoFiles } from "../videos/video-files.ts";
 import type { FileReader } from "../videos/video-files.ts";
 import { postToX, prepareXPost, type XPostInput } from "./post-adapter.ts";
 
-// 契約（この issue の計画 C-X-DISCLOSURE・C-X-TEXT・C-X-INDETERMINATE、order.md 決定 3・4、
+// 契約（この issue の計画 C-X-DISCLOSURE・C-X-TEXT・C-X-INDETERMINATE、#556 の決定 3・4、
 // ADR-0009 決定 9）:
 //   prepareXPost は、投稿文の検査（checkPostText）を、ファイルを開く・アカウントを読む・
 //   アクセストークンを解決するより前に行う（課金されうる外部呼び出しの前に落とす）。
