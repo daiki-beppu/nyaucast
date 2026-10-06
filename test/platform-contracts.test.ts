@@ -476,6 +476,20 @@ describe("K4 credential and concurrency contracts", () => {
     }
   });
 
+  // pnpm/setup は既定で lockfile が無くても install して lockfile を作り、成功してしまう（#739）
+  test("every pnpm/setup install requires the lockfile", () => {
+    const setupSteps = readdirSync(join(packageRoot, ".github/workflows"))
+      .filter((name) => /\.ya?ml$/.test(name))
+      .flatMap((name) => workflowJobs(readWorkflow(name)))
+      .flatMap(jobSteps)
+      .filter((step) => typeof step.uses === "string" && step.uses.startsWith("pnpm/setup@"));
+
+    expect(setupSteps.length).toBeGreaterThan(0);
+    for (const step of setupSteps) {
+      expect(step.with?.["require-lockfile"]).toBe(true);
+    }
+  });
+
   test("CI and release concurrency groups cannot collide", () => {
     const ci = readWorkflow("ci.yml");
     const release = readWorkflow("release.yml");
