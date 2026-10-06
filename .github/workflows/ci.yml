@@ -9,7 +9,7 @@ on:
 
 jobs:
   quality-shard:
-    name: quality ${{ matrix.shard }}/2
+    name: quality ${{ matrix.shard }}/${{ strategy.job-total }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     # 同じ pnpm run check を shard ごとに走らせ、テストの部分だけを分ける（#715）。
@@ -19,7 +19,7 @@ jobs:
       matrix:
         shard: [1, 2]
     env:
-      VITEST_SHARD: ${{ matrix.shard }}/2
+      VITEST_SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
     # concurrency は job 側に置く。workflow レベルに置くと workflow_call 経由の
     # 呼び出しでも評価され、release の group を掴んだまま待っている呼び出し元と
     # 同じ group を要求して deadlock する。group 名に ${{ github.workflow }} を
