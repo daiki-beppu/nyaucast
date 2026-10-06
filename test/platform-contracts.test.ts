@@ -164,6 +164,49 @@ describe("K1 three identical check surfaces", () => {
     expect(ciRuns).toEqual([canonicalCheckCommand]);
   });
 
+  // CI は同じ check を shard ごとに走らせる（#715）。shard の集合が 1/N〜N/N を漏れなく重複なく覆わないと、
+  // どの job も pass したまま、一部のテストが CI で一度も走らなくなる。
+  test("the CI shards cover every test file exactly once", () => {
+    const quality = workflowJobs(readWorkflow("ci.yml")).find(
+      (job) => job["strategy"] !== undefined,
+    );
+    const strategy = requireRecord(quality?.["strategy"], "quality strategy");
+    const shards = requireRecord(strategy["matrix"], "quality matrix")["shard"];
+    const environment = requireRecord(quality?.["env"], "quality env");
+
+    expect(Array.isArray(shards)).toBe(true);
+    const count = (shards as unknown[]).length;
+    expect([...(shards as number[])].sort((left, right) => left - right)).toEqual(
+      Array.from({ length: count }, (_, at) => at + 1),
+    );
+    // 分母は matrix の数から取る。shard の数を書くのは matrix の一覧だけ
+    expect(environment["VITEST_SHARD"]).toBe("${{ matrix.shard }}/${{ strategy.job-total }}");
+
+    const manifest = readJson(join(packageRoot, "package.json"));
+    const check = String(requireRecord(manifest["scripts"], "package scripts")["check"]);
+    const testGates = check
+      .split("&&")
+      .map((gate) => gate.trim())
+      .filter((gate) => gate.startsWith("vp test"));
+    // VITEST_SHARD の無いローカル・pre-push では、shard の引数が消えて全件が走る
+    expect(testGates).toEqual(["vp test run ${VITEST_SHARD:+--shard=$VITEST_SHARD}"]);
+  });
+
+  // ルールセット「main: CI 必須」は quality という名前の check を必須にしている。shard の job の名前は
+  // shard ごとに変わるので、すべての shard の成功を要求する quality job が無いと PR がマージできなくなる。
+  test("a job named quality passes only when every CI shard passes", () => {
+    const jobs = requireRecord(readWorkflow("ci.yml")["jobs"], "CI jobs");
+    const quality = requireRecord(jobs["quality"], "quality job");
+    const shardJob = Object.keys(jobs).find((id) => id !== "quality");
+
+    expect(shardJob).toBeDefined();
+    expect(requireRecord(jobs[shardJob ?? ""], "shard job")["strategy"]).toBeDefined();
+    expect(quality["needs"]).toBe(shardJob);
+    expect(quality["if"]).toBe("always()");
+    expect(JSON.stringify(quality["steps"])).toContain(`\${{ needs.${shardJob}.result }}`);
+    expect(JSON.stringify(quality["steps"])).toContain('= \\"success\\"');
+  });
+
   test("the declared check gate set includes the lockfile gate without duplicates", () => {
     const manifest = readJson(join(packageRoot, "package.json"));
     const scripts = requireRecord(manifest["scripts"], "package scripts");
