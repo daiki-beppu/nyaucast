@@ -8,16 +8,27 @@ on:
   workflow_call: {}
 
 jobs:
-  quality:
+  quality-shard:
+    name: quality ${{ matrix.shard }}/${{ strategy.job-total }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    # 同じ pnpm run check を shard ごとに走らせ、テストの部分だけを分ける（#715）。
+    # ゲートの集合は check script のまま。VITEST_SHARD の無いローカル・pre-push は全件を走らせる。
+    strategy:
+      fail-fast: false
+      matrix:
+        # 本数は同時刻の計測で選んだ（2 本は平均約 120 秒、3 本は約 110 秒。#715 のコメント）
+        shard: [1, 2, 3]
+    env:
+      VITEST_SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
     # concurrency は job 側に置く。workflow レベルに置くと workflow_call 経由の
     # 呼び出しでも評価され、release の group を掴んだまま待っている呼び出し元と
     # 同じ group を要求して deadlock する。group 名に ${{ github.workflow }} を
     # 使わないのも同じ理由で、called workflow では呼び出し元の workflow 名
     # （Release）へ解決され、group 名は大文字小文字を区別しない。
+    # group に shard を含める。含めないと matrix の job が同じ group を掴み、PR では互いを取り消す。
     concurrency:
-      group: ci-quality-${{ github.event.pull_request.number || github.ref }}
+      group: ci-quality-${{ github.event.pull_request.number || github.ref }}-${{ matrix.shard }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     permissions:
       contents: read
@@ -81,13 +92,29 @@ jobs:
           key: chrome-headless-shell-${{ runner.os }}-${{ steps.chrome-pin.outputs.build-id }}
       # Vitest は前回の所要時間を見て遅いファイルから始めるが、CI は毎回まっさらでその情報が無い。
       # 最も遅いファイルが後から始まって全体が延びるので、所要時間の記録だけを持ち越す。実行順以外には効かない。
+      # shard ごとに走るファイルが違うので、key も shard ごとに分ける。
       - name: Cache Vitest durations
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: node_modules/.vite/vitest
-          key: vitest-results-${{ runner.os }}-${{ github.sha }}
-          restore-keys: vitest-results-${{ runner.os }}-
+          key: vitest-results-${{ runner.os }}-${{ matrix.shard }}-${{ github.sha }}
+          restore-keys: vitest-results-${{ runner.os }}-${{ matrix.shard }}-
       # ゲート集合の定義は package.json の check script にのみ置く。ここで step へ
       # 割り戻すと列挙が複製され、CI とローカルが食い違う経路が再び開く。
       - name: Check
         run: pnpm run check
+
+  # ルールセット「main: CI 必須」は quality という名前の check を必須にしている。shard の job は
+  # 名前が shard ごとに変わるので、すべての shard が成功したときだけ成功する job をこの名前で置く。
+  # always() で、shard が失敗・取り消しになったときも走らせ、成功以外を失敗として報告する。
+  quality:
+    needs: quality-shard
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Require every shard to pass
+        env:
+          SHARDS_RESULT: ${{ needs.quality-shard.result }}
+        run: test "$SHARDS_RESULT" = "success"
