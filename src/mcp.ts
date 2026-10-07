@@ -99,7 +99,9 @@ export const explainerInstructions =
   "Before planning or producing an explainer video, read the knowledge codec explainer-lifecycle " +
   "(skills/explainer-lifecycle/SKILL.md in the nyaucast package, linked from .agents/skills). " +
   "Read it for the plan section (topic, plan, thumbnails, before the plan gate) and the produce " +
-  "section (script, shorts, diagram, narration, render, preview).";
+  "section (script, shorts, diagram, narration, render, preview). " +
+  "After produce, read the knowledge codec distribution (skills/distribution/SKILL.md) " +
+  "for the publish section (post drafts before the publish gate, posting and failures).";
 
 /** BGM 動画の codec はまだ無い（v0.2 以降）。codec の名前は出さず、公開する tool の範囲だけを書く。 */
 export const collectionInstructions =

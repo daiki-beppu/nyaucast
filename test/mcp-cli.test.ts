@@ -1,10 +1,11 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { describe, expect, test } from "@effect/vitest";
 
+import { skillsRootOfPackage } from "./codec-support.ts";
 import { collectionConfig, explainerConfig } from "./explainer-helpers.ts";
 import { withTemporaryDirectoryAsync, writeVideoConfig } from "./helpers";
 import { createJsonRpcClient, requireRecord, stopChildProcess } from "./mcp-stdio-helpers";
@@ -153,6 +154,9 @@ describe("nyaucast mcp", () => {
         expect(instructions).toContain("explainer-lifecycle");
         expect(instructions).toMatch(/\bplan\b/);
         expect(instructions).toMatch(/\bproduce\b/);
+        // issue #558: distribution codec の道案内（公開ゲート以降の publish 区間）も同じ instructions に乗る
+        expect(instructions).toContain("distribution");
+        expect(instructions).toMatch(/\bpublish\b/);
       },
     );
   });
@@ -167,6 +171,14 @@ describe("nyaucast mcp", () => {
         expect([...String(instructions)].length).toBeLessThanOrEqual(512);
         expect(instructions).not.toContain("explainer-lifecycle");
         expect(instructions).not.toContain("explainer");
+        // issue #558: distribution codec の追加後も、出荷済みの codec 名をどれも案内しない。
+        // skills/ 直下の実エントリ名から codec 名を取るので、本文へ丸写しせず、将来 codec が
+        // 増えても追随する。大小文字を無視した部分一致で検査する(禁止値の完全一致不在だけに頼らない)。
+        const shippedCodecNames = readdirSync(skillsRootOfPackage);
+        const lowerInstructions = String(instructions).toLowerCase();
+        for (const codecName of shippedCodecNames) {
+          expect(lowerInstructions).not.toContain(codecName.toLowerCase());
+        }
       },
     );
   });

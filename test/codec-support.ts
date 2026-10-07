@@ -6,6 +6,7 @@ import { parse } from "yaml";
 
 import { nyaucastCommand } from "../src/cli.ts";
 import { CollectionToolkit, ExplainerToolkit } from "../src/mcp.ts";
+import { postAwaitingReasons, postStatuses } from "../src/posts/post-state.ts";
 import {
   unusedAuthLayer,
   unusedCloudflareLayer,
@@ -106,6 +107,10 @@ const inlineCodesOf = (text: string): string[] => {
   return [...proseLines.join("\n").matchAll(/`([^`\n]+)`/g)].map((match) => match[1] as string);
 };
 
+/** 表の1列目に書かれた inline code。説明文中の言及や見出しの表現には依存しない。 */
+export const firstColumnCodesOfTable = (text: string): string[] =>
+  [...text.matchAll(/^\s*\|([^|\n]*)\|/gm)].flatMap((row) => inlineCodesOf(row[1] as string));
+
 // ---- MCP tool 名 ----
 
 const toolDomains = (known: ReadonlySet<string>) => [
@@ -122,6 +127,14 @@ export const knownSchemaLiterals = (): ReadonlySet<string> => {
   const values = calls.flatMap((call) => [...(call[1] as string).matchAll(/"([^"]*)"/g)]);
   return new Set(values.map((value) => value[1] as string));
 };
+
+/**
+ * 確認待ちの理由と投稿の状態の識別子。`Schema.Literals(postAwaitingReasons)`
+ * (`src/db/video-read-model.ts`) のように変数で渡される呼び出しは knownSchemaLiterals の正規表現では
+ * 拾えないため、実物の定義（`src/posts/post-state.ts`）から直接集める。
+ */
+export const knownPostStateLiterals = (): ReadonlySet<string> =>
+  new Set<string>([...postAwaitingReasons, ...postStatuses]);
 
 /** 本文全体の snake_case の語のうち、実在する tool 名でも Schema のリテラルでもないものを返す。dotted の camelCase は常に実在しない扱い。 */
 export const checkToolNames = (
@@ -272,7 +285,7 @@ export interface KnownNames {
 
 export const knownNames = (): KnownNames => ({
   cli: knownCliTree(),
-  literals: knownSchemaLiterals(),
+  literals: new Set([...knownSchemaLiterals(), ...knownPostStateLiterals()]),
   tags: knownFailureTags(),
   tools: knownToolNames(),
 });
