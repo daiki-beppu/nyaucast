@@ -12,6 +12,7 @@ import { CredentialStore } from "./auth/credential-store.ts";
 import { StaticSecrets } from "./auth/secrets.ts";
 import { BgmPool } from "./channel/bgm-pool.ts";
 import { ChannelSettings } from "./channel/channel-settings.ts";
+import { CloudflareEnvironment } from "./cloudflare/environment.ts";
 import { CollectionIds } from "./collections/collection-ids.ts";
 import { CollectionDirectories } from "./collections/directories.ts";
 import { LocalStore } from "./db/local-store.ts";
@@ -39,6 +40,8 @@ const channelRoot = process.cwd();
 const localStore = LocalStore.layer(pathToFileURL(`${channelRoot}/data/local.db`).href);
 // ホームディレクトリは、ここで 1 回だけ解決して各 Layer に渡す。
 const configRoot = join(homedir(), ".config", "nyaucast");
+// Cloudflare 環境の状態を見る CLI（issue #692）。environment.json / secrets.json は実行のたびに読む。
+const cloudflare = CloudflareEnvironment.layer({ configRoot });
 const thumbnailFiles = ThumbnailFiles.layer(channelRoot);
 const credentialStore = CredentialStore.layer({ credentialRoot: join(configRoot, "credentials") });
 const authDependencies = Layer.mergeAll(
@@ -152,7 +155,7 @@ const post = Layer.mergeAll(
 );
 
 Stdio.Stdio.use(({ args }) =>
-  Effect.flatMap(args, nyaucastCli({ auth: authServices, mcpServer, post, video })),
+  Effect.flatMap(args, nyaucastCli({ auth: authServices, cloudflare, mcpServer, post, video })),
 ).pipe(
   Effect.provide(NodeServices.layer),
   Effect.provideService(Logger.LogToStderr, true),

@@ -19,6 +19,7 @@ import {
   failureFacts,
   fakeSpawner,
   temporaryDirectory,
+  unusedCloudflareLayer,
   unusedPostLayer,
   unusedVideoLayer,
   writeJsonFile,
@@ -139,6 +140,7 @@ function runAuth(
     const outcome = yield* Effect.result(
       nyaucastCli({
         auth: layer,
+        cloudflare: unusedCloudflareLayer,
         mcpServer: Layer.empty,
         post: unusedPostLayer,
         video: unusedVideoLayer,

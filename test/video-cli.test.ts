@@ -30,6 +30,7 @@ import {
   selectAll,
   setClock,
   unusedAuthLayer,
+  unusedCloudflareLayer,
   unusedPostLayer,
 } from "./helpers.ts";
 import {
@@ -91,6 +92,7 @@ const runCli = (argv: string[]) =>
   runProgram(
     nyaucastCli({
       auth: unusedAuthLayer,
+      cloudflare: unusedCloudflareLayer,
       mcpServer: Layer.empty,
       post: unusedPostLayer,
       video: channelVideoLayer,

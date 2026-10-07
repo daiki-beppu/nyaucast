@@ -1,4 +1,4 @@
-import { Config, Context, Effect, Layer, Option, Schema, Stream } from "effect";
+import { Config, Context, Effect, FileSystem, Layer, Option, Path, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { fileServices } from "./account-key.ts";
@@ -20,20 +20,31 @@ export type StaticSecretsFailure = SecretNotConfigured | SecretResolutionFailed;
 /** secrets.json の形: シークレットの名前 → 1Password の参照（op://…）。値そのものは置かない。 */
 const SecretReferences = Schema.Record(Schema.String, Schema.String);
 
+/**
+ * secrets.json から、指定した名前の 1Password の参照（op://…）を読むだけの関数（`op read` による解決はしない）。
+ * ファイルが無い・読めない・形が違う・その名前が無いときは、参照が書かれていないものとして扱う（Option.none）。
+ * secrets.json の形の唯一の所有者。`StaticSecrets.resolve` と cloudflare の status（issue #692）が共有する。
+ */
+export const readSecretReference = (
+  fileSystem: FileSystem.FileSystem,
+  path: Path.Path,
+  configRoot: string,
+  name: string,
+): Effect.Effect<Option.Option<string>> =>
+  fileSystem.readFileString(path.join(configRoot, "secrets.json")).pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(SecretReferences))),
+    Effect.map((references) => Option.fromNullishOr(references[name])),
+    Effect.orElseSucceed(() => Option.none<string>()),
+  );
+
 const makeStaticSecrets = Effect.fnUntraced(function* (configRoot: string) {
   const { fileSystem, path } = yield* fileServices;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const referencesFile = path.join(configRoot, "secrets.json");
 
   const fromEnvironment = (name: string) => Config.option(Config.String(name)).pipe(Effect.orDie);
 
   // ファイルが無い・読めない・形が違うときは、参照が書かれていないものとして扱う。
-  const referenceFor = (name: string) =>
-    fileSystem.readFileString(referencesFile).pipe(
-      Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(SecretReferences))),
-      Effect.map((references) => Option.fromNullishOr(references[name])),
-      Effect.orElseSucceed(() => Option.none<string>()),
-    );
+  const referenceFor = (name: string) => readSecretReference(fileSystem, path, configRoot, name);
 
   // spawner.string は終了コードを見ない。0 以外で終わった出力は秘密として扱わない。
   const readFromOnePassword = (reference: string) =>

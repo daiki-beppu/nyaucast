@@ -154,6 +154,9 @@ export async function inspectInstalledPackage(): Promise<PackageSmokeResult> {
       stdio: "pipe",
     });
     const { responseFor, writeMessage } = createJsonRpcClient(server);
+    const stderr: string[] = [];
+    server.stderr.setEncoding("utf8");
+    server.stderr.on("data", (chunk: string) => stderr.push(chunk));
     try {
       writeMessage({
         id: 1,
@@ -189,6 +192,8 @@ export async function inspectInstalledPackage(): Promise<PackageSmokeResult> {
         packedPaths: report.files.map(({ path }) => path),
         toolNames: toolNamesFrom(listed.result),
       };
+    } catch (error) {
+      throw new Error(`installed MCP server failed\nstderr:\n${stderr.join("")}`, { cause: error });
     } finally {
       await stopChildProcess(server);
     }

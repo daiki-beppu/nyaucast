@@ -4,12 +4,19 @@ import { Effect, Layer } from "effect";
 
 import { nyaucastCli } from "../src/cli.ts";
 import { knownCliTree } from "./codec-support.ts";
-import { runProgram, unusedAuthLayer, unusedPostLayer, unusedVideoLayer } from "./helpers.ts";
+import {
+  runProgram,
+  unusedAuthLayer,
+  unusedCloudflareLayer,
+  unusedPostLayer,
+  unusedVideoLayer,
+} from "./helpers.ts";
 
 const runRoot = (arguments_: string[]) =>
   runProgram(
     nyaucastCli({
       auth: unusedAuthLayer,
+      cloudflare: unusedCloudflareLayer,
       mcpServer: Layer.empty,
       post: unusedPostLayer,
       video: unusedVideoLayer,
@@ -45,7 +52,7 @@ describe("nyaucast root command", () => {
         const { errors, outcome, stdout } = yield* runRoot(["collection", ...arguments_]);
 
         assert.strictEqual(outcome._tag, "Failure");
-        // video / auth / post の Layer は組まれない（組まれると notUsed の die になり、この失敗にならない）
+        // video / auth / post / cloudflare の Layer は組まれない（組まれると notUsed の die になり、この失敗にならない）
         assert.strictEqual((outcome as { failure: { _tag: string } }).failure._tag, "ShowHelp");
         assert.include(errors.join("\n"), 'Unknown subcommand "collection"');
         assert.notMatch(stdout, /^\s+collection\s/mu);
