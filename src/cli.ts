@@ -52,6 +52,7 @@ interface CliEnvironment<E2, R2, E3, R3, E4, R4, E5, R5, E6, R6> {
   // SNS のアダプタが使うもの（HTTP・Instagram の認証・静的なシークレット・X の client）を加えた集合。
   readonly post: Layer.Layer<
     | ChannelSettings
+    | CloudflareEnvironment
     | CredentialStore
     | DeclaredAccounts
     | HttpClient.HttpClient

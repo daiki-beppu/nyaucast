@@ -7,6 +7,7 @@ import type { AccountsDeclarationInvalid } from "../auth/accounts.ts";
 import { CredentialStore, type CredentialStoreFailure } from "../auth/credential-store.ts";
 import { DeclaredAccounts } from "../auth/declared-accounts.ts";
 import type { StaticSecrets } from "../auth/secrets.ts";
+import type { CloudflareEnvironment } from "../cloudflare/environment.ts";
 import {
   acquireAttempt,
   appendAttemptResult,
@@ -31,6 +32,7 @@ import { derivePostState, isPastYouTubeSchedule, toLastAttemptInput } from "./po
 
 /** 投稿の実行がアダプタまで通すために要るサービス（`post run` と `post run-now` が共有する）。 */
 export type PostRunServices =
+  | CloudflareEnvironment
   | CredentialStore
   | DeclaredAccounts
   | HttpClient.HttpClient

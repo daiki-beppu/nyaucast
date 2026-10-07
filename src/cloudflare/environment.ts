@@ -14,6 +14,13 @@ export class CloudflareEnvironmentInvalid extends Schema.TaggedError<CloudflareE
   { path: Schema.String },
 ) {}
 
+// environment.json が無い（`nyaucast cloudflare` で Cloudflare 環境をまだ作っていない）。R2 を使う
+// 経路（Instagram の投稿。issue #757）が、未作成を事実として返すための失敗。status は未作成を成功で表す。
+export class CloudflareEnvironmentNotCreated extends Schema.TaggedError<CloudflareEnvironmentNotCreated>()(
+  "CloudflareEnvironmentNotCreated",
+  {},
+) {}
+
 export class CloudflareAccessKeyReferenceInvalid extends Schema.TaggedError<CloudflareAccessKeyReferenceInvalid>()(
   "CloudflareAccessKeyReferenceInvalid",
   { path: Schema.String },

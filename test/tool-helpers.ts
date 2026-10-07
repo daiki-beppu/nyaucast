@@ -9,6 +9,7 @@ import { CredentialStore } from "../src/auth/credential-store.ts";
 import { DeclaredAccounts } from "../src/auth/declared-accounts.ts";
 import { BgmPool } from "../src/channel/bgm-pool.ts";
 import { CollectionIds } from "../src/collections/collection-ids.ts";
+import { CloudflareEnvironment } from "../src/cloudflare/environment.ts";
 import { CollectionDirectories } from "../src/collections/directories.ts";
 import { Chrome, chromeCacheDirectory } from "../src/lib/chrome.ts";
 import {
@@ -107,6 +108,7 @@ export interface ToolChannelOptions {
 /**
  * `ExplainerToolHandlers` と `CollectionToolHandlers` が要求する service をすべてテスト用に揃えて use を動かす。
  * 一時ディレクトリの実ファイルの libSQL、実ファイルの成果物の置き場、偽の HttpClient と静的シークレット、偽の子プロセス。
+ * Cloudflare 環境は、チャンネルルートを設定の置き場として読む本物（既定では environment.json が無く、未作成）。
  * 外部への実通信と本物の子プロセスは起きない。
  */
 export const withToolChannel = <A, E, R>(
@@ -127,6 +129,9 @@ export const withToolChannel = <A, E, R>(
           Effect.provide(
             Layer.mergeAll(
               BgmPool.layer(channelRoot),
+              CloudflareEnvironment.layer({ configRoot: channelRoot }).pipe(
+                Layer.provide(NodeServices.layer),
+              ),
               CollectionDirectories.layer(channelRoot),
               CredentialStore.layer({ credentialRoot }).pipe(Layer.provide(NodeServices.layer)),
               DeclaredAccounts.layer(channelRoot),

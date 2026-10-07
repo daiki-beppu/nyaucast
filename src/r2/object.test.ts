@@ -1,11 +1,18 @@
 import { createHash } from "node:crypto";
+import { join } from "node:path";
 
 import { NodeServices } from "@effect/platform-node";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import { HttpClient } from "effect/http";
 
-import { environment, fakeSpawner } from "../../test/helpers.ts";
+import {
+  environment,
+  failureFacts,
+  fakeSpawner,
+  temporaryDirectory,
+  writeJsonFile,
+} from "../../test/helpers.ts";
 import {
   bodyReadingHttpClient,
   readerFailingOnCall,
@@ -13,6 +20,7 @@ import {
 } from "../../test/r2-fake.ts";
 import { fakeHttp } from "../../test/sns-api.ts";
 import { StaticSecrets } from "../auth/secrets.ts";
+import { CloudflareEnvironment } from "../cloudflare/environment.ts";
 import { uploadChunkBytes } from "../videos/video-files.ts";
 import {
   deleteObject,
@@ -22,71 +30,112 @@ import {
   type R2Config,
 } from "./object.ts";
 
-// 契約（issue #555 の計画 C3・C4・D1・D6、SCN-C3-P1・N1）:
-//   resolveR2Config は、R2 の account ID・bucket・アクセスキー ID・シークレットアクセスキーの 4 つを
-//   `StaticSecrets` で固定の 4 つの名前（NYAUCAST_R2_ACCOUNT_ID・NYAUCAST_R2_BUCKET・
-//   NYAUCAST_R2_ACCESS_KEY_ID・NYAUCAST_R2_SECRET_ACCESS_KEY）から解決する境界。1 つでも欠ければ、
-//   その名前を持つ SecretNotConfigured で失敗する。
+// 契約（issue #757・ADR-0012 決定 9。putObject/deleteObject は issue #555 の計画 C3・D1・D6）:
+//   resolveR2Config は、アカウント ID と bucket 名を Cloudflare 環境の写し（environment.json）から、
+//   アクセスキーの組を `StaticSecrets` で `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` から解決する境界。
+//   environment.json が無ければ、Cloudflare 環境が未作成であることを示す
+//   CloudflareEnvironmentNotCreated で失敗する。アクセスキーが欠ければ、その名前を持つ
+//   SecretNotConfigured で失敗する。
 //   putObject/deleteObject は、呼び出し側が渡した key だけを対象にする（SigV4 自体の正しさは
 //   src/r2/signature.test.ts が確認済みなので、ここでは host・path・method と、ヘッダー署名が
 //   実際に使われていること、2 つの異なるキーの削除が互いに干渉しないことを確認する）。
 
-const r2Names = {
-  accessKeyId: "NYAUCAST_R2_ACCESS_KEY_ID",
-  accountId: "NYAUCAST_R2_ACCOUNT_ID",
-  bucket: "NYAUCAST_R2_BUCKET",
-  secretAccessKey: "NYAUCAST_R2_SECRET_ACCESS_KEY",
-} as const;
+const accessKeyNames = ["R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"] as const;
 
-const validR2Env = {
-  NYAUCAST_R2_ACCESS_KEY_ID: "ACCESS_KEY_ID_SENTINEL",
-  NYAUCAST_R2_ACCOUNT_ID: "accountid0123456789",
-  NYAUCAST_R2_BUCKET: "nyaucast-media",
-  NYAUCAST_R2_SECRET_ACCESS_KEY: "SECRET_ACCESS_KEY_SENTINEL",
+const validAccessKeyEnv = {
+  R2_ACCESS_KEY_ID: "ACCESS_KEY_ID_SENTINEL",
+  R2_SECRET_ACCESS_KEY: "SECRET_ACCESS_KEY_SENTINEL",
 };
 
-// StaticSecrets は configRoot/secrets.json を読むが、環境変数が先に読まれるのでこのテストでは
-// 存在しないパスで構わない(StaticSecrets.resolve は環境変数で解決し、ファイルへ進まない)。
-// `op` の偽物は、環境変数の経路だけを通ることを保証するために「呼ばれたら 1 で終わる」ものを渡す。
-const staticSecretsLayer = StaticSecrets.layer({
-  configRoot: "/nonexistent-nyaucast-config-root",
-}).pipe(
-  Layer.provide(fakeSpawner({ exitCode: 1, stdout: "" }).layer),
-  Layer.provide(NodeServices.layer),
-);
+const writeEnvironmentFile = (configRoot: string) =>
+  writeJsonFile(join(configRoot, "cloudflare", "environment.json"), {
+    accountId: "accountid0123456789",
+    bucket: "nyaucast-media",
+  });
 
-const resolveWith = (env: Record<string, string>) =>
+// アクセスキーは環境変数の段で解決させる（secrets.json は置かない）。`op` の偽物は、
+// 1Password の段へ進まないことを保証するために「呼ばれたら 1 で終わる」ものを渡す。
+const failure = (result: { _tag: string; failure?: unknown }) => {
+  assert.strictEqual(result._tag, "Failure");
+  return result.failure;
+};
+
+const resolveWith = (configRoot: string, env: Record<string, string>) =>
   Effect.result(resolveR2Config).pipe(
-    Effect.provide(Layer.mergeAll(staticSecretsLayer, environment(env))),
+    Effect.provide(
+      Layer.mergeAll(
+        StaticSecrets.layer({ configRoot }).pipe(
+          Layer.provide(fakeSpawner({ exitCode: 1, stdout: "" }).layer),
+          Layer.provide(NodeServices.layer),
+        ),
+        CloudflareEnvironment.layer({ configRoot }).pipe(Layer.provide(NodeServices.layer)),
+        environment(env),
+      ),
+    ),
   );
 
-describe("resolveR2Config: C4 - the 4 values are resolved from StaticSecrets by fixed names", () => {
-  it.effect("resolves all 4 values from the environment", () =>
+describe("resolveR2Config: the account and bucket come from environment.json, the access key from R2_* static secrets", () => {
+  it.effect(
+    "resolves the account ID and bucket from environment.json and the access key pair from R2_*",
+    () =>
+      Effect.gen(function* () {
+        const configRoot = yield* temporaryDirectory("nyaucast-r2-config-");
+        writeEnvironmentFile(configRoot);
+
+        const result = yield* resolveWith(configRoot, validAccessKeyEnv);
+
+        assert.strictEqual(result._tag, "Success");
+        assert.deepStrictEqual(result._tag === "Success" ? result.success : undefined, {
+          accessKeyId: "ACCESS_KEY_ID_SENTINEL",
+          accountId: "accountid0123456789",
+          bucket: "nyaucast-media",
+          secretAccessKey: "SECRET_ACCESS_KEY_SENTINEL",
+        });
+      }),
+  );
+
+  it.effect("fails with CloudflareEnvironmentNotCreated when environment.json does not exist", () =>
     Effect.gen(function* () {
-      const result = yield* resolveWith(validR2Env);
-      assert.strictEqual(result._tag, "Success");
-      assert.deepStrictEqual(result._tag === "Success" ? result.success : undefined, {
-        accessKeyId: "ACCESS_KEY_ID_SENTINEL",
-        accountId: "accountid0123456789",
-        bucket: "nyaucast-media",
-        secretAccessKey: "SECRET_ACCESS_KEY_SENTINEL",
+      const configRoot = yield* temporaryDirectory("nyaucast-r2-config-missing-");
+
+      const result = yield* resolveWith(configRoot, validAccessKeyEnv);
+
+      assert.deepStrictEqual(failureFacts(failure(result)), {
+        _tag: "CloudflareEnvironmentNotCreated",
       });
     }),
   );
 
-  it.effect.each(Object.entries(r2Names))(
-    "fails with SecretNotConfigured naming %s when that one name is missing",
-    ([, missingName]) =>
+  it.effect("fails with CloudflareEnvironmentInvalid when environment.json is broken", () =>
+    Effect.gen(function* () {
+      const configRoot = yield* temporaryDirectory("nyaucast-r2-config-invalid-");
+      const path = join(configRoot, "cloudflare", "environment.json");
+      writeJsonFile(path, { bucket: "nyaucast-media" });
+
+      const result = yield* resolveWith(configRoot, validAccessKeyEnv);
+
+      assert.deepStrictEqual(failureFacts(failure(result)), {
+        _tag: "CloudflareEnvironmentInvalid",
+        path,
+      });
+    }),
+  );
+
+  it.effect.each(accessKeyNames)(
+    "fails with SecretNotConfigured naming %s when that access key is missing",
+    (missingName) =>
       Effect.gen(function* () {
-        const env = { ...validR2Env };
-        delete (env as Record<string, string>)[missingName];
+        const configRoot = yield* temporaryDirectory("nyaucast-r2-config-key-");
+        writeEnvironmentFile(configRoot);
+        const env: Record<string, string> = { ...validAccessKeyEnv };
+        delete env[missingName];
 
-        const result = yield* resolveWith(env);
+        const result = yield* resolveWith(configRoot, env);
 
-        assert.strictEqual(result._tag, "Failure");
-        const failure = result._tag === "Failure" ? result.failure : undefined;
-        assert.strictEqual((failure as { _tag?: string } | undefined)?._tag, "SecretNotConfigured");
-        assert.strictEqual((failure as { name?: string } | undefined)?.name, missingName);
+        assert.deepStrictEqual(failureFacts(failure(result)), {
+          _tag: "SecretNotConfigured",
+          name: missingName,
+        });
       }),
   );
 });

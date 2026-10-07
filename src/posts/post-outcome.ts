@@ -1,4 +1,5 @@
 import type { AdapterFailure } from "../auth/adapter.ts";
+import type { R2ConfigFailure } from "../r2/object.ts";
 import type { InstagramPostFailure } from "../instagram/post-adapter.ts";
 import type { ThumbnailReadFailed } from "../youtube/post-adapter.ts";
 import type { ChunkReadFailed } from "../videos/video-files.ts";
@@ -14,6 +15,8 @@ export type PostFailureCategory = "permanent" | "temporary";
  * 投稿のアダプタの経路に届く失敗。`AdapterFailure`（認証・静的なシークレット）は YouTube の
  * `YouTubeClientFailure` にも含まれるが、Instagram の経路（`InstagramAuth.getAccessToken` と
  * `resolveR2Config`）からも同じ形で届くため、ここに明示して分類の対象であることを示す。
+ * `resolveR2Config` は、Cloudflare 環境が未作成・壊れているときの失敗（`R2ConfigFailure`）も運ぶ。
+ * これらは静的なシークレットが無いときと同じく、既定の分岐（恒久的・アカウントを止める）に入る。
  * X の経路（#556）は、送信前処理の投稿文の検査（`InvalidPostText`）と、`XClient.send` と
  * メディアアップロードの失敗を運ぶ。
  */
@@ -22,6 +25,7 @@ export type PostAdapterFailure =
   | ChunkReadFailed
   | InstagramPostFailure
   | InvalidPostText
+  | R2ConfigFailure
   | ResumableUploadFailed
   | ThumbnailReadFailed
   | XClientFailure
@@ -138,6 +142,6 @@ export const classifyPostFailure = (failure: PostAdapterFailure): ClassifiedPost
   if (noStopPermanentTags.has(failure._tag)) {
     return { category: "permanent", stopAccount: false };
   }
-  // 残りは認証・更新の失敗（AdapterFailure）。そのアカウントの残りを試さない。
+  // 残りは認証・更新の失敗（AdapterFailure）と R2 の設定の失敗（R2ConfigFailure）。そのアカウントの残りを試さない。
   return { category: "permanent", stopAccount: true };
 };

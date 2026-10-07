@@ -40,7 +40,8 @@ const channelRoot = process.cwd();
 const localStore = LocalStore.layer(pathToFileURL(`${channelRoot}/data/local.db`).href);
 // ホームディレクトリは、ここで 1 回だけ解決して各 Layer に渡す。
 const configRoot = join(homedir(), ".config", "nyaucast");
-// Cloudflare 環境の状態を見る CLI（issue #692）。environment.json / secrets.json は実行のたびに読む。
+// Cloudflare 環境の読み取りの口。状態を見る CLI（issue #692）と、R2 の 4 値を解決する投稿（issue #757）が使う。
+// environment.json / secrets.json は実行のたびに読む。
 const cloudflare = CloudflareEnvironment.layer({ configRoot });
 const thumbnailFiles = ThumbnailFiles.layer(channelRoot);
 const credentialStore = CredentialStore.layer({ credentialRoot: join(configRoot, "credentials") });
@@ -140,7 +141,7 @@ const xClient = XClient.layer.pipe(
   Layer.provide(authDependencies),
 );
 // Instagram のアダプタ（issue #555）が使うもの: Graph API と R2 への HTTP、長期トークンの解決、
-// R2 の 4 値を解決する静的なシークレット。
+// R2 のアクセスキーを解決する静的なシークレット、アカウント ID と bucket 名を読む Cloudflare 環境（issue #757）。
 const post = Layer.mergeAll(
   localStore,
   ChannelSettings.layer(channelRoot),
@@ -151,6 +152,7 @@ const post = Layer.mergeAll(
   youtubeClient,
   InstagramAuth.layerProduction.pipe(Layer.provide(authDependencies)),
   StaticSecrets.layer({ configRoot }),
+  cloudflare,
   NodeHttpClient.layerUndici,
 );
 

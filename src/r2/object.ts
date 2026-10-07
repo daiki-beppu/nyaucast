@@ -1,9 +1,14 @@
 import { createHash } from "node:crypto";
 
-import { Clock, Effect, Ref, Schema, Stream } from "effect";
+import { Clock, Effect, Option, Ref, Schema, Stream } from "effect";
 import { HttpBody, HttpClient, HttpClientRequest } from "effect/http";
 
 import { StaticSecrets, type StaticSecretsFailure } from "../auth/secrets.ts";
+import {
+  CloudflareEnvironment,
+  type CloudflareEnvironmentInvalid,
+  CloudflareEnvironmentNotCreated,
+} from "../cloudflare/environment.ts";
 import { type FileReader, readUploadChunk, uploadChunkBytes } from "../videos/video-files.ts";
 import { encodePath, type R2Method, presignUrl, signHeaders } from "./signature.ts";
 
@@ -13,11 +18,10 @@ import { encodePath, type R2Method, presignUrl, signHeaders } from "./signature.
  * 公開 ACL の操作は持たない（issue #555 決定 4 行目。この差分は署名付き URL の経路までとする）。
  */
 
-// 4 つの名前は issue #555 決定 5 行目が固定した。静的なシークレットの仕組み（StaticSecrets）だけが解決する。
-const accessKeyIdName = "NYAUCAST_R2_ACCESS_KEY_ID";
-const accountIdName = "NYAUCAST_R2_ACCOUNT_ID";
-const bucketName = "NYAUCAST_R2_BUCKET";
-const secretAccessKeyName = "NYAUCAST_R2_SECRET_ACCESS_KEY";
+// アクセスキーの組の名前は ADR-0012 決定 9 が固定した（issue #757）。静的なシークレットの仕組み
+// （StaticSecrets）だけが解決する。アカウント ID と bucket 名は Cloudflare 環境の写し（environment.json）から読む。
+const accessKeyIdName = "R2_ACCESS_KEY_ID";
+const secretAccessKeyName = "R2_SECRET_ACCESS_KEY";
 
 // R2 は region を持たないので、S3 互換の署名では "auto" を使う。
 const region = "auto";
@@ -55,17 +59,33 @@ export interface R2Config {
   readonly secretAccessKey: string;
 }
 
-/** R2 の 4 値を、同じ名前の環境変数 → `secrets.json` の 1Password の参照の順で解決する境界。 */
-export const resolveR2Config: Effect.Effect<R2Config, StaticSecretsFailure, StaticSecrets> =
-  Effect.gen(function* () {
-    const secrets = yield* StaticSecrets;
-    return {
-      accessKeyId: yield* secrets.resolve(accessKeyIdName),
-      accountId: yield* secrets.resolve(accountIdName),
-      bucket: yield* secrets.resolve(bucketName),
-      secretAccessKey: yield* secrets.resolve(secretAccessKeyName),
-    };
-  });
+export type R2ConfigFailure =
+  | CloudflareEnvironmentInvalid
+  | CloudflareEnvironmentNotCreated
+  | StaticSecretsFailure;
+
+/**
+ * R2 の 4 値を解決する境界（ADR-0012 決定 9・issue #757）。アカウント ID と bucket 名は environment.json
+ * から、アクセスキーの組は `StaticSecrets`（環境変数 → `secrets.json` の参照 → environment.json の
+ * 秘密のブロック）から読む。environment.json が無ければ、Cloudflare 環境が未作成として失敗する。
+ */
+export const resolveR2Config: Effect.Effect<
+  R2Config,
+  R2ConfigFailure,
+  CloudflareEnvironment | StaticSecrets
+> = Effect.gen(function* () {
+  const environment = yield* (yield* CloudflareEnvironment).read;
+  if (Option.isNone(environment)) {
+    return yield* new CloudflareEnvironmentNotCreated();
+  }
+  const secrets = yield* StaticSecrets;
+  return {
+    accessKeyId: yield* secrets.resolve(accessKeyIdName),
+    accountId: environment.value.accountId,
+    bucket: environment.value.bucket,
+    secretAccessKey: yield* secrets.resolve(secretAccessKeyName),
+  };
+});
 
 /** host・パス・region・service を組む唯一の場所。presign と header 署名が同じ値を共有する。 */
 const signingBase = (config: R2Config, method: R2Method, key: string, now: Date) => ({

@@ -13,7 +13,7 @@ import {
   mediaPublishUrl,
   r2KeyFor,
   r2ObjectUrl,
-  r2SecretsLayer,
+  r2ConfigLayer,
   statusSequence,
 } from "../../test/instagram-fake.ts";
 import { declareAccounts } from "../../test/post-draft-helpers.ts";
@@ -1671,7 +1671,7 @@ describe("runDuePosts: C10 - a due Instagram post is no longer skipped with no_a
 
           const outcomes = yield* runDuePosts(60).pipe(
             Effect.provide(unusedYouTubeClientLayer),
-            Effect.provide(r2SecretsLayer(channelRoot)),
+            Effect.provide(r2ConfigLayer(channelRoot)),
             Effect.provide(fixture.layer),
           );
 
@@ -1731,7 +1731,7 @@ describe("runDuePosts: C7 - Instagram's Graph API failures are classified the sa
 
           const outcomes = yield* runDuePosts(60).pipe(
             Effect.provide(unusedYouTubeClientLayer),
-            Effect.provide(r2SecretsLayer(channelRoot)),
+            Effect.provide(r2ConfigLayer(channelRoot)),
             Effect.provide(fixture.layer),
           );
 
@@ -1762,7 +1762,7 @@ describe("runDuePosts: C7 - Instagram's Graph API failures are classified the sa
 
           const outcomes = yield* runDuePosts(60).pipe(
             Effect.provide(unusedYouTubeClientLayer),
-            Effect.provide(r2SecretsLayer(channelRoot)),
+            Effect.provide(r2ConfigLayer(channelRoot)),
             Effect.provide(fixture.layer),
           );
 
@@ -1795,7 +1795,7 @@ describe("runDuePosts: C7 - Instagram's Graph API failures are classified the sa
 
         const outcomes = yield* runDuePosts(60).pipe(
           Effect.provide(unusedYouTubeClientLayer),
-          Effect.provide(r2SecretsLayer(channelRoot)),
+          Effect.provide(r2ConfigLayer(channelRoot)),
           Effect.provide(fixture.layer),
         );
 
@@ -1822,7 +1822,7 @@ describe("runDuePosts: C7 - Instagram's Graph API failures are classified the sa
 
         const outcomes = yield* runDuePosts(60).pipe(
           Effect.provide(unusedYouTubeClientLayer),
-          Effect.provide(r2SecretsLayer(channelRoot)),
+          Effect.provide(r2ConfigLayer(channelRoot)),
           Effect.provide(fixture.layer),
         );
 
@@ -1833,6 +1833,34 @@ describe("runDuePosts: C7 - Instagram's Graph API failures are classified the sa
         assert.strictEqual(result?.["outcome"], "permanent");
       }),
     ),
+  );
+
+  // issue #757: R2 のアカウント ID と bucket 名は environment.json から読む。Cloudflare 環境を
+  // まだ作っていない（environment.json が無い）ときは、R2 にも Graph API にも触れずに、未作成を示す
+  // タグの恒久的な失敗として記録する。
+  it.effect(
+    "records a permanent CloudflareEnvironmentNotCreated without any request when environment.json is missing",
+    () =>
+      inPostsChannel("nyaucast-due-posts-instagram-no-cloudflare-", ["instagram"], () =>
+        Effect.gen(function* () {
+          yield* prepareVideoFacts(longCut);
+          const postId = yield* insertPost({ platform: "instagram" });
+          yield* setClock(defaultScheduledAt);
+          const fixture = fakeHttp({});
+
+          const outcomes = yield* runDuePosts(60).pipe(
+            Effect.provide(unusedYouTubeClientLayer),
+            Effect.provide(fixture.layer),
+          );
+
+          assert.deepStrictEqual(outcomes, [
+            { kind: "permanent", postId, tag: "CloudflareEnvironmentNotCreated" },
+          ]);
+          assert.strictEqual(fixture.requests.length, 0);
+          const [result] = yield* attemptResultRows;
+          assert.strictEqual(result?.["outcome"], "permanent");
+        }),
+      ),
   );
 
   // Graph API は同じ HTTP status を別の原因で使い回す(403 が利用制限にも権限エラーにも、400 が認証の
@@ -1871,7 +1899,7 @@ describe("runDuePosts: C7 - Instagram's Graph API failures are classified the sa
 
             const outcomes = yield* runDuePosts(60).pipe(
               Effect.provide(unusedYouTubeClientLayer),
-              Effect.provide(r2SecretsLayer(channelRoot)),
+              Effect.provide(r2ConfigLayer(channelRoot)),
               Effect.provide(fixture.layer),
             );
 
@@ -1919,7 +1947,7 @@ describe("runDuePosts: C7 - Instagram's Graph API failures are classified the sa
 
           const outcomes = yield* runDuePosts(60).pipe(
             Effect.provide(unusedYouTubeClientLayer),
-            Effect.provide(r2SecretsLayer(channelRoot)),
+            Effect.provide(r2ConfigLayer(channelRoot)),
             Effect.provide(fixture.layer),
           );
 
@@ -1963,7 +1991,7 @@ describe("runDuePosts: C7 - Instagram's Graph API failures are classified the sa
 
             const outcomes = yield* runDuePosts(60).pipe(
               Effect.provide(unusedYouTubeClientLayer),
-              Effect.provide(r2SecretsLayer(channelRoot)),
+              Effect.provide(r2ConfigLayer(channelRoot)),
               Effect.provide(fixture.layer),
             );
 
@@ -2018,7 +2046,7 @@ describe("runDuePosts: C6/AC3 - a permanent container status is recorded as a pe
 
             const outcomes = yield* runDuePosts(60).pipe(
               Effect.provide(unusedYouTubeClientLayer),
-              Effect.provide(r2SecretsLayer(channelRoot)),
+              Effect.provide(r2ConfigLayer(channelRoot)),
               Effect.provide(fixture.layer),
             );
 
@@ -2084,7 +2112,7 @@ describe("runDuePosts: D5 - exceeding the polling limit is recorded as a tempora
           const fiber = yield* Effect.forkChild(
             runDuePosts(60).pipe(
               Effect.provide(unusedYouTubeClientLayer),
-              Effect.provide(r2SecretsLayer(channelRoot)),
+              Effect.provide(r2ConfigLayer(channelRoot)),
               Effect.provide(fixture.layer),
             ),
           );
