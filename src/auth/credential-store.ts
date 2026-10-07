@@ -1,6 +1,6 @@
-import { randomUUID } from "node:crypto";
+import { Clock, Context, Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
 
-import { Clock, Context, Effect, Layer, Option, Schema } from "effect";
+import { writePrivateFileAtomically } from "../files/private-atomic-write.ts";
 
 import {
   InvalidChannel,
@@ -61,7 +61,7 @@ export class CredentialStore extends Context.Service<
           requireChannel(channel).pipe(
             Effect.map((name) => {
               const directory = path.join(credentialRoot, name);
-              return { directory, file: path.join(directory, `${platform}.json`) };
+              return { file: path.join(directory, `${platform}.json`) };
             }),
           );
 
@@ -92,21 +92,14 @@ export class CredentialStore extends Context.Service<
           platform: Platform,
           credential: StoredCredential,
         ) {
-          const { directory, file } = yield* locate(channel, platform);
-          const temporary = path.join(directory, `.token-${randomUUID()}.tmp`);
-          yield* Effect.gen(function* () {
-            yield* fileSystem.makeDirectory(directory, { mode: 0o700, recursive: true });
-            yield* fileSystem.writeFileString(
-              temporary,
-              `${JSON.stringify(credential, undefined, 2)}\n`,
-              { flag: "wx", mode: 0o600 },
-            );
-            yield* fileSystem.rename(temporary, file);
-          }).pipe(
+          const { file } = yield* locate(channel, platform);
+          yield* writePrivateFileAtomically(
+            file,
+            `${JSON.stringify(credential, undefined, 2)}\n`,
+          ).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
             Effect.mapError(() => new CredentialSaveFailed({ channel, platform })),
-            Effect.tapError(() =>
-              fileSystem.remove(temporary, { force: true }).pipe(Effect.ignore),
-            ),
           );
         });
 
