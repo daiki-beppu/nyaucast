@@ -57,6 +57,7 @@ function jobSteps(job: JsonRecord): WorkflowStep[] {
 }
 
 const enforcedFallowRules = [
+  "unused-dependencies",
   "unused-dev-dependencies",
   "unused-optional-dependencies",
   "type-only-dependencies",
@@ -238,6 +239,11 @@ describe("K1 three identical check surfaces", () => {
     ).not.toHaveLength(0);
   });
 
+  // ADR-0012 決定 7 は alchemy を、Alchemy を呼ぶコードより先に dependencies へ入れると決めた（#694）。
+  // 呼ぶ側が無い間は unused-dependency が必ず当たるので、この 1 件だけを例外として宣言する。
+  // Alchemy を import する ticket では、.fallowrc.json の ignoreDependencies とこの集合から同時に外す。
+  const fallowSilencedRuntimeDependencies = ["alchemy"];
+
   test("runtime dependencies cannot be silenced through fallow", () => {
     const manifest = readJson(join(packageRoot, "package.json"));
     const fallow = readJson(join(packageRoot, ".fallowrc.json"));
@@ -251,7 +257,11 @@ describe("K1 three identical check surfaces", () => {
       throw new TypeError("ignoreDependencies must be an array");
     }
 
-    expect(dependencies.filter((dependency) => ignored.includes(dependency))).toEqual([]);
+    // 完全一致で比べる。部分一致にすると 2 件目を黙らせても気付けない
+    expect(
+      dependencies.filter((dependency) => ignored.includes(dependency)).toSorted(),
+      "宣言した 1 件以外の runtime 依存は、使う側を足して直す",
+    ).toEqual(fallowSilencedRuntimeDependencies.toSorted());
   });
 
   // semantic モードは識別子を同一視するので、Effect の定型（Tool.make・Context.Service・

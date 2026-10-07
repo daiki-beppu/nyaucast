@@ -1,3 +1,5 @@
 Copyright 2026 daiki-beppu
 
 nyaucast のソースは Apache-2.0 で提供する。実行には GPLv3 でライセンスされた node-av（libx264 を含むビルド）が必要で、nyaucast を node-av と一緒に頒布・実行する場合、全体は GPLv3 の条件に従う。
+
+nyaucast の依存には、LGPL-3.0 でライセンスされた sharp-libvips（libvips のビルド）が推移的な依存として同梱される。nyaucast 自身のライセンスは Apache-2.0 のままである。
