@@ -3,6 +3,7 @@
 - 調査日: 2026-07-23（issue #44）
 - 調査方法: npm registry API・パッケージ tarball の実コード読解・Node v25.4 での実測（EBU Tech 3341 相当のテスト信号 + 1 時間スケールの性能計測）・ITU/EBU/ffmpeg/GitHub の一次情報。二次記事は不使用
 - 前提: ランタイムは Bun（WebCodecs / AudioWorklet / Web Audio API なし、オフライン処理）。WASM 同梱は可、ネイティブバイナリは不可
+- その後の決定: true peak の測定は、本調査が挙げる `lufs-web` / `ebur128-wasm` を使わず、`src/audio/loudness.ts` の自前の `truePeak`（BS.1770-4 Annex 2 の 4 倍オーバーサンプリング）で行う（ADR-0005 決定 2、#688）。以下の true peak の記述は調査時点の候補として残す
 - 注意: 本機に Bun が未導入のため、実行検証は Node v25.4 で実施した（純 ESM・Node API 非依存のパッケージは Bun でも同一に動く前提。WASM の Bun 固有問題は §1.3 参照）
 
 ## 結論サマリ
