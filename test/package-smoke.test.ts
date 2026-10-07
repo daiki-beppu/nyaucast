@@ -42,6 +42,11 @@ describe("K3 package smoke", () => {
         "skills/explainer-lifecycle/references/plan.md",
         "skills/explainer-lifecycle/references/produce.md",
         "skills/explainer-lifecycle/references/failures.md",
+        // distribution codec（issue #558）も同じ 2 段の相対 symlink 越しに読める
+        "skills/distribution/SKILL.md",
+        "skills/distribution/references/drafts.md",
+        "skills/distribution/references/publish.md",
+        "skills/distribution/references/failures.md",
       ]),
     );
     const shippedSkill = readFileSync(

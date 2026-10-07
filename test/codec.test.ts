@@ -3,12 +3,14 @@ import { join } from "node:path";
 
 import { describe, expect, test } from "@effect/vitest";
 
+import { postAwaitingReasons } from "../src/posts/post-state.ts";
 import {
   checkCliCommands,
   checkCodecs,
   checkFailureTags,
   checkFrontmatter,
   checkToolNames,
+  firstColumnCodesOfTable,
   knownNames,
   skillsRootOfPackage,
 } from "./codec-support.ts";
@@ -16,6 +18,19 @@ import { withTemporaryDirectory } from "./helpers.ts";
 
 const known = knownNames();
 const codecName = "explainer-lifecycle";
+
+// ---- 出荷済み codec の共通アサーション(D2)。explainer-lifecycle と distribution は同じ形で検査する。 ----
+
+const expectReferenceFilesReadable = (skillRoot: string, referenceFiles: readonly string[]) => {
+  for (const file of ["SKILL.md", ...referenceFiles]) {
+    expect(() => readFileSync(join(skillRoot, file), "utf8")).not.toThrow();
+  }
+};
+
+const expectSelfContained = (skillRoot: string) => {
+  const entry = readFileSync(join(skillRoot, "SKILL.md"), "utf8");
+  expect(entry).not.toMatch(/docs\//);
+};
 
 const validFrontmatter = `---\nname: ${codecName}\ndescription: 解説動画を企画する\n---\n\n# body\n`;
 
@@ -35,6 +50,45 @@ describe("known names come from the real definitions", () => {
     expect(known.tags.has("ChromeUnavailable")).toBe(true);
     // CLI だけが出す失敗も拾う
     expect(known.tags.has("ThumbnailSelectionRequired")).toBe(true);
+    // 確認待ちの理由と投稿の状態は、Schema.Literals(postAwaitingReasons) のような変数渡しでは
+    // 正規表現が拾えないため、post-state.ts の実物の配列から直接合流する(C11)。
+    expect(known.literals.has("tolerance_exceeded")).toBe(true);
+    expect(known.literals.has("awaiting_check")).toBe(true);
+  });
+});
+
+describe("post state literals (confirmation-pending reasons and post statuses)", () => {
+  test("every literal is recognized as a known name wherever it is written in markdown", () => {
+    const text = [
+      "`tolerance_exceeded` になったら人間に確かめてもらう。",
+      "publication_unconfirmed という理由もある。",
+      "| 理由 |",
+      "| --- |",
+      "| account_mismatch |",
+      "```",
+      "awaiting_check",
+      "```",
+    ].join("\n");
+    expect(checkToolNames(text, known.tools, known.literals)).toEqual([]);
+  });
+
+  test("a typo of a post state literal is still a violation in every position, while the correct spelling and a neighboring literal are not", () => {
+    const text = [
+      "地の文の tolerance_exceded は綴り違い。",
+      "`tolerance_exceded`",
+      "```",
+      "tolerance_exceded",
+      "```",
+      "~~~",
+      "tolerance_exceded",
+      "~~~",
+      "| 理由 | `tolerance_exceded` |",
+      "正しい綴りの tolerance_exceeded と `account_mismatch` は違反にならない。",
+    ].join("\n");
+    const violations = checkToolNames(text, known.tools, known.literals);
+    expect(violations.filter((name) => name === "tolerance_exceded")).toHaveLength(5);
+    expect(violations).not.toContain("tolerance_exceeded");
+    expect(violations).not.toContain("account_mismatch");
   });
 });
 
@@ -204,22 +258,24 @@ describe("skills directory", () => {
   });
 });
 
-describe("the shipped explainer-lifecycle codec", () => {
-  test("has no violations", () => {
+// U3: skills/ 直下に置かれた出荷済み codec 全体を 1 件で検査する。per-codec への絞り込みは行わない
+// (絞り込むと skills/ 直下の layout 違反が両 codec のテストから脱落する)。
+describe("the shipped skills directory", () => {
+  test("has no violations across every shipped codec", () => {
     expect(checkCodecs(skillsRootOfPackage, known)).toEqual([]);
   });
+});
+
+describe("the shipped explainer-lifecycle codec", () => {
+  const skillRoot = join(skillsRootOfPackage, codecName);
+  const referenceFiles = ["references/plan.md", "references/produce.md", "references/failures.md"];
 
   test("has an entry point and one reference per section", () => {
-    for (const file of ["SKILL.md", "references/plan.md", "references/produce.md"]) {
-      expect(() => readFileSync(join(skillsRootOfPackage, codecName, file), "utf8")).not.toThrow();
-    }
-    expect(() =>
-      readFileSync(join(skillsRootOfPackage, codecName, "references/failures.md"), "utf8"),
-    ).not.toThrow();
+    expectReferenceFilesReadable(skillRoot, referenceFiles);
   });
 
   test("tells the agent to ask a human for the approval commands and to abandon after approval", () => {
-    const entry = readFileSync(join(skillsRootOfPackage, codecName, "SKILL.md"), "utf8");
+    const entry = readFileSync(join(skillRoot, "SKILL.md"), "utf8");
     expect(entry).toContain("video_write_plan");
     expect(entry).toContain("nyaucast video produce");
     expect(entry).toContain("nyaucast video abandon");
@@ -227,7 +283,37 @@ describe("the shipped explainer-lifecycle codec", () => {
   });
 
   test("is self-contained: it does not link into docs/", () => {
-    const entry = readFileSync(join(skillsRootOfPackage, codecName, "SKILL.md"), "utf8");
-    expect(entry).not.toMatch(/docs\//);
+    expectSelfContained(skillRoot);
   });
+});
+
+describe("the shipped distribution codec", () => {
+  const codec = "distribution";
+  const skillRoot = join(skillsRootOfPackage, codec);
+  const referenceFiles = [
+    "references/drafts.md",
+    "references/publish.md",
+    "references/failures.md",
+  ];
+  const failuresPath = join(skillRoot, "references", "failures.md");
+
+  test("has an entry point and one reference per publish-section file", () => {
+    expectReferenceFilesReadable(skillRoot, referenceFiles);
+  });
+
+  test("is self-contained: it does not link into docs/", () => {
+    expectSelfContained(skillRoot);
+  });
+
+  // C4 / AC2: 対応表が postAwaitingReasons の7種すべてを覆う。実物の配列から列挙するので、
+  // 理由が増えれば新しいケースが追加され、対応表の理由の列に無ければ落ちる。説明文（2列目・地の文）
+  // に同じ語が残っていても、対応表の1列目でなければ対象にならない(U4)。
+  test.each(postAwaitingReasons)(
+    "the failure reference documents the confirmation-pending reason %s",
+    (reason) => {
+      const failuresText = readFileSync(failuresPath, "utf8");
+      const reasonColumn = firstColumnCodesOfTable(failuresText);
+      expect(reasonColumn).toContain(reason);
+    },
+  );
 });
