@@ -3,6 +3,7 @@
   "entry": [
     "bin/nyaucast.js",
     "src/index.ts",
+    "src/lib/cf-bin.ts",
     "test/helpers.ts",
     "test/package-smoke-support.ts",
     "test/codec-support.ts",
@@ -16,8 +17,9 @@
     "prototype/**",
     "scripts/**"
   ],
-  "ignoreDependencies": ["yaml"],
+  "ignoreDependencies": ["yaml", "alchemy"],
   "rules": {
+    "unused-dependencies": "error",
     "unused-dev-dependencies": "error",
     "unused-optional-dependencies": "error",
     "type-only-dependencies": "error",
