@@ -10,7 +10,7 @@ import {
   mediaPublishUrl,
   r2KeyFor,
   r2ObjectUrl,
-  r2Secrets,
+  r2Config,
   statusSequence,
 } from "../../test/instagram-fake.ts";
 import { fakeHttp, type Routes } from "../../test/sns-api.ts";
@@ -53,7 +53,7 @@ const baseInput: InstagramPostInput = {
   caption: "告知",
   channel,
   postId,
-  r2: r2Secrets,
+  r2: r2Config,
   video,
 };
 
@@ -162,8 +162,8 @@ describe("postToInstagram: C2 - video_url is a presigned R2 GET URL for this att
         const videoUrl = mediaCreate?.query["video_url"];
         assert.isDefined(videoUrl);
         const parsed = new URL(videoUrl!);
-        assert.strictEqual(parsed.host, `${r2Secrets.accountId}.r2.cloudflarestorage.com`);
-        assert.strictEqual(parsed.pathname, `/${r2Secrets.bucket}/${r2Key}`);
+        assert.strictEqual(parsed.host, `${r2Config.accountId}.r2.cloudflarestorage.com`);
+        assert.strictEqual(parsed.pathname, `/${r2Config.bucket}/${r2Key}`);
         assert.strictEqual(parsed.searchParams.get("X-Amz-Expires"), "21600");
         const expires = Number(parsed.searchParams.get("X-Amz-Expires"));
         assert.isAtLeast(expires, 1);
@@ -457,8 +457,8 @@ describe("postToInstagram: SCN-C3-N1 - two channels sharing one bucket do not co
 // アクセスキー・アクセストークンを持たない。禁止値ごとに、失敗から読み取れる全文を検査する。
 describe("postToInstagram: a failure carries facts only, never a credential, the signed URL or the object key", () => {
   const forbidden = {
-    "the R2 access key ID": r2Secrets.accessKeyId,
-    "the R2 secret access key": r2Secrets.secretAccessKey,
+    "the R2 access key ID": r2Config.accessKeyId,
+    "the R2 secret access key": r2Config.secretAccessKey,
     "the Instagram access token": baseInput.accessToken,
     "the object key": r2Key,
     "the presigned URL's signature": "X-Amz-Signature",

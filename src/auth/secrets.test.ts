@@ -294,7 +294,7 @@ describe("StaticSecrets", () => {
             secrets: {
               [accessKeyIdName]: fileAccessKeyIdSentinel,
               [secretAccessKeyName]: fileSecretAccessKeySentinel,
-              NYAUCAST_R2_ACCESS_KEY_ID: "PREFIX_SENTINEL",
+              LEGACY_R2_ACCESS_KEY_ID: "PREFIX_SENTINEL",
               R2_ACCESS_KEY_ID_OLD: "SUFFIX_SENTINEL",
               r2_access_key_id: "LOWERCASE_SENTINEL",
               R2_ACCESS_KEY: "PARTIAL_SENTINEL",
@@ -302,7 +302,7 @@ describe("StaticSecrets", () => {
           });
 
           for (const variantName of [
-            "NYAUCAST_R2_ACCESS_KEY_ID",
+            "LEGACY_R2_ACCESS_KEY_ID",
             "R2_ACCESS_KEY_ID_OLD",
             "r2_access_key_id",
             "R2_ACCESS_KEY",

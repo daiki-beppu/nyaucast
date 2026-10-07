@@ -282,7 +282,7 @@ describe("nyaucast cloudflare status", () => {
             writeEnvironment(configRoot, createdEnvironment);
             writeSecrets(configRoot, {
               // 接頭辞付きの別の名前、ほかの名前の参照文字列の一部、秘密の対の片方。どれも置き場の判定の対象ではない。
-              NYAUCAST_R2_ACCESS_KEY_ID: lookAlikeReference,
+              LEGACY_R2_ACCESS_KEY_ID: lookAlikeReference,
               NYAUCAST_YOUTUBE_CLIENT_ID: "op://Private/R2_ACCESS_KEY_ID/field",
               R2_SECRET_ACCESS_KEY: lookAlikeReference,
             });

@@ -98,6 +98,7 @@ export const unusedVideoLayer = Layer.mergeAll(
 export const unusedPostLayer = Layer.mergeAll(
   Layer.effect(SqlClient.SqlClient, notUsed),
   Layer.effect(ChannelSettings, notUsed),
+  Layer.effect(CloudflareEnvironment, notUsed),
   Layer.effect(CredentialStore, notUsed),
   Layer.effect(DeclaredAccounts, notUsed),
   Layer.effect(HttpClient.HttpClient, notUsed),

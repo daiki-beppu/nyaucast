@@ -4,6 +4,7 @@ import type { HttpClient } from "effect/http";
 import type { Platform } from "../auth/account-key.ts";
 import { DeclaredAccounts } from "../auth/declared-accounts.ts";
 import type { StaticSecrets } from "../auth/secrets.ts";
+import type { CloudflareEnvironment } from "../cloudflare/environment.ts";
 import { longCut } from "../db/explainer-cuts.ts";
 import type { PostRecord } from "../db/explainer-posts.ts";
 import type { ThumbnailSelection } from "../db/explainer-thumbnails.ts";
@@ -141,6 +142,7 @@ export const prepareAdapterInput = (
 ): Effect.Effect<
   PreparedPost,
   PostAdapterFailure,
+  | CloudflareEnvironment
   | DeclaredAccounts
   | InstagramAuth
   | Scope.Scope
