@@ -28,6 +28,13 @@
       }
     ]
   },
-  "include": ["*.config.ts", "bin/**/*.js", "bin/**/*.ts", "src/**/*.ts", "test/**/*.ts"],
+  "include": [
+    "*.config.ts",
+    "bin/**/*.js",
+    "bin/**/*.ts",
+    "scripts/**/*.ts",
+    "src/**/*.ts",
+    "test/**/*.ts"
+  ],
   "exclude": ["node_modules"]
 }

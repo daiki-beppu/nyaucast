@@ -17,8 +17,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 本数は同時刻の計測で選んだ（2 本は平均約 120 秒、3 本は約 110 秒。#715 のコメント）
-        shard: [1, 2, 3]
+        # 本数は同時刻の計測で選んだ。大きさで分けていたときは 2 本が平均約 120 秒、3 本が約 110 秒（#715）。
+        # 所要時間で分けてからは、3 本が約 88 秒、4 本が約 75 秒（最も遅い shard の job。#742）
+        shard: [1, 2, 3, 4]
     env:
       VITEST_SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
     # concurrency は job 側に置く。workflow レベルに置くと workflow_call 経由の
@@ -37,14 +38,13 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Setup pnpm
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      # pnpm（packageManager）と Node（devEngines.runtime）を入れ、依存を install する。
+      # pnpm はネイティブの実行ファイルを直接取るので、npm を介した自己更新の数秒を省く（#739）。
+      # require-lockfile で、lockfile が無いときも失敗させる（--frozen-lockfile 相当）。
+      - name: Setup pnpm, Node and dependencies
+        uses: pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024 # v3.0.0
         with:
-          node-version-file: package.json
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+          require-lockfile: true
       # composition のテストは、テーマのフォントに偽のバイト列を使うので、文字はシステムのフォントで描かれる。
       # ランナーには日本語のフォントが無く、フックと字幕の日本語が描かれないので、Noto CJK を入れる。
       # apt-get update が毎回 10 秒ほどかかるので、パッケージが置くファイル（フォントと fontconfig の設定）を cache する。

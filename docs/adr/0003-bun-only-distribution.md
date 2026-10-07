@@ -48,7 +48,7 @@ map #353「開発基盤スクラップアンドビルド」で **bun の完全�
 
 ## Consequences
 
-- 開発・CI の Node 版は `package.json` の `devEngines.runtime`（24.x 線）が定め、CI（setup-node）が導入する。ローカルはホスト供給とし強制しない。`engines.node` は消費者契約として維持する
+- 開発・CI の Node 版は `package.json` の `devEngines.runtime`（24.x 線）が定め、CI（`pnpm/setup`。release の publish job は #744 まで `actions/setup-node`）が導入する。ローカルはホスト供給とし強制しない。`engines.node` は消費者契約として維持する
 - pnpm は `packageManager` の exact pin を CI setup とローカル導入版の SSOT とする。ローカルはリポジトリ外で pin 版の native binary を事前導入し、リポジトリ内の自動切替には依存しない
 - `pnpm-lock.yaml` は GitHub dependency graph が実依存を読める単一 YAML document を維持する
 - 消費者は JS（dist）を受け取るため、`engines.node` は type stripping の版制約から自由になる
