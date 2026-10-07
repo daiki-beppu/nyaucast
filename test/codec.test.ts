@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { describe, expect, test } from "@effect/vitest";
 
-import { postAwaitingReasons } from "../src/posts/post-state.ts";
+import { postAwaitingReasons, postStatuses } from "../src/posts/post-state.ts";
 import {
   checkCliCommands,
   checkCodecs,
@@ -19,7 +19,7 @@ import { withTemporaryDirectory } from "./helpers.ts";
 const known = knownNames();
 const codecName = "explainer-lifecycle";
 
-// ---- 出荷済み codec の共通アサーション(D2)。explainer-lifecycle と distribution は同じ形で検査する。 ----
+// ---- 出荷済み codec の共通アサーション。explainer-lifecycle と distribution は同じ形で検査する。 ----
 
 const expectReferenceFilesReadable = (skillRoot: string, referenceFiles: readonly string[]) => {
   for (const file of ["SKILL.md", ...referenceFiles]) {
@@ -51,26 +51,29 @@ describe("known names come from the real definitions", () => {
     // CLI だけが出す失敗も拾う
     expect(known.tags.has("ThumbnailSelectionRequired")).toBe(true);
     // 確認待ちの理由と投稿の状態は、Schema.Literals(postAwaitingReasons) のような変数渡しでは
-    // 正規表現が拾えないため、post-state.ts の実物の配列から直接合流する(C11)。
+    // 正規表現が拾えないため、post-state.ts の実物の配列から直接合流する。
     expect(known.literals.has("tolerance_exceeded")).toBe(true);
     expect(known.literals.has("awaiting_check")).toBe(true);
   });
 });
 
 describe("post state literals (confirmation-pending reasons and post statuses)", () => {
-  test("every literal is recognized as a known name wherever it is written in markdown", () => {
-    const text = [
-      "`tolerance_exceeded` になったら人間に確かめてもらう。",
-      "publication_unconfirmed という理由もある。",
-      "| 理由 |",
-      "| --- |",
-      "| account_mismatch |",
-      "```",
-      "awaiting_check",
-      "```",
-    ].join("\n");
-    expect(checkToolNames(text, known.tools, known.literals)).toEqual([]);
-  });
+  test.each([...postAwaitingReasons, ...postStatuses])(
+    "%s is recognized as a known name wherever it is written in markdown",
+    (literal) => {
+      const text = [
+        `\`${literal}\` になったら人間に確かめてもらう。`,
+        `${literal} という語が地の文にもある。`,
+        "| 理由 |",
+        "| --- |",
+        `| ${literal} |`,
+        "```",
+        literal,
+        "```",
+      ].join("\n");
+      expect(checkToolNames(text, known.tools, known.literals)).toEqual([]);
+    },
+  );
 
   test("a typo of a post state literal is still a violation in every position, while the correct spelling and a neighboring literal are not", () => {
     const text = [
@@ -258,7 +261,7 @@ describe("skills directory", () => {
   });
 });
 
-// U3: skills/ 直下に置かれた出荷済み codec 全体を 1 件で検査する。per-codec への絞り込みは行わない
+// skills/ 直下に置かれた出荷済み codec 全体を 1 件で検査する。per-codec への絞り込みは行わない
 // (絞り込むと skills/ 直下の layout 違反が両 codec のテストから脱落する)。
 describe("the shipped skills directory", () => {
   test("has no violations across every shipped codec", () => {
@@ -305,9 +308,9 @@ describe("the shipped distribution codec", () => {
     expectSelfContained(skillRoot);
   });
 
-  // C4 / AC2: 対応表が postAwaitingReasons の7種すべてを覆う。実物の配列から列挙するので、
+  // 対応表が postAwaitingReasons のすべてを覆う（issue #558）。実物の配列から列挙するので、
   // 理由が増えれば新しいケースが追加され、対応表の理由の列に無ければ落ちる。説明文（2列目・地の文）
-  // に同じ語が残っていても、対応表の1列目でなければ対象にならない(U4)。
+  // に同じ語が残っていても、対応表の1列目でなければ対象にならない。
   test.each(postAwaitingReasons)(
     "the failure reference documents the confirmation-pending reason %s",
     (reason) => {
