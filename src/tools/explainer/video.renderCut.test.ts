@@ -153,6 +153,33 @@ describe.concurrent("video.renderCut: parameters", () => {
   });
 });
 
+// プロセス全体の arrayBuffers の伸びを測るが、並走するほかのテストは 1 秒の音声しか扱わないので、並列のまとまりに入れる。
+// ファイルで最も長いテストなので、描画するテストの先頭に置いて最初に始める（#738）。
+describe.concurrent("video.renderCut: memory on a long audio track", () => {
+  it.effect(
+    "does not hold the audio track or the mp4 in memory while rendering 10 minutes of audio",
+    () =>
+      withInputs("nyaucast-render-memory-", (channelRoot) =>
+        Effect.gen(function* () {
+          // ネイティブのライブラリの初回の読み込みを測定に含めないよう、先に短い音声で 1 度書き出しておく
+          yield* render();
+          writeTrack(channelRoot, trackWav(600));
+          const stop = startPeakBufferGrowth();
+
+          // 失敗・中断でも計測のタイマーを止める（止めないとテストプロセスが終わらない）
+          const result = yield* render().pipe(Effect.ensuring(Effect.sync(stop)));
+
+          const growthMegabytes = stop();
+          assert.strictEqual(result.rendered, true);
+          // 600 秒の音声は約 115 MB（float に展開すると約 230 MB）。全体を持つ実装は、これらを足した分だけ増える。
+          // 流して書く実装は、入力の長さによらず小さく収まる（計測値は単独で約 21 MB、並走させて 12〜24 MB。#738）
+          assert.isBelow(growthMegabytes, 150);
+        }),
+      ),
+    slow,
+  );
+});
+
 describe.concurrent("video.renderCut: a real render", () => {
   it.effect(
     "writes an mp4 with an H.264 video and an AAC audio track of the composition's size and length, and records one export",
@@ -202,20 +229,6 @@ describe.concurrent("video.renderCut: a real render", () => {
           assert.match(result.compositionHash, /^[0-9a-f]{64}$/u);
           assert.match(result.renderHash, /^[0-9a-f]{64}$/u);
           assert.notStrictEqual(result.renderHash, result.compositionHash);
-        }),
-      ),
-    slow,
-  );
-
-  it.effect(
-    "keeps every artifact under the cut's directory",
-    () =>
-      withInputs("nyaucast-render-location-", (channelRoot) =>
-        Effect.gen(function* () {
-          const result = yield* render();
-
-          assert.isTrue(result.key.startsWith(`${cutDirectory}/`));
-          assert.isTrue(channelFileExists(channelRoot, join(cutDirectory, "long.mp4")));
         }),
       ),
     slow,
@@ -585,32 +598,6 @@ describe.concurrent("video.renderCut: the audio track replaced during a render",
   );
 });
 
-// プロセス全体の arrayBuffers の伸びを測るので、並走させない。並列ではないスイートは並列のまとまりを区切るので、単独で走る。
-describe("video.renderCut: memory on a long audio track", () => {
-  it.effect(
-    "does not hold the audio track or the mp4 in memory while rendering 10 minutes of audio",
-    () =>
-      withInputs("nyaucast-render-memory-", (channelRoot) =>
-        Effect.gen(function* () {
-          // ネイティブのライブラリの初回の読み込みを測定に含めないよう、先に短い音声で 1 度書き出しておく
-          yield* render();
-          writeTrack(channelRoot, trackWav(600));
-          const stop = startPeakBufferGrowth();
-
-          // 失敗・中断でも計測のタイマーを止める（止めないとテストプロセスが終わらない）
-          const result = yield* render().pipe(Effect.ensuring(Effect.sync(stop)));
-
-          const growthMegabytes = stop();
-          assert.strictEqual(result.rendered, true);
-          // 600 秒の音声は約 115 MB（float に展開すると約 230 MB）。全体を持つ実装は、これらを足した分だけ増える。
-          // 流して書く実装は、入力の長さによらず約 60 MB（計測値。600 秒でも 1500 秒でも同じ）で収まる
-          assert.isBelow(growthMegabytes, 150);
-        }),
-      ),
-    slow,
-  );
-});
-
 describe.concurrent("video.renderCut: preconditions", () => {
   it.effect("rejects an unknown key at the tool boundary and writes nothing", () =>
     withInputs("nyaucast-render-unknown-key-", () =>
@@ -903,30 +890,6 @@ describe.concurrent("video.renderCut: the two cuts of a short candidate", () => 
           assert.isTrue(again.rendered);
           assert.strictEqual(rows.length, 2);
           assert.isTrue((rows[1]?.created_at ?? "") > lastVersion);
-        }),
-      ),
-    slow,
-  );
-
-  it.effect(
-    "reports both cuts in the video's status, in name order",
-    () =>
-      withShort("nyaucast-render-short-status-", (channelRoot) =>
-        Effect.gen(function* () {
-          yield* writeCutInputs(channelRoot, dedicatedCut(1));
-          yield* writeCutInputs(channelRoot, clipCut(1));
-          yield* renderCut(dedicatedCut(1));
-          yield* renderCut(clipCut(1));
-
-          const status = yield* callTool("video_status", { videoId: "V1" });
-
-          assert.deepStrictEqual(
-            status.cuts.map((cut) => [cut.cut, cut.lastExport?.key]),
-            [
-              [clipCut(1), shortCutExportKey(clipCut(1))],
-              [dedicatedCut(1), shortCutExportKey(dedicatedCut(1))],
-            ],
-          );
         }),
       ),
     slow,

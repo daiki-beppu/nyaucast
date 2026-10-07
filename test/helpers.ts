@@ -15,6 +15,7 @@ import { CredentialStore } from "../src/auth/credential-store.ts";
 import { DeclaredAccounts } from "../src/auth/declared-accounts.ts";
 import { StaticSecrets } from "../src/auth/secrets.ts";
 import { ChannelSettings } from "../src/channel/channel-settings.ts";
+import { CloudflareEnvironment } from "../src/cloudflare/environment.ts";
 import { LocalStore } from "../src/db/local-store.ts";
 import { InstagramAuth } from "../src/instagram/auth.ts";
 import { ThumbnailFiles } from "../src/thumbnails/thumbnail-files.ts";
@@ -79,6 +80,9 @@ export const unusedAuthLayer = Layer.mergeAll(
   Layer.effect(XAuth, notUsed),
   Layer.effect(YouTubeAuth, notUsed),
 );
+
+/** cloudflare（`nyaucast cloudflare status`）を使わないテストが CLI のプログラムへ渡す Layer。組まれたら失敗する。 */
+export const unusedCloudflareLayer = Layer.effect(CloudflareEnvironment, notUsed);
 
 /** video を使わないテストが CLI のプログラムへ渡す Layer。組まれたら失敗する。 */
 export const unusedVideoLayer = Layer.mergeAll(

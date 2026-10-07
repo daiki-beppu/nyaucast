@@ -2039,15 +2039,20 @@ describe("runDuePosts: C6/AC3 - a permanent container status is recorded as a pe
 });
 
 // コンテナの polling の sleep（10 秒ごと）は 1 回ずつ登録されるので、1 回の TestClock.adjust では
-// まとめて解放できない。fiber が終わるまで 10 秒ずつ進める。上限の回数は、polling の上限（60 回）に
-// 必要な回数の十分な上側で、進めても終わらない場合に無限に回らないためだけに置く。
+// まとめて解放できない。fiber が終わるまで 10 秒ずつ進める。
+// 時計は polling が始まってから進める。fiber が polling の前の本物の I/O（ファイル・SQLite）を待つ間に進めると、
+// due の判定より前に時計が進んで予定時刻を過ぎたと判定される。進める回数に上限を置いて抑えると、
+// 負荷の高い CI では空振りで上限を使い切り、残りの sleep が解放されずに timeout する（#734）。
+// polling が始まった後は due の判定が終わっているので、空振りが出ても結果は変わらない。終わらない実装はテストの timeout で落ちる。
 const pollingSleepInterval = "10 seconds";
-const maximumPollingTicks = 200;
 
-/** polling の sleep をすべて解放してから、fiber の結果を受け取る。 */
-const joinAfterPolling = <A, E>(fiber: Fiber.Fiber<A, E>) =>
+/** polling が始まるまで待ち、polling の sleep をすべて解放してから、fiber の結果を受け取る。 */
+const joinAfterPolling = <A, E>(fiber: Fiber.Fiber<A, E>, pollingStarted: () => boolean) =>
   Effect.gen(function* () {
-    for (let tick = 0; tick < maximumPollingTicks && fiber.pollUnsafe() === undefined; tick += 1) {
+    while (!pollingStarted() && fiber.pollUnsafe() === undefined) {
+      yield* Effect.yieldNow;
+    }
+    while (fiber.pollUnsafe() === undefined) {
       yield* TestClock.adjust(pollingSleepInterval);
     }
     return yield* Fiber.join(fiber);
@@ -2085,7 +2090,11 @@ describe("runDuePosts: D5 - exceeding the polling limit is recorded as a tempora
           );
           // 投稿が due かどうかの判定・再確認はアダプタを呼ぶ前に終わっているので、polling のあいだに
           // 時計が進んでも、この実行での due の扱いは変わらない。
-          const outcomes = yield* joinAfterPolling(fiber);
+          const outcomes = yield* joinAfterPolling(fiber, () =>
+            fixture.requests.some(
+              (request) => request.key === `GET ${containerStatusUrl("CONTAINER1")}`,
+            ),
+          );
 
           assert.deepStrictEqual(outcomes, [
             { kind: "temporary", postId, tag: "InstagramContainerNotReady" },

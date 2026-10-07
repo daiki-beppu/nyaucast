@@ -29,19 +29,25 @@ export const poolPath = "config/channel/bgm-pool.json";
 
 // ---- 信号の生成 ----
 
-export const sine = (seconds: number, hertz: number, amplitude: number): Float32Array =>
-  Float32Array.from(
-    { length: Math.round(seconds * sampleRate) },
-    (_, index) => amplitude * Math.sin((2 * Math.PI * hertz * index) / sampleRate),
-  );
+// 長い fixture（600 秒で 1 チャンネル 2880 万サンプル）も作るので、サンプルごとのコールバック（Float32Array.from）を使わずループで回す（#727）。
+
+export const sine = (seconds: number, hertz: number, amplitude: number): Float32Array => {
+  const signal = new Float32Array(Math.round(seconds * sampleRate));
+  for (let index = 0; index < signal.length; index += 1) {
+    signal[index] = amplitude * Math.sin((2 * Math.PI * hertz * index) / sampleRate);
+  }
+  return signal;
+};
 
 /** 種の決まった擬似乱数のノイズ（毎回同じ）。 */
 export const noise = (seconds: number, seed: number, amplitude: number): Float32Array => {
   let state = seed >>> 0 || 1;
-  return Float32Array.from({ length: Math.round(seconds * sampleRate) }, () => {
+  const signal = new Float32Array(Math.round(seconds * sampleRate));
+  for (let index = 0; index < signal.length; index += 1) {
     state = (Math.imul(state, 1_664_525) + 1_013_904_223) >>> 0;
-    return amplitude * ((state / 0xff_ff_ff_ff) * 2 - 1);
-  });
+    signal[index] = amplitude * ((state / 0xff_ff_ff_ff) * 2 - 1);
+  }
+  return signal;
 };
 
 export const silence = (seconds: number): Float32Array =>
@@ -77,9 +83,11 @@ export const stereoWav = (left: Float32Array, right: Float32Array): Uint8Array =
   file.writeUInt16LE(16, 34);
   file.write("data", 36);
   file.writeUInt32LE(frames * 4, 40);
+  // サンプルごとに Buffer のメソッドを呼ばず、DataView で書く（#727）
+  const view = new DataView(file.buffer, file.byteOffset, file.byteLength);
   for (let frame = 0; frame < frames; frame += 1) {
-    file.writeInt16LE(toInt16(left[frame] ?? 0), 44 + frame * 4);
-    file.writeInt16LE(toInt16(right[frame] ?? 0), 46 + frame * 4);
+    view.setInt16(44 + frame * 4, toInt16(left[frame] ?? 0), true);
+    view.setInt16(46 + frame * 4, toInt16(right[frame] ?? 0), true);
   }
   return new Uint8Array(file);
 };
@@ -122,12 +130,15 @@ export const decodeWav = (bytes: Uint8Array): DecodedWav => {
   }
   const count = file.readUInt16LE(format.body + 2);
   const frames = Math.floor(data.size / (2 * count));
-  const channels = Array.from({ length: count }, (_, channel) =>
-    Float32Array.from(
-      { length: frames },
-      (_unused, frame) => file.readInt16LE(data.body + (frame * count + channel) * 2) / 32_768,
-    ),
-  );
+  // サンプルごとに Buffer のメソッドを呼ばず、DataView で読む（#727）
+  const view = new DataView(file.buffer, file.byteOffset, file.byteLength);
+  const channels = Array.from({ length: count }, (_, channel) => {
+    const samples = new Float32Array(frames);
+    for (let frame = 0; frame < frames; frame += 1) {
+      samples[frame] = view.getInt16(data.body + (frame * count + channel) * 2, true) / 32_768;
+    }
+    return samples;
+  });
   return {
     bitsPerSample: file.readUInt16LE(format.body + 14),
     channels,
@@ -233,23 +244,35 @@ export const loudness = (channels: readonly Float32Array[]): number | null =>
     { fs: sampleRate },
   );
 
-// 帯域制限された補間: 位置 position（サンプル単位の小数）の値を、周囲 16 サンプルの窓付き sinc で求める。
-const valueAt = (channel: Float32Array, position: number): number => {
-  const first = Math.floor(position) - 7;
+// 補間点 fraction の、周囲 16 サンプルへの sinc と窓の係数。係数は位置との距離（fraction + 7 - offset）だけで決まるので、補間点ごとに 1 度だけ計算しておく（#723）。
+const kernelAt = (fraction: number) => {
+  const distances = Array.from({ length: 16 }, (_, offset) => fraction + 7 - offset);
+  return {
+    sincs: Float64Array.from(distances, (distance) =>
+      distance === 0 ? 1 : Math.sin(Math.PI * distance) / (Math.PI * distance),
+    ),
+    windows: Float64Array.from(
+      distances,
+      (distance) => 0.5 + 0.5 * Math.cos((Math.PI * distance) / 8.5),
+    ),
+  };
+};
+
+type Kernel = ReturnType<typeof kernelAt>;
+
+const kernels = [0, 0.25, 0.5, 0.75].map(kernelAt);
+
+// 帯域制限された補間: サンプル index から fraction だけ進んだ位置の値を、周囲 16 サンプルの窓付き sinc で求める。
+const valueAt = (channel: Float32Array, index: number, { sincs, windows }: Kernel): number => {
   let sum = 0;
-  for (let index = first; index < first + 16; index += 1) {
-    const distance = position - index;
-    const sinc = distance === 0 ? 1 : Math.sin(Math.PI * distance) / (Math.PI * distance);
-    sum += (channel[index] ?? 0) * sinc * (0.5 + 0.5 * Math.cos((Math.PI * distance) / 8.5));
+  for (let offset = 0; offset < 16; offset += 1) {
+    sum += (channel[index - 7 + offset] ?? 0) * (sincs[offset] ?? 0) * (windows[offset] ?? 0);
   }
   return sum;
 };
 
 const quarterPeak = (channel: Float32Array, index: number): number =>
-  [0, 0.25, 0.5, 0.75].reduce(
-    (peak, fraction) => Math.max(peak, Math.abs(valueAt(channel, index + fraction))),
-    0,
-  );
+  kernels.reduce((peak, kernel) => Math.max(peak, Math.abs(valueAt(channel, index, kernel))), 0);
 
 /** 4 倍オーバーサンプリングした true peak（dBTP）。無音は -Infinity。 */
 export const truePeakDbtp = (channels: readonly Float32Array[]): number => {

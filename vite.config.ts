@@ -1,5 +1,7 @@
 import { defineConfig } from "vite-plus";
 
+import { WeightShardSequencer } from "./vitest.shard.config.ts";
+
 export default defineConfig({
   fmt: {
     ignorePatterns: ["GLOSSARY.md", "docs/agents/**", "docs/research/**", "prototype/**"],
@@ -38,6 +40,8 @@ export default defineConfig({
     "*.{js,jsx,ts,tsx,json,jsonc,md,yml,yaml}": "vp fmt --write --no-error-on-unmatched-pattern",
   },
   test: {
+    // CI の shard の分け方（#715）
+    sequence: { sequencer: WeightShardSequencer },
     passWithNoTests: true,
     projects: [
       {

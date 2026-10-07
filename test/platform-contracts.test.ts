@@ -7,6 +7,7 @@ import { parse } from "yaml";
 
 import { chromeCacheDirectory } from "../src/lib/chrome.ts";
 import { chromeHeadlessShellBuildId } from "../src/lib/chrome-pin.ts";
+import { checkGates } from "./check-gates.ts";
 import { withTemporaryDirectory } from "./helpers";
 
 const packageRoot = resolve(import.meta.dirname, "..");
@@ -164,20 +165,98 @@ describe("K1 three identical check surfaces", () => {
     expect(ciRuns).toEqual([canonicalCheckCommand]);
   });
 
+  // CI は同じ check を shard ごとに走らせる（#715）。shard の集合が 1/N〜N/N を漏れなく重複なく覆わないと、
+  // どの job も pass したまま、一部のテストが CI で一度も走らなくなる。
+  test("the CI shards cover every test file exactly once", () => {
+    const quality = workflowJobs(readWorkflow("ci.yml")).find(
+      (job) => job["strategy"] !== undefined,
+    );
+    const strategy = requireRecord(quality?.["strategy"], "quality strategy");
+    const shards = requireRecord(strategy["matrix"], "quality matrix")["shard"];
+    const environment = requireRecord(quality?.["env"], "quality env");
+
+    expect(Array.isArray(shards)).toBe(true);
+    const count = (shards as unknown[]).length;
+    expect([...(shards as number[])].sort((left, right) => left - right)).toEqual(
+      Array.from({ length: count }, (_, at) => at + 1),
+    );
+    // 分母は matrix の数から取る。shard の数を書くのは matrix の一覧だけ
+    expect(environment["VITEST_SHARD"]).toBe("${{ matrix.shard }}/${{ strategy.job-total }}");
+
+    const manifest = readJson(join(packageRoot, "package.json"));
+    const testGates = checkGates(
+      requireRecord(manifest["scripts"], "package scripts") as Record<string, string>,
+    )
+      .map(({ gate }) => gate)
+      .filter((gate) => gate.startsWith("vp test"));
+    // VITEST_SHARD の無いローカル・pre-push では、shard の引数が消えて全件が走る
+    expect(testGates).toEqual(["vp test run ${VITEST_SHARD:+--shard=$VITEST_SHARD}"]);
+  });
+
+  // ルールセット「main: CI 必須」は quality という名前の check を必須にしている。shard の job の名前は
+  // shard ごとに変わるので、すべての shard の成功を要求する quality job が無いと PR がマージできなくなる。
+  test("a job named quality passes only when every CI shard passes", () => {
+    const jobs = requireRecord(readWorkflow("ci.yml")["jobs"], "CI jobs");
+    const quality = requireRecord(jobs["quality"], "quality job");
+    const shardJob = Object.keys(jobs).find((id) => id !== "quality");
+
+    expect(shardJob).toBeDefined();
+    expect(requireRecord(jobs[shardJob ?? ""], "shard job")["strategy"]).toBeDefined();
+    expect(quality["needs"]).toBe(shardJob);
+    expect(quality["if"]).toBe("always()");
+    expect(JSON.stringify(quality["steps"])).toContain(`\${{ needs.${shardJob}.result }}`);
+    expect(JSON.stringify(quality["steps"])).toContain('= \\"success\\"');
+  });
+
   test("the declared check gate set includes the lockfile gate without duplicates", () => {
     const manifest = readJson(join(packageRoot, "package.json"));
     const scripts = requireRecord(manifest["scripts"], "package scripts");
-    const check = scripts["check"];
-    if (typeof check !== "string") {
-      throw new TypeError("scripts.check must be a string");
-    }
-    const gates = check.split("&&").map((gate) => gate.trim());
+    const gates = checkGates(scripts as Record<string, string>);
 
-    expect(gates).toContain("pnpm run lockfile:check");
-    expect(new Set(gates).size).toBe(gates.length);
-    for (const gate of gates.filter((gate) => gate.startsWith("pnpm run "))) {
-      expect(scripts).toHaveProperty(gate.slice("pnpm run ".length));
+    expect(gates.map(({ gate }) => gate)).toContain("pnpm run lockfile:check");
+    expect(new Set(gates.map(({ gate }) => gate)).size).toBe(gates.length);
+    // script の名前や正規表現が何にも当たらないと、そのゲートは何も検査せずに通る
+    for (const { commands, gate } of gates) {
+      expect(commands.length, gate).toBeGreaterThan(0);
     }
+  });
+
+  // 互いに依存しない静的ゲートは、テストの直前に 1 つの正規表現のゲートとしてまとめて並行に走らせる（#748）
+  test("the gate right before the tests runs several scripts at once", () => {
+    const manifest = readJson(join(packageRoot, "package.json"));
+    const gates = checkGates(
+      requireRecord(manifest["scripts"], "package scripts") as Record<string, string>,
+    );
+    const tests = gates.findIndex(({ gate }) => gate.startsWith("vp test"));
+
+    expect(gates[tests - 1]?.gate).toMatch(/^pnpm run '\/.+\/'$/u);
+    expect(gates[tests - 1]?.commands.length).toBeGreaterThan(1);
+  });
+
+  // pnpm が並行に走らせた script の 1 つが失敗したら、check はそこで止まって失敗する（最初に失敗したゲートで止まる）
+  test("a gate that runs several scripts at once fails when one of them fails", () => {
+    withTemporaryDirectory("nyaucast-parallel-gate-", (directory) => {
+      writeFileSync(
+        join(directory, "package.json"),
+        JSON.stringify({
+          name: "parallel-gate",
+          private: true,
+          scripts: {
+            "fails:check": "exit 3",
+            "passes:check": "exit 0",
+            "slow:check": "sleep 20",
+            check: "pnpm run '/^(fails|passes|slow):check$/' && echo after-the-gate",
+          },
+        }),
+      );
+      const started = Date.now();
+      const result = spawnSync("pnpm", ["run", "check"], { cwd: directory, encoding: "utf8" });
+
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).not.toContain("after-the-gate");
+      // 遅い script の終わりを待たずに止まる
+      expect(Date.now() - started).toBeLessThan(10_000);
+    });
   });
 
   test("the dependency graph remains visible in a single-document lockfile", () => {
@@ -430,6 +509,20 @@ describe("K4 credential and concurrency contracts", () => {
     expect(checkoutSteps.length).toBeGreaterThan(0);
     for (const step of checkoutSteps) {
       expect(step.with?.["persist-credentials"]).toBe(false);
+    }
+  });
+
+  // pnpm/setup は既定で lockfile が無くても install して lockfile を作り、成功してしまう（#739）
+  test("every pnpm/setup install requires the lockfile", () => {
+    const setupSteps = readdirSync(join(packageRoot, ".github/workflows"))
+      .filter((name) => /\.ya?ml$/.test(name))
+      .flatMap((name) => workflowJobs(readWorkflow(name)))
+      .flatMap(jobSteps)
+      .filter((step) => typeof step.uses === "string" && step.uses.startsWith("pnpm/setup@"));
+
+    expect(setupSteps.length).toBeGreaterThan(0);
+    for (const step of setupSteps) {
+      expect(step.with?.["require-lockfile"]).toBe(true);
     }
   });
 
