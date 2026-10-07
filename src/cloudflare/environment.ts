@@ -1,6 +1,11 @@
 import { Context, Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
 
 import { readSecretReference, secretReferencesPath } from "../auth/secrets.ts";
+import {
+  decodeEnvironmentFile,
+  environmentFilePath,
+  type CloudflareEnvironmentFile,
+} from "./environment-file.ts";
 
 // 失敗は、ファイルのパスだけを事実に持つ（issue #692 決定 5 行目）。デコードエラーの文面は、
 // environment.json が持つ秘密のブロックの値を含みうるため事実にしない（issue #692 決定 4 行目: 秘密の値は表示しない）。
@@ -14,33 +19,11 @@ export class CloudflareAccessKeyReferenceInvalid extends Schema.TaggedError<Clou
   { path: Schema.String },
 ) {}
 
-const NonEmpty = Schema.String.check(Schema.isMinLength(1));
-
 // 表示する参照には、秘密の平文値や改行を受け入れない。参照先の実在確認・解決はしない。
 const AccessKeyReferenceSchema = Schema.String.check(
   Schema.isPattern(/^op:\/\/[^\r\n\u2028\u2029]+(?![\s\S])/u),
 );
 const decodeAccessKeyReference = Schema.decodeUnknownEffect(AccessKeyReferenceSchema);
-
-// 秘密のブロックは任意だが、置くなら 2 つのキーが両方必須（issue #692 決定 2 行目）。
-const AccessKeySecrets = Schema.Struct({
-  R2_ACCESS_KEY_ID: Schema.String,
-  R2_SECRET_ACCESS_KEY: Schema.String,
-});
-
-// ~/.config/nyaucast/cloudflare/environment.json の形。これは Cloudflare 環境の写しで SSOT では
-// ない（ADR-0012 決定 9）。書くのはこの ticket の範囲外（後続の ticket の apply）。未知のトップ
-// レベルのプロパティは既定（寛容）のまま受け入れる: apply が項目を足したときに reader が壊れない。
-const CloudflareEnvironmentFileSchema = Schema.Struct({
-  accountId: NonEmpty,
-  bucket: NonEmpty,
-  secrets: Schema.optionalKey(AccessKeySecrets),
-});
-export type CloudflareEnvironmentFile = typeof CloudflareEnvironmentFileSchema.Type;
-
-const decodeEnvironmentFile = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(CloudflareEnvironmentFileSchema),
-);
 
 const accessKeyReferenceName = "R2_ACCESS_KEY_ID";
 
@@ -48,7 +31,7 @@ const makeCloudflareEnvironment = (configRoot: string) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const environmentPath = path.join(configRoot, "cloudflare", "environment.json");
+    const environmentPath = environmentFilePath(path, configRoot);
 
     // 不在 → Option.none（未作成は成功で終える）、存在 → デコード、失敗は事実（パスのみ）だけの失敗に置換する。
     const readEnvironmentFile = fileSystem.readFileString(environmentPath).pipe(
