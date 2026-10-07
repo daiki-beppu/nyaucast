@@ -12,6 +12,8 @@ import { CredentialStore } from "./auth/credential-store.ts";
 import { StaticSecrets } from "./auth/secrets.ts";
 import { BgmPool } from "./channel/bgm-pool.ts";
 import { ChannelSettings } from "./channel/channel-settings.ts";
+import { CloudflareProvisioning } from "./cloudflare/alchemy.ts";
+import { Cf } from "./cloudflare/cf.ts";
 import { CloudflareEnvironment } from "./cloudflare/environment.ts";
 import { CollectionIds } from "./collections/collection-ids.ts";
 import { CollectionDirectories } from "./collections/directories.ts";
@@ -40,9 +42,14 @@ const channelRoot = process.cwd();
 const localStore = LocalStore.layer(pathToFileURL(`${channelRoot}/data/local.db`).href);
 // ホームディレクトリは、ここで 1 回だけ解決して各 Layer に渡す。
 const configRoot = join(homedir(), ".config", "nyaucast");
-// Cloudflare 環境の読み取りの口。状態を見る CLI（issue #692）と、R2 の 4 値を解決する投稿（issue #757）が使う。
-// environment.json / secrets.json は実行のたびに読む。
-const cloudflare = CloudflareEnvironment.layer({ configRoot });
+// Cloudflare 環境を作り・読む口。作成は `nyaucast cloudflare --yes`（issue #696、`Cf` と
+// `CloudflareProvisioning` が必要）。状態を見る CLI（issue #692）と、R2 の 4 値を解決する投稿
+// （issue #757）は `CloudflareEnvironment` だけを使う。environment.json / secrets.json は実行のたびに読む。
+const cloudflare = Layer.mergeAll(
+  Cf.layer(process.env),
+  CloudflareEnvironment.layer({ configRoot }),
+  CloudflareProvisioning.layer({ configRoot }),
+).pipe(Layer.provide(NodeHttpClient.layerUndici));
 const thumbnailFiles = ThumbnailFiles.layer(channelRoot);
 const credentialStore = CredentialStore.layer({ credentialRoot: join(configRoot, "credentials") });
 const authDependencies = Layer.mergeAll(

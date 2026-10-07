@@ -22,6 +22,7 @@ export class CloudflareProvisioningFailed extends Schema.TaggedError<CloudflareP
 /** plan の 1 行。資源ごとに、作成・更新・変更なしのいずれか 1 つを持つ。 */
 export type ProvisioningPlanRow = {
   readonly action: "create" | "unchanged" | "update";
+  readonly kind: "account-api-token" | "bucket";
   readonly resource: string;
 };
 
@@ -83,11 +84,13 @@ export type ProvisioningPlan = {
   readonly rows: ReadonlyArray<ProvisioningPlanRow>;
 };
 
-const bucketName = "nyaucast-media";
+/** bucket 名。plan の表示（issue #696）が、宣言とずれずに同じ値を出すために export する。 */
+export const bucketName = "nyaucast-media";
 const tokenName = "nyaucast-media-write";
 const lifecycleRuleId = "nyaucast-delete-objects-after-7-days";
-/** 7 日。ADR-0012 と issue #695 が秒で定める。 */
-const objectMaxAgeSeconds = 604_800;
+/** 7 日。ADR-0012 と issue #695 の決定。plan の表示（issue #696）と秒の定数の両方がここから導出する。 */
+export const bucketRetentionDays = 7;
+const objectMaxAgeSeconds = bucketRetentionDays * 24 * 60 * 60;
 /** bucket の宣言は jurisdiction を指定しないので、Cloudflare の既定が入る。 */
 const bucketJurisdiction = "default";
 const permissionGroup = "Workers R2 Storage Bucket Item Write";
@@ -190,13 +193,23 @@ const foldedActions: Record<
   update: "update",
 };
 
+// 資源の種別は Alchemy の resourceType（宣言した Resource 関数の第一引数）から決める。論理 ID
+// （"Media" / "MediaWriter"）の照合表は使わない。宣言を変えたときに表示が黙って壊れるため。
+const kindOfResourceType: Record<string, ProvisioningPlanRow["kind"] | undefined> = {
+  "Cloudflare.ApiToken.AccountApiToken": "account-api-token",
+  "Cloudflare.R2.Bucket": "bucket",
+};
+
 const toPlanRow = (
   resource: Alchemy.Report.PlannedResource,
 ): Effect.Effect<ProvisioningPlanRow> => {
   const action = foldedActions[resource.action];
-  return action === undefined
-    ? Effect.die(`cannot fold plan action: ${resource.action}`)
-    : Effect.succeed({ action, resource: resource.logicalId });
+  const kind = kindOfResourceType[resource.resourceType];
+  return action === undefined || kind === undefined
+    ? Effect.die(
+        `cannot fold plan resource: action=${resource.action} resourceType=${resource.resourceType}`,
+      )
+    : Effect.succeed({ action, kind, resource: resource.logicalId });
 };
 
 /** `<root>` から `directory` までのディレクトリを、浅いものから順に並べる。 */

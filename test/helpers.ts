@@ -15,6 +15,8 @@ import { CredentialStore } from "../src/auth/credential-store.ts";
 import { DeclaredAccounts } from "../src/auth/declared-accounts.ts";
 import { StaticSecrets } from "../src/auth/secrets.ts";
 import { ChannelSettings } from "../src/channel/channel-settings.ts";
+import { CloudflareProvisioning } from "../src/cloudflare/alchemy.ts";
+import { Cf } from "../src/cloudflare/cf.ts";
 import { CloudflareEnvironment } from "../src/cloudflare/environment.ts";
 import { LocalStore } from "../src/db/local-store.ts";
 import { InstagramAuth } from "../src/instagram/auth.ts";
@@ -81,8 +83,16 @@ export const unusedAuthLayer = Layer.mergeAll(
   Layer.effect(YouTubeAuth, notUsed),
 );
 
-/** cloudflare（`nyaucast cloudflare status`）を使わないテストが CLI のプログラムへ渡す Layer。組まれたら失敗する。 */
-export const unusedCloudflareLayer = Layer.effect(CloudflareEnvironment, notUsed);
+/**
+ * cloudflare（`nyaucast cloudflare status` / `nyaucast cloudflare --yes`）を使わないテストが CLI の
+ * プログラムへ渡す Layer。組まれたら失敗する。`cloudflare` の木全体に `Cf` と `CloudflareProvisioning`
+ * を要求する配線（issue #696）に合わせ、3 service とも「組まれたら die」にする。
+ */
+export const unusedCloudflareLayer = Layer.mergeAll(
+  Layer.effect(Cf, notUsed),
+  Layer.effect(CloudflareEnvironment, notUsed),
+  Layer.effect(CloudflareProvisioning, notUsed),
+);
 
 /** video を使わないテストが CLI のプログラムへ渡す Layer。組まれたら失敗する。 */
 export const unusedVideoLayer = Layer.mergeAll(
