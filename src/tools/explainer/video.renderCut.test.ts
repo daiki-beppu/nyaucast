@@ -299,6 +299,27 @@ describe.concurrent("video.renderCut: idempotence and force", () => {
     slow,
   );
 
+  // ロック（RenderLock）が同じ動画への呼び出しを直列にする。ロックが無いと、2 つの描画が同じ一時ファイルへ書いてぶつかるか、
+  // どちらも作り直して行を 2 行積む。テストではロックがチャンネルごとに提供されるので、並走する他のテストとは干渉しない。
+  it.effect(
+    "leaves one valid export and one row when two calls for the same video run at once",
+    () =>
+      withInputs("nyaucast-render-concurrent-", (channelRoot) =>
+        Effect.gen(function* () {
+          const [first, second] = yield* Effect.all([render(), render()], { concurrency: 2 });
+
+          assert.deepStrictEqual([first.rendered, second.rendered].toSorted(), [false, true]);
+          assert.strictEqual(first.renderHash, second.renderHash);
+          const mp4 = yield* Effect.promise(() => readMp4(channelRoot));
+          assert.strictEqual(mp4.video?.displayWidth, 320);
+          assert.strictEqual(mp4.video?.displayHeight, 180);
+          assert.closeTo(mp4.duration, 1, 0.1);
+          assert.strictEqual((yield* exportRows).length, 1);
+        }),
+      ),
+    slow,
+  );
+
   it.effect(
     "builds again with force: one more row, later than the first, and the same keys",
     () =>
