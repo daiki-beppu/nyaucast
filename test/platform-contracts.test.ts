@@ -275,10 +275,9 @@ describe("K1 three identical check surfaces", () => {
     ).not.toHaveLength(0);
   });
 
-  // ADR-0012 決定 7 は alchemy を、Alchemy を呼ぶコードより先に dependencies へ入れると決めた（#694）。
-  // 呼ぶ側が無い間は unused-dependency が必ず当たるので、この 1 件だけを例外として宣言する。
-  // Alchemy を import する ticket では、.fallowrc.json の ignoreDependencies とこの集合から同時に外す。
-  const fallowSilencedRuntimeDependencies = ["alchemy"];
+  // runtime 依存を fallow で黙らせる例外は 1 件も無い。#694 が先に dependencies へ入れた alchemy も、
+  // 呼ぶ側（src/cloudflare/alchemy.ts）が入った #695 で ignoreDependencies から外した。
+  const fallowSilencedRuntimeDependencies: ReadonlyArray<string> = [];
 
   test("runtime dependencies cannot be silenced through fallow", () => {
     const manifest = readJson(join(packageRoot, "package.json"));
@@ -296,8 +295,8 @@ describe("K1 three identical check surfaces", () => {
     // 完全一致で比べる。部分一致にすると 2 件目を黙らせても気付けない
     expect(
       dependencies.filter((dependency) => ignored.includes(dependency)).toSorted(),
-      "宣言した 1 件以外の runtime 依存は、使う側を足して直す",
-    ).toEqual(fallowSilencedRuntimeDependencies.toSorted());
+      "runtime 依存は ignoreDependencies ではなく、使う側を足して直す",
+    ).toEqual([...fallowSilencedRuntimeDependencies].toSorted());
   });
 
   // semantic モードは識別子を同一視するので、Effect の定型（Tool.make・Context.Service・

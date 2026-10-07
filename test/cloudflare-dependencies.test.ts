@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 
 import { assert, describe, it } from "@effect/vitest";
@@ -67,5 +67,43 @@ describe("cf executable resolution (ADR-0012 decision 7)", () => {
       );
     }
     assert.include(result.stdout, pinnedVersion);
+  });
+});
+
+// 契約（issue #695 の plan、完了契約 C2。ADR-0012 決定3「文書に無い Layer の組み立てを1つのアダプタの
+// モジュールに閉じ込める」。src/cloudflare/alchemy.test.ts もこのファイルも `alchemy` を直接 import しない
+// ことで、要件4「アダプタの1モジュールだけ」を運用上も保つ）。
+describe("Alchemy import containment (issue #695 decision 1, ADR-0012 decision 3)", () => {
+  it("only src/cloudflare/alchemy.ts imports from the alchemy package", () => {
+    // 部分一致（「含まれていること」だけ）では2本目の import に気付けないため、完全一致で比べる。
+    const alchemyImportPattern = /from\s+["']alchemy(?:\/[^"']*)?["']/u;
+    const importers = readdirSync(join(packageRoot, "src"), { recursive: true })
+      .map(String)
+      .filter((path) => path.endsWith(".ts"))
+      .filter((path) =>
+        alchemyImportPattern.test(readFileSync(join(packageRoot, "src", path), "utf8")),
+      )
+      .map((path) => `src/${path}`)
+      .sort();
+
+    assert.deepStrictEqual(importers, ["src/cloudflare/alchemy.ts"]);
+  });
+
+  // 禁止された形（issue #695 設計指針 1 行目・ADR-0012 Considered Options）: 下流リポに
+  // `alchemy.run.ts` を置き、alchemy の CLI に読ませる形。リポジトリが追跡・無視していない
+  // ファイルを git に列挙させて、その名前のファイルが 1 件も無いことを観測する。
+  it("ships no alchemy.run.ts anywhere in the repository", () => {
+    const listed = spawnSync("git", ["ls-files", "--cached", "--others", "--exclude-standard"], {
+      cwd: packageRoot,
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    assert.strictEqual(listed.status, 0, String(listed.stderr));
+
+    const matches = listed.stdout
+      .split("\n")
+      .filter((path) => path.endsWith("alchemy.run.ts"))
+      .sort();
+    assert.deepStrictEqual(matches, []);
   });
 });
