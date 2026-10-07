@@ -9,7 +9,7 @@ import {
 
 /**
  * アクセスキーの置き場。候補（secrets.json の参照／environment.json の秘密のブロック／どちらも無し）
- * を 1 つの分類値に畳む（アーキテクチャ知識「複数失敗を集約する境界」）。表示・判定はこの 1 つの値だけから作る。
+ * を 1 つの分類値に畳む。表示・判定はこの 1 つの値だけから作る。
  */
 export type AccessKeyLocation =
   | { readonly kind: "one_password"; readonly reference: string }
@@ -19,7 +19,7 @@ export type AccessKeyLocation =
 export type CloudflareStatus =
   | { readonly kind: "absent" }
   | {
-      readonly kind: "present";
+      readonly kind: "created";
       readonly accountId: string;
       readonly bucket: string;
       readonly accessKey: AccessKeyLocation;
@@ -53,6 +53,6 @@ export const cloudflareStatus: Effect.Effect<
     accessKey: accessKeyLocation(environmentFile.value, reference),
     accountId: environmentFile.value.accountId,
     bucket: environmentFile.value.bucket,
-    kind: "present",
+    kind: "created",
   };
 });

@@ -25,7 +25,7 @@ const createdEnvironment = { accountId, bucket };
 const onePasswordReference = "op://Private/nyaucast R2/access key id";
 const nextCommand = "nyaucast cloudflare";
 
-// 表示されてはいけない値。出力のどこかに現れたら漏洩として検出する（order.md 決定 4 行目・AC 2 行目）。
+// 表示されてはいけない値。出力のどこかに現れたら漏洩として検出する（issue #692 決定 4 行目・AC 2 行目）。
 const accessKeyIdSentinel = "ACCESS_KEY_ID_SENTINEL";
 const secretAccessKeySentinel = "SECRET_ACCESS_KEY_SENTINEL";
 const secretValues = [accessKeyIdSentinel, secretAccessKeySentinel];
@@ -199,7 +199,7 @@ describe("nyaucast cloudflare status", () => {
         Effect.gen(function* () {
           const { logs, outcome } = yield* runStatus();
 
-          // 未作成は成功で終える（order.md 決定 5 行目）。
+          // 未作成は成功で終える（issue #692 決定 5 行目）。
           assert.strictEqual(outcome._tag, "Success");
           assert.deepStrictEqual(statusFacts(logs), { next: nextCommand, state: "absent" });
           assert.deepStrictEqual(spawned, []);
@@ -548,7 +548,7 @@ describe("nyaucast cloudflare", () => {
         assert.strictEqual((outcome as { failure: { _tag: string } }).failure._tag, "ShowHelp");
         const help = [...logs, ...errors].join("\n");
         assert.include(help, "nyaucast cloudflare <subcommand>");
-        // この ticket が足すのは status だけ。plan と apply は後続の ticket（order.md 決定 1 行目）。
+        // この ticket が足すのは status だけ。plan と apply は後続の ticket（issue #692 決定 1 行目）。
         assert.deepStrictEqual(subcommandNames(help), ["status"]);
         for (const flag of ["--account", "--dry-run", "--yes"]) {
           assert.notInclude(flagNames(help), flag);

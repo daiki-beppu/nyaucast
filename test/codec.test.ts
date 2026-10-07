@@ -34,7 +34,7 @@ describe("known names come from the real definitions", () => {
     // Cloudflare 環境を見る CLI（issue #692）。`cloudflare` は子を持つ親で、その下に `status` がある。
     expect(known.cli.get("nyaucast cloudflare")).toBe(true);
     expect(known.cli.get("nyaucast cloudflare status")).toBe(false);
-    // plan と apply は後続の ticket（order.md 決定 1 行目）。この段では木に無い。
+    // plan と apply は後続の ticket（issue #692 決定 1 行目）。この段では木に無い。
     expect(known.cli.has("nyaucast cloudflare plan")).toBe(false);
     expect(known.cli.has("nyaucast cloudflare apply")).toBe(false);
     // 複数行の定義も拾う

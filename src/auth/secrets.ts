@@ -17,6 +17,10 @@ export class SecretResolutionFailed extends Schema.TaggedError<SecretResolutionF
 
 export type StaticSecretsFailure = SecretNotConfigured | SecretResolutionFailed;
 
+/** secrets.json のパス。置き場の唯一の定義で、cloudflare の status（issue #692）も失敗の事実にこれを使う。 */
+export const secretReferencesPath = (path: Path.Path, configRoot: string): string =>
+  path.join(configRoot, "secrets.json");
+
 /** secrets.json の形: シークレットの名前 → 1Password の参照（op://…）。値そのものは置かない。 */
 const SecretReferences = Schema.Record(Schema.String, Schema.String);
 
@@ -31,7 +35,7 @@ export const readSecretReference = (
   configRoot: string,
   name: string,
 ): Effect.Effect<Option.Option<string>> =>
-  fileSystem.readFileString(path.join(configRoot, "secrets.json")).pipe(
+  fileSystem.readFileString(secretReferencesPath(path, configRoot)).pipe(
     Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(SecretReferences))),
     Effect.map((references) => Option.fromNullishOr(references[name])),
     Effect.orElseSucceed(() => Option.none<string>()),
