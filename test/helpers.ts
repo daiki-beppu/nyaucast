@@ -214,18 +214,35 @@ export function publishedAdditionalProperties(tool: { parametersSchema: Decoder 
 export const environment = (env: Record<string, string>) =>
   ConfigProvider.layer(ConfigProvider.fromEnv({ env }));
 
+type SpawnerOutcome = { exitCode: number; stdout: string };
+type SpawnerRule = SpawnerOutcome & { args: ReadonlyArray<string>; command: string };
+
 /** 外部コマンド（`op` など）の偽物。呼ばれたコマンドを記録し、決めた終了コードと標準出力で終わる。 */
-export function fakeSpawner(outcome: { exitCode: number; stdout: string }) {
+export function fakeSpawner(outcome: SpawnerOutcome | ReadonlyArray<SpawnerRule>) {
   const calls: Array<{ args: ReadonlyArray<string>; command: string }> = [];
-  const stdout = Stream.make(new TextEncoder().encode(outcome.stdout));
   const spawner = ChildProcessSpawner.make((command) =>
-    Effect.sync(() => {
+    Effect.gen(function* () {
       if (command._tag === "StandardCommand") {
         calls.push({ args: command.args, command: command.command });
       }
+      const selected =
+        "exitCode" in outcome
+          ? outcome
+          : command._tag === "StandardCommand"
+            ? outcome.find(
+                (rule) =>
+                  rule.command === command.command &&
+                  rule.args.length === command.args.length &&
+                  rule.args.every((arg, index) => arg === command.args[index]),
+              )
+            : undefined;
+      if (selected === undefined) {
+        return yield* Effect.die("fakeSpawner に一致する規則がありません");
+      }
+      const stdout = Stream.make(new TextEncoder().encode(selected.stdout));
       return ChildProcessSpawner.makeHandle({
         all: stdout,
-        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(outcome.exitCode)),
+        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(selected.exitCode)),
         getInputFd: () => Sink.drain,
         getOutputFd: () => Stream.empty,
         isRunning: Effect.succeed(false),
