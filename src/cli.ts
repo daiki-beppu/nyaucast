@@ -9,6 +9,8 @@ import type { CredentialStore } from "./auth/credential-store.ts";
 import type { DeclaredAccounts } from "./auth/declared-accounts.ts";
 import type { StaticSecrets } from "./auth/secrets.ts";
 import type { ChannelSettings } from "./channel/channel-settings.ts";
+import type { CloudflareProvisioning } from "./cloudflare/alchemy.ts";
+import type { Cf } from "./cloudflare/cf.ts";
 import { cloudflareCommand } from "./cloudflare/cli.ts";
 import type { CloudflareEnvironment } from "./cloudflare/environment.ts";
 import { describeFailure } from "./failure-report.ts";
@@ -35,8 +37,8 @@ interface CliEnvironment<E2, R2, E3, R3, E4, R4, E5, R5, E6, R6> {
     E2,
     R2
   >;
-  // Cloudflare 環境の状態を見る CLI（issue #692）。資源の作成・変更は後続の ticket。
-  readonly cloudflare: Layer.Layer<CloudflareEnvironment, E6, R6>;
+  // Cloudflare 環境を作り、状態を見る CLI（issue #692・#696）。
+  readonly cloudflare: Layer.Layer<Cf | CloudflareEnvironment | CloudflareProvisioning, E6, R6>;
   readonly mcpServer: Layer.Layer<never, E3, R3>;
   readonly video: Layer.Layer<
     | ChannelSettings

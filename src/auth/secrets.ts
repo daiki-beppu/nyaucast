@@ -1,7 +1,8 @@
-import { Config, Context, Effect, FileSystem, Layer, Option, Path, Schema, Stream } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { Config, Context, Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
+import { ChildProcessSpawner } from "effect/process";
 
 import { decodeEnvironmentFile, environmentFilePath } from "../cloudflare/environment-file.ts";
+import { runCommand } from "../lib/command-output.ts";
 import { fileServices } from "./account-key.ts";
 
 // 失敗は、シークレットの名前だけを事実に持つ。参照（op://…）も値も持たない。
@@ -89,17 +90,10 @@ const makeStaticSecrets = Effect.fnUntraced(function* (configRoot: string) {
   // ファイルが無い・読めない・形が違うときは、参照が書かれていないものとして扱う。
   const referenceFor = (name: string) => readSecretReference(fileSystem, path, configRoot, name);
 
-  // spawner.string は終了コードを見ない。0 以外で終わった出力は秘密として扱わない。
+  // 0 以外で終わった出力は秘密として扱わない（exitCode は呼び出し側が見る）。
   const readFromOnePassword = (reference: string) =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const handle = yield* spawner.spawn(ChildProcess.make("op", ["read", reference]));
-        const [output, exitCode] = yield* Effect.all(
-          [Stream.mkString(Stream.decodeText(handle.stdout)), handle.exitCode],
-          { concurrency: "unbounded" },
-        );
-        return { exitCode, secret: output.replace(/\r?\n$/u, "") };
-      }),
+    runCommand(spawner, "op", ["read", reference]).pipe(
+      Effect.map(({ exitCode, stdout }) => ({ exitCode, secret: stdout.replace(/\r?\n$/u, "") })),
     );
 
   const resolveReference = (name: string, reference: string) =>

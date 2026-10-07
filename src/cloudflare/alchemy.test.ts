@@ -53,6 +53,25 @@ const tokenName = Effect.runSync(
   }),
 );
 
+/**
+ * 論理 ID（plan の行の `resource`）→ 期待する `kind` の対応表。`declaredResources` から動的に作る
+ * ので、宣言した資源の論理 ID を変えても追従する。これはアダプタの `kindOfResourceType`（非公開）
+ * とは別に、resourceType の文字列だけを根拠に独立して導出し、アダプタの resourceType → kind の
+ * 変換が取り違えていないかを確かめる（issue #696: plan の行から bucket と AccountApiToken を区別する）。
+ */
+const expectedKindOf = Effect.runSync(
+  Effect.map(
+    declaredResources(accountId),
+    (resources) =>
+      new Map(
+        resources.map((resource) => [
+          resource.id,
+          resource.type === "Cloudflare.R2.Bucket" ? "bucket" : "account-api-token",
+        ]),
+      ),
+  ),
+);
+
 const envelope = (result: unknown) =>
   Response.json({ success: true, errors: [], messages: [], result });
 
@@ -250,7 +269,10 @@ describe("CloudflareProvisioning.plan/apply", () => {
       }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(provisioning, environment({}))));
 
       assert.lengthOf(plan.rows, 2);
-      for (const row of plan.rows) assert.strictEqual(row.action, "create", row.resource);
+      for (const row of plan.rows) {
+        assert.strictEqual(row.action, "create", row.resource);
+        assert.strictEqual(row.kind, expectedKindOf.get(row.resource), row.resource);
+      }
 
       // 許可側: plan が出す要求は、state が無い資源の adoption probe（bucket の GET）だけ。
       assert.deepStrictEqual(
@@ -306,7 +328,10 @@ describe("CloudflareProvisioning.plan/apply", () => {
 
         // C1: plan は資源ごとに create/update/unchanged のいずれか1つを持つ一覧。新規なので全件 create。
         assert.lengthOf(plan.rows, 2);
-        for (const row of plan.rows) assert.strictEqual(row.action, "create", row.resource);
+        for (const row of plan.rows) {
+          assert.strictEqual(row.action, "create", row.resource);
+          assert.strictEqual(row.kind, expectedKindOf.get(row.resource), row.resource);
+        }
         // SCN-C21-N1: ハンドルの公開面に Alchemy の型（accountId・deployToken 等）が現れない。
         assert.deepStrictEqual(Object.keys(plan), ["rows"]);
         // 確認の時点では、まだ資源を変える要求が1件も出ていない。
@@ -444,8 +469,10 @@ describe("CloudflareProvisioning.plan/apply", () => {
         }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(secondLayer, environment({}))));
 
         assert.lengthOf(secondPlan.rows, 2);
-        for (const row of secondPlan.rows)
+        for (const row of secondPlan.rows) {
           assert.strictEqual(row.action, "unchanged", row.resource);
+          assert.strictEqual(row.kind, expectedKindOf.get(row.resource), row.resource);
+        }
         assert.deepStrictEqual(secondRun.requests, []);
       }),
   );
