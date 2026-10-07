@@ -1,9 +1,9 @@
 import { Effect, Option } from "effect";
 
+import type { CloudflareEnvironmentFile } from "./environment-file.ts";
 import {
   CloudflareEnvironment,
   type CloudflareAccessKeyReferenceInvalid,
-  type CloudflareEnvironmentFile,
   type CloudflareEnvironmentInvalid,
 } from "./environment.ts";
 
