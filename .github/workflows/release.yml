@@ -32,14 +32,12 @@ jobs:
       # ここでネットワーク fetch を挟むと必ず認証エラーで publish 前に落ちる。
       - name: Verify release commit is on main
         run: bash .github/scripts/check-release-ancestor.sh "$GITHUB_SHA" origin/main
-      - name: Setup pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      # pnpm（packageManager）と Node（devEngines.runtime）を入れ、依存を install する。
+      # require-lockfile で、lockfile が無いときも失敗させる（--frozen-lockfile 相当）。
+      - name: Setup pnpm, Node and dependencies
+        uses: pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024 # v3.0.0
         with:
-          node-version-file: package.json
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+          require-lockfile: true
       # Trusted Publisher は stage publish のみ許可し、公開は npmjs.com でパスキー承認する。
       # タグ push の checkout は detached HEAD で pnpm の branch 検査が必ず落ちるため
       # --no-git-checks で外す。main 到達性は上の Verify ステップが担保している。
