@@ -1,4 +1,4 @@
-import { Cause, Console, Effect, Exit, Layer, Predicate, Result, Runtime } from "effect";
+import { Cause, Console, Effect, Exit, Layer, Predicate, Result, Runtime, Schema } from "effect";
 import type { HttpClient } from "effect/http";
 import type { SqlClient } from "effect/sql";
 import { CliError, Command } from "effect/cli";
@@ -10,7 +10,7 @@ import type { DeclaredAccounts } from "./auth/declared-accounts.ts";
 import type { StaticSecrets } from "./auth/secrets.ts";
 import type { ChannelSettings } from "./channel/channel-settings.ts";
 import type { CloudflareProvisioning } from "./cloudflare/alchemy.ts";
-import type { Cf } from "./cloudflare/cf.ts";
+import { type Cf, CloudflareR2CheckoutRequired } from "./cloudflare/cf.ts";
 import { cloudflareCommand } from "./cloudflare/cli.ts";
 import type { CloudflareEnvironment } from "./cloudflare/environment.ts";
 import { describeFailure } from "./failure-report.ts";
@@ -74,6 +74,9 @@ interface CliEnvironment<E2, R2, E3, R3, E4, R4, E5, R5, E6, R6> {
 }
 
 const describeCliFailure = (error: unknown): string => {
+  if (Schema.is(CloudflareR2CheckoutRequired)(error)) {
+    return `${describeFailure(error)}: https://dash.cloudflare.com/${error.accountId}/r2/overview で checkout を完了してから nyaucast cloudflare を再実行してください。`;
+  }
   if (Predicate.isTagged(error, "CloudflareAccountRequired")) {
     return `${describeFailure(error)}: https://dash.cloudflare.com/sign-up でアカウントを作成してから nyaucast cloudflare を再実行してください。`;
   }

@@ -57,22 +57,21 @@ describe("prepareProvisioning account selection", () => {
       const tokenTargets: string[] = [];
       const planTargets: string[] = [];
       const accountListings: string[] = [];
-      const layer = Layer.mergeAll(
-        Layer.succeed(
-          Cf,
-          Cf.of({
-            whoami: Effect.succeed(true),
-            listAccounts: Effect.sync(() => {
-              accountListings.push("accounts");
-              return accounts;
-            }),
-            createToken: (input) =>
-              Effect.sync(() => {
-                tokenTargets.push(input.accountId);
-                return Redacted.make("test-deploy-token");
-              }),
+      const cfService = {
+        whoami: Effect.succeed(true),
+        listAccounts: Effect.sync(() => {
+          accountListings.push("accounts");
+          return accounts;
+        }),
+        checkR2Availability: () => Effect.void,
+        createToken: (input: Parameters<Cf["Service"]["createToken"]>[0]) =>
+          Effect.sync(() => {
+            tokenTargets.push(input.accountId);
+            return Redacted.make("test-deploy-token");
           }),
-        ),
+      };
+      const layer = Layer.mergeAll(
+        Layer.succeed(Cf, Cf.of(cfService)),
         Layer.succeed(
           CloudflareEnvironment,
           CloudflareEnvironment.of({
