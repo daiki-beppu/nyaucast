@@ -22,6 +22,69 @@ lockfile と `package.json` の乖離は check の最初のゲートが検出す
 
 全ゲートの入口は `pnpm run check`。ゲートの構成は `package.json` の `check` script だけが定義する。
 
+## Cloudflare 環境を作る
+
+Instagram へ動画を渡すための R2 環境を、自分の Cloudflare アカウントに作ります。環境は全チャンネルで共有するので、コマンドにチャンネル名は指定しません。
+
+### 手で行う3つの手順
+
+1. Cloudflare アカウントがなければ、[アカウント作成ページ](https://dash.cloudflare.com/sign-up)で作成します。
+2. Cloudflare ダッシュボードで対象のアカウントの R2 を開き、checkout を完了します。未完了のままコマンドを実行すると、そのアカウントの checkout URL を表示して止まります。案内されたページで完了してから再実行してください。支払い情報が必要かどうかは、この文書では断定しません。
+3. `nyaucast cloudflare` を実行します。未認証の場合は、nyaucast が内部で `cf auth create nyaucast --scopes workers-r2.write account_api_tokens:create` を起動します。表示された URL をブラウザで開き、表示されたコードに従って同意してください。認証が成功すると、同じコマンドの実行で plan に進みます。専用プロファイルの初回作成と再認証は、この同じ手順を使います。cf は nyaucast の依存に含まれるため、別途インストールする必要はありません。
+
+### コマンドの使い方
+
+```sh
+nyaucast cloudflare
+```
+
+plan は、対象アカウント、資源の作成・更新・変更なし、R2 アクセスキーの保存先を表示します。作成対象は `nyaucast-media` bucket、オブジェクトを7日後に削除するライフサイクルルール、アクセスキーの元になる Account API Token です。変更またはファイルから1Passwordへのキー移行がある場合は、端末の確認に同意すると apply（適用）します。資源がすべて変更なしでキー移行もなければ、確認せず要約を表示し、終了コード0で終わります。
+
+人間が plan を承認済みの場合は、`--yes` で適用時の確認を省けます。ブラウザでの認証や R2 checkout は省略できません。
+
+```sh
+nyaucast cloudflare --yes
+```
+
+複数アカウントがあり、まだ使用アカウントを保存していない場合、端末ではアカウントを選択します。対話できない実行（非TTY）では `--account <id>` が必要です。`<id>` は案内された対象アカウントの ID に置き換えてください。
+
+```sh
+nyaucast cloudflare --account <id>
+```
+
+アカウントが1つなら自動で使います。適用後のアカウント ID は `~/.config/nyaucast/cloudflare/environment.json` に保存し、再実行時に再利用します。保存済み ID と異なる `--account` は拒否します。v0.1 で利用者が扱えるアカウントは1つです。
+
+保存済みの状態を確認するには、次を実行します。
+
+```sh
+nyaucast cloudflare status
+```
+
+`status` はローカルの `environment.json` と `secrets.json` だけを読み、作成済みか、アカウント、bucket、アクセスキーの保存先を表示します。ネットワークへ問い合わせないため、Cloudflare 上の実状態や認証の有効性を確認するものではありません。
+
+### エージェントが代行する場合
+
+1. エージェントは、対話できない実行で `--yes` を付けずに `nyaucast cloudflare` を実行します。複数アカウントから初めて選ぶ場合は `--account <id>` を付けます。ブラウザでの同意や checkout が必要なら、人間が上の手順を済ませます。
+2. 変更またはキー移行がある場合、plan が表示され、適用せずに終了コード2（承認が必要）で止まります。エージェントは plan を人間に見せ、承認を得ます。
+3. 承認後に `nyaucast cloudflare --yes` で再実行します。`--account <id>` を使った場合は、同じ ID を指定します。
+
+```sh
+# plan を人間に見せて承認を得る
+nyaucast cloudflare --account <id>
+# 承認後に実行する
+nyaucast cloudflare --account <id> --yes
+```
+
+変更もキー移行もない場合は終了コード0で終わり、承認のための再実行は不要です。この文書と自動テストの確認は、ブラウザ同意や Cloudflare・1Password の実連携の確認を代替しません。実機確認は [#706](https://github.com/daiki-beppu/nyaucast/issues/706) に残します。
+
+### state を失ったとき
+
+Alchemy の state は `~/.config/nyaucast/cloudflare/` に保存されます。state を失った後に `nyaucast cloudflare` を再実行すると、plan にトークンの作成が出て、承認・適用後に新しい Account API Token とアクセスキーが発行されます。古いトークンは自動で失効せず、有効なまま残ります。
+
+1. 再実行の plan で対象アカウントとトークンの作成を確認し、承認して適用します。
+2. Cloudflare ダッシュボードで、その対象アカウントの **Account API Tokens** を開きます。
+3. R2 アクセスキーの元になる `nyaucast-media-write` トークンのうち、再発行前の古いトークンを特定して削除します。再発行された使用中の新しいトークンは残してください。同名のトークンをまとめて削除せず、古いものを区別できない場合は削除前に確認してください。
+
 ## R2アクセスキーの保存先
 
 ファイルで運用していた場合、`op whoami` が成功するようになった後の `nyaucast cloudflare` で、planに「ファイルから 1Password へ移す」と表示します。資源がすべて変更なしでも確認し、承認後に両キーを1Passwordへ保存して参照を記録し、`environment.json` の秘密ブロックを消します。
