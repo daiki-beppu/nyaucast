@@ -18,7 +18,7 @@ import { CloudflareEnvironment } from "./cloudflare/environment.ts";
 import { CollectionIds } from "./collections/collection-ids.ts";
 import { CollectionDirectories } from "./collections/directories.ts";
 import { LocalStore } from "./db/local-store.ts";
-import { nyaucastCli, version } from "./cli.ts";
+import { cliTeardown, nyaucastCli, version } from "./cli.ts";
 import { Chrome, chromeCacheDirectory } from "./lib/chrome.ts";
 import { InstagramAuth } from "./instagram/auth.ts";
 import {
@@ -164,9 +164,18 @@ const post = Layer.mergeAll(
 );
 
 Stdio.Stdio.use(({ args }) =>
-  Effect.flatMap(args, nyaucastCli({ auth: authServices, cloudflare, mcpServer, post, video })),
+  Effect.flatMap(
+    args,
+    nyaucastCli({
+      auth: authServices,
+      cloudflare: Layer.merge(cloudflare, stdinTerminal),
+      mcpServer,
+      post,
+      video,
+    }),
+  ),
 ).pipe(
   Effect.provide(NodeServices.layer),
   Effect.provideService(Logger.LogToStderr, true),
-  NodeRuntime.runMain({ disableErrorReporting: true }),
+  NodeRuntime.runMain({ disableErrorReporting: true, teardown: cliTeardown }),
 );

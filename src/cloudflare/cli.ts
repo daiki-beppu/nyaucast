@@ -1,5 +1,7 @@
 import { Console, Effect } from "effect";
-import { Command, Flag } from "effect/cli";
+import { Command, Flag, Prompt } from "effect/cli";
+
+import { StdinTerminal } from "../videos/stdin-terminal.ts";
 
 import { bucketName, bucketRetentionDays, type ProvisioningPlanRow } from "./alchemy.ts";
 import { decideProvisioning, prepareProvisioning, type PreparedProvisioning } from "./provision.ts";
@@ -72,7 +74,20 @@ const create = (yes: boolean) =>
     Effect.gen(function* () {
       const prepared = yield* prepareProvisioning;
       yield* showPlan(prepared);
-      const decision = yield* decideProvisioning(prepared.rows, yes);
+      const decision = yield* decideProvisioning(prepared.rows, yes).pipe(
+        Effect.catchTag("CloudflareConfirmationRequired", (error) =>
+          Effect.gen(function* () {
+            if (!(yield* StdinTerminal).isTerminal) {
+              return yield* error;
+            }
+            const approved = yield* Prompt.run(
+              Prompt.Confirm({ message: "この plan を適用しますか", initial: false }),
+            );
+            return approved ? ("apply" as const) : ("declined" as const);
+          }),
+        ),
+      );
+      if (decision === "declined") return;
       yield* decision === "unchanged"
         ? showSummary({ accountId: prepared.account.id, bucket: bucketName })
         : applyAndShowSummary(prepared);

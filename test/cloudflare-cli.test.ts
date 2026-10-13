@@ -3,8 +3,9 @@ import { dirname, join } from "node:path";
 
 import { NodeServices } from "@effect/platform-node";
 import { assert, describe, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Redacted, Sink, Stream } from "effect";
+import { Effect, FileSystem, Layer, Option, Queue, Redacted, Sink, Stream, Terminal } from "effect";
 import { ChildProcessSpawner } from "effect/process";
+import { TestConsole } from "effect/testing";
 
 import { StaticSecrets } from "../src/auth/secrets.ts";
 import { nyaucastCli } from "../src/cli.ts";
@@ -17,6 +18,7 @@ import {
 import { Cf } from "../src/cloudflare/cf.ts";
 import { CloudflareEnvironment } from "../src/cloudflare/environment.ts";
 import { cfExecutablePath } from "../src/lib/cf-bin.ts";
+import { StdinTerminal } from "../src/videos/stdin-terminal.ts";
 import {
   environment,
   failureFacts,
@@ -71,13 +73,48 @@ const writeSecrets = (configRoot: string, references: Record<string, string>): v
 
 // CLI のプログラムへ渡す cloudflare には、このテストの文脈がすでに持っている instance を転送する。
 // 1 つのテストの中の複数回の実行が同じ instance を見る必要があるため（読むのは呼び出しのたび）、新しく組まない。
-// `cloudflare` の木全体（status も含む）が `Cf | CloudflareEnvironment | CloudflareProvisioning` を
-// 要求する配線（issue #696）に合わせ、3 service とも転送する。
+// Cloudflare のサービスと stdin の TTY 判定を同じ実行文脈から転送する。
 const forwardedCloudflare = Layer.effectContext(
-  Effect.context<Cf | CloudflareEnvironment | CloudflareProvisioning>(),
+  Effect.context<Cf | CloudflareEnvironment | CloudflareProvisioning | StdinTerminal>(),
 );
 
-const runCloudflare = (arguments_: readonly string[]) =>
+const confirmationTerminal = (isTerminal: boolean, answer: string | undefined) => {
+  const state = { prompts: 0, planAtPrompt: [] as string[], display: [] as string[] };
+  const layer = Layer.mergeAll(
+    Layer.succeed(StdinTerminal, StdinTerminal.of({ isTerminal })),
+    Layer.succeed(
+      Terminal.Terminal,
+      Terminal.make({
+        columns: Effect.succeed(80),
+        display: (text) =>
+          Effect.sync(() => {
+            state.display.push(text);
+          }),
+        readInput: Effect.gen(function* () {
+          state.prompts += 1;
+          state.planAtPrompt = (yield* TestConsole.logLines).map(String);
+          if (answer === undefined || state.prompts !== 1) {
+            return yield* Effect.die("確認を求めてはいけない条件で入力が要求された");
+          }
+          const input = yield* Queue.unbounded<Terminal.UserInput, never>();
+          yield* Queue.offer(input, {
+            input: answer === "enter" ? Option.none() : Option.some(answer),
+            key: { ctrl: false, meta: false, name: answer, shift: false },
+          });
+          return input;
+        }),
+        readLine: Effect.die("確認は文字入力で行う"),
+        rows: Effect.succeed(24),
+      }),
+    ),
+  );
+  return { layer, state };
+};
+
+const runCloudflare = (
+  arguments_: readonly string[],
+  terminal = confirmationTerminal(false, undefined),
+) =>
   runProgram(
     nyaucastCli({
       auth: unusedAuthLayer,
@@ -85,7 +122,7 @@ const runCloudflare = (arguments_: readonly string[]) =>
       mcpServer: Layer.empty,
       post: unusedPostLayer,
       video: unusedVideoLayer,
-    })(["cloudflare", ...arguments_]),
+    })(["cloudflare", ...arguments_]).pipe(Effect.provide(terminal.layer)),
   );
 
 const runStatus = () => runCloudflare(["status"]);
@@ -798,6 +835,166 @@ const withCreateFlow = <A, E, R>(
     );
   });
 
+describe("nyaucast cloudflare confirmation", () => {
+  const adapterForConfirmation = () =>
+    fakeProvisioning({
+      accessKeyId: accessKeyIdSentinel,
+      accountId,
+      bucket,
+      secretAccessKey: secretAccessKeySentinel,
+    });
+  const authenticated = {
+    accountsList: accountsListResponse([{ id: accountId, name: accountName }]),
+    tokensCreate: tokensCreateSuccess(deployTokenSentinel),
+    whoami: whoamiAuthenticated,
+  };
+  const changedPlanLines = [
+    `plan.account=${accountId}`,
+    `plan.accountName=${accountName}`,
+    "plan.accessKey=file",
+    `plan.bucket=create name=${bucket} lifecycle=delete-objects-after-7-days`,
+    "plan.accountApiToken=create",
+  ];
+
+  it.effect.each([
+    { answer: "y", applies: true },
+    { answer: "N", applies: false },
+    { answer: "enter", applies: false },
+  ])(
+    "shows the complete plan before asking y/N and succeeds after $answer on a TTY",
+    ({ answer, applies }) => {
+      const adapter = adapterForConfirmation();
+      const terminal = confirmationTerminal(true, answer);
+      return withCreateFlow(
+        "nyaucast-cloudflare-confirm-",
+        authenticated,
+        adapter,
+        ({ configRoot }) =>
+          Effect.gen(function* () {
+            writeEnvironment(configRoot, {
+              accountId: "previous-account",
+              bucket: "previous-bucket",
+            });
+            const before = readFileSync(environmentPathOf(configRoot), "utf8");
+            const { outcome } = yield* runCloudflare([], terminal);
+
+            assert.strictEqual(outcome._tag, "Success");
+            assert.strictEqual(terminal.state.prompts, 1);
+            assert.deepStrictEqual(terminal.state.planAtPrompt, changedPlanLines);
+            assert.include(terminal.state.display.join(""), "(y/N)");
+            assert.strictEqual(adapter.planInputs.length, 1);
+            assert.strictEqual(adapter.state.applyCalls, applies ? 1 : 0);
+            if (applies) {
+              assert.strictEqual(adapter.applyInputs[0], adapter.planOutputs[0]);
+              assert.deepStrictEqual(
+                JSON.parse(readFileSync(environmentPathOf(configRoot), "utf8")),
+                {
+                  accountId,
+                  bucket,
+                  secrets: secretsBlock,
+                },
+              );
+            } else {
+              assert.strictEqual(readFileSync(environmentPathOf(configRoot), "utf8"), before);
+            }
+          }),
+      );
+    },
+  );
+
+  it.effect(
+    "shows the plan and approval instructions without prompting or applying on non-TTY stdin",
+    () => {
+      const adapter = adapterForConfirmation();
+      const terminal = confirmationTerminal(false, undefined);
+      return withCreateFlow(
+        "nyaucast-cloudflare-no-tty-",
+        authenticated,
+        adapter,
+        ({ configRoot }) =>
+          Effect.gen(function* () {
+            writeEnvironment(configRoot, createdEnvironment);
+            const before = readFileSync(environmentPathOf(configRoot), "utf8");
+            const { errors, logs, outcome } = yield* runCloudflare([], terminal);
+
+            assert.deepStrictEqual(failureFacts(failureOf(outcome)), {
+              _tag: "CloudflareConfirmationRequired",
+            });
+            assert.deepStrictEqual(logs, changedPlanLines);
+            assert.match(errors.join("\n"), /承認.*--yes.*再実行/u);
+            assert.strictEqual(terminal.state.prompts, 0);
+            assert.strictEqual(adapter.state.applyCalls, 0);
+            assert.strictEqual(readFileSync(environmentPathOf(configRoot), "utf8"), before);
+          }),
+      );
+    },
+  );
+
+  it.effect.each([true, false])(
+    "skips confirmation for an unchanged plan when isTerminal=%s",
+    (isTerminal) => {
+      const adapter = adapterForConfirmation();
+      const terminal = confirmationTerminal(isTerminal, undefined);
+      return withCreateFlow(
+        "nyaucast-cloudflare-no-changes-",
+        authenticated,
+        adapter,
+        ({ configRoot }) =>
+          Effect.gen(function* () {
+            yield* runCloudflare(["--yes"]);
+            const before = readFileSync(environmentPathOf(configRoot), "utf8");
+            const { logs, outcome } = yield* runCloudflare([], terminal);
+
+            assert.strictEqual(outcome._tag, "Success");
+            assert.strictEqual(terminal.state.prompts, 0);
+            assert.strictEqual(adapter.state.applyCalls, 1);
+            assert.include(logs, `account=${accountId}`);
+            assert.include(logs, `bucket=${bucket}`);
+            assert.include(logs, "accessKey=file");
+            assert.strictEqual(readFileSync(environmentPathOf(configRoot), "utf8"), before);
+          }),
+      );
+    },
+  );
+
+  it.effect.each([true, false])(
+    "applies the prepared plan without prompting with --yes when isTerminal=%s",
+    (isTerminal) => {
+      const adapter = adapterForConfirmation();
+      const terminal = confirmationTerminal(isTerminal, undefined);
+      return withCreateFlow("nyaucast-cloudflare-yes-", authenticated, adapter, ({ configRoot }) =>
+        Effect.gen(function* () {
+          const { outcome } = yield* runCloudflare(["--yes"], terminal);
+
+          assert.strictEqual(outcome._tag, "Success");
+          assert.strictEqual(terminal.state.prompts, 0);
+          assert.strictEqual(adapter.planInputs.length, 1);
+          assert.strictEqual(adapter.state.applyCalls, 1);
+          assert.strictEqual(adapter.applyInputs[0], adapter.planOutputs[0]);
+          assert.deepStrictEqual(JSON.parse(readFileSync(environmentPathOf(configRoot), "utf8")), {
+            accountId,
+            bucket,
+            secrets: secretsBlock,
+          });
+        }),
+      );
+    },
+  );
+
+  it.effect("rejects --dry-run before preparing or applying resources", () => {
+    const adapter = adapterForConfirmation();
+    return withCreateFlow("nyaucast-cloudflare-dry-run-", authenticated, adapter, ({ cfCalls }) =>
+      Effect.gen(function* () {
+        const { outcome } = yield* runCloudflare(["--dry-run"]);
+        assert.strictEqual(outcome._tag, "Failure");
+        assert.deepStrictEqual(cfCalls, []);
+        assert.strictEqual(adapter.planInputs.length, 0);
+        assert.strictEqual(adapter.state.applyCalls, 0);
+      }),
+    );
+  });
+});
+
 describe("nyaucast cloudflare --yes (create)", () => {
   it.effect(
     "creates the environment, shows the plan, and writes environment.json that status and StaticSecrets can read back",
@@ -944,9 +1141,12 @@ describe("nyaucast cloudflare --yes (create)", () => {
     },
   );
 
-  it.effect(
-    "shows the plan but does not write environment.json or show a success summary when apply fails",
-    () => {
+  it.effect.each([
+    { name: "--yes", args: ["--yes"], isTerminal: false, answer: undefined },
+    { name: "TTY approval", args: [], isTerminal: true, answer: "y" },
+  ])(
+    "shows the plan but does not write environment.json or show a success summary when apply fails after $name",
+    ({ args, isTerminal, answer }) => {
       const applyCalls = { count: 0 };
       const adapter = {
         layer: Layer.succeed(
@@ -976,7 +1176,10 @@ describe("nyaucast cloudflare --yes (create)", () => {
         adapter,
         ({ configRoot }) =>
           Effect.gen(function* () {
-            const { errors, logs, outcome } = yield* runCloudflare(["--yes"]);
+            const { errors, logs, outcome } = yield* runCloudflare(
+              args,
+              confirmationTerminal(isTerminal, answer),
+            );
 
             // plan は apply より前に無条件で表示済み（分岐の前に出す契約は apply の成否に関わらず保つ）。
             assert.include(

@@ -92,6 +92,7 @@ export const unusedCloudflareLayer = Layer.mergeAll(
   Layer.effect(Cf, notUsed),
   Layer.effect(CloudflareEnvironment, notUsed),
   Layer.effect(CloudflareProvisioning, notUsed),
+  Layer.effect(StdinTerminal, notUsed),
 );
 
 /** video を使わないテストが CLI のプログラムへ渡す Layer。組まれたら失敗する。 */
