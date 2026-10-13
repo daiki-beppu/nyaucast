@@ -15,6 +15,7 @@ import { ChannelSettings } from "./channel/channel-settings.ts";
 import { CloudflareProvisioning } from "./cloudflare/alchemy.ts";
 import { Cf } from "./cloudflare/cf.ts";
 import { CloudflareEnvironment } from "./cloudflare/environment.ts";
+import { OnePasswordR2 } from "./cloudflare/one-password.ts";
 import { CollectionIds } from "./collections/collection-ids.ts";
 import { CollectionDirectories } from "./collections/directories.ts";
 import { LocalStore } from "./db/local-store.ts";
@@ -49,6 +50,7 @@ const cloudflare = Layer.mergeAll(
   Cf.layer(process.env),
   CloudflareEnvironment.layer({ configRoot }),
   CloudflareProvisioning.layer({ configRoot }),
+  OnePasswordR2.layer({ configRoot }),
 ).pipe(Layer.provide(NodeHttpClient.layerUndici));
 const thumbnailFiles = ThumbnailFiles.layer(channelRoot);
 const credentialStore = CredentialStore.layer({ credentialRoot: join(configRoot, "credentials") });

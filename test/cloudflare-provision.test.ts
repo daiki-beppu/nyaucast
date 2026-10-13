@@ -8,6 +8,7 @@ import {
 } from "../src/cloudflare/alchemy.ts";
 import { Cf } from "../src/cloudflare/cf.ts";
 import { CloudflareEnvironment } from "../src/cloudflare/environment.ts";
+import { OnePasswordR2 } from "../src/cloudflare/one-password.ts";
 import { decideProvisioning, prepareProvisioning } from "../src/cloudflare/provision.ts";
 
 // `test/cloudflare-cli.test.ts` の `fakeProvisioning` は、全行が同じ action（全行 create か
@@ -71,6 +72,14 @@ describe("prepareProvisioning account selection", () => {
           }),
       };
       const layer = Layer.mergeAll(
+        Layer.succeed(
+          OnePasswordR2,
+          OnePasswordR2.of({
+            available: Effect.succeed(false),
+            hasReferences: Effect.succeed(false),
+            save: () => Effect.die("preparation does not save an item"),
+          }),
+        ),
         Layer.succeed(Cf, Cf.of(cfService)),
         Layer.succeed(
           CloudflareEnvironment,
@@ -80,7 +89,7 @@ describe("prepareProvisioning account selection", () => {
                 ? Option.some({ accountId: "selected", bucket: "nyaucast-media" })
                 : Option.none(),
             ),
-            accessKeyReference: Effect.die("selection does not resolve secrets"),
+            accessKeyReference: Effect.succeed(Option.none()),
             write: () => Effect.die("preparation does not save the account"),
           }),
         ),

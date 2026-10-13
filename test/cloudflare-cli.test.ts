@@ -5,11 +5,14 @@ import { NodeServices } from "@effect/platform-node";
 import { assert, describe, it } from "@effect/vitest";
 import {
   Console,
+  Deferred,
   Effect,
   FileSystem,
   Layer,
   Option,
+  PlatformError,
   Queue,
+  Schema,
   Redacted,
   Sink,
   Stream,
@@ -28,6 +31,7 @@ import {
 } from "../src/cloudflare/alchemy.ts";
 import { Cf } from "../src/cloudflare/cf.ts";
 import { CloudflareEnvironment } from "../src/cloudflare/environment.ts";
+import { OnePasswordR2 } from "../src/cloudflare/one-password.ts";
 import { cfExecutablePath } from "../src/lib/cf-bin.ts";
 import { StdinTerminal } from "../src/videos/stdin-terminal.ts";
 import {
@@ -90,7 +94,14 @@ const writeSecrets = (configRoot: string, references: Record<string, string>): v
 // 1 つのテストの中の複数回の実行が同じ instance を見る必要があるため（読むのは呼び出しのたび）、新しく組まない。
 // Cloudflare のサービスと stdin の TTY 判定を同じ実行文脈から転送する。
 const forwardedCloudflare = Layer.effectContext(
-  Effect.context<Cf | CloudflareEnvironment | CloudflareProvisioning | StdinTerminal>(),
+  Effect.context<
+    | Cf
+    | CloudflareEnvironment
+    | CloudflareProvisioning
+    | StaticSecrets
+    | OnePasswordR2
+    | StdinTerminal
+  >(),
 );
 
 const confirmationTerminal = (
@@ -206,7 +217,21 @@ const withConfigRoot = <A, E, R>(
     );
     return yield* use({ configRoot, spawned: spawner.calls }).pipe(
       Effect.provide(
-        Layer.mergeAll(cf, cloudflare, provisioning, NodeServices.layer, environment(env)),
+        Layer.mergeAll(
+          cf,
+          cloudflare,
+          OnePasswordR2.layer({ configRoot }).pipe(
+            Layer.provide(spawner.layer),
+            Layer.provide(NodeServices.layer),
+          ),
+          provisioning,
+          StaticSecrets.layer({ configRoot }).pipe(
+            Layer.provide(spawner.layer),
+            Layer.provide(NodeServices.layer),
+          ),
+          NodeServices.layer,
+          environment(env),
+        ),
       ),
     );
   });
@@ -698,19 +723,212 @@ const classifyCfCall = (
   return "unknown";
 };
 
+// op item create/edit の JSON と stdin は公式 CLI の契約に合わせる。
+// https://www.1password.dev/cli/reference/management-commands/item
+const OpItem = Schema.StructWithRest(
+  Schema.Struct({
+    id: Schema.String,
+    title: Schema.String,
+    vault: Schema.Struct({ id: Schema.String, name: Schema.String }),
+    fields: Schema.Array(
+      Schema.Struct({
+        id: Schema.String,
+        label: Schema.String,
+        type: Schema.String,
+        value: Schema.String,
+        section: Schema.optionalKey(Schema.Struct({ id: Schema.String })),
+      }),
+    ),
+  }),
+  [Schema.Record(Schema.String, Schema.Unknown)],
+);
+type OpItemValue = typeof OpItem.Type;
+const defaultVault = { id: "vault-test-id", name: "Personal Test Vault" };
+const opItem = (id: string): OpItemValue => ({
+  id,
+  title: "nyaucast R2",
+  vault: defaultVault,
+  fields: [
+    { id: "id-field", label: "R2_ACCESS_KEY_ID", type: "STRING", value: "OLD_ID" },
+    { id: "secret-field", label: "R2_SECRET_ACCESS_KEY", type: "CONCEALED", value: "OLD_SECRET" },
+  ],
+});
+
+const fakeR2OnePassword = (options: {
+  authentication: "authenticated" | "missing" | "signed-out";
+  existing?: OpItemValue;
+  fail?: "list" | "create" | "edit";
+}) => {
+  const state = { authentication: options.authentication, fail: options.fail };
+  const items: OpItemValue[] = options.existing === undefined ? [] : [options.existing];
+  const calls: Array<{ args: ReadonlyArray<string>; stdin: string }> = [];
+  const spawner = ChildProcessSpawner.make((command) =>
+    Effect.gen(function* () {
+      if (command._tag !== "StandardCommand" || command.command !== "op") {
+        return yield* Effect.die("op の偽物は op の StandardCommand だけに応答する");
+      }
+      const call = { args: command.args, stdin: "" };
+      calls.push(call);
+      if (state.authentication === "missing") {
+        return yield* PlatformError.systemError({
+          _tag: "NotFound",
+          module: "ChildProcess",
+          method: "spawn",
+          pathOrDescriptor: "op",
+        });
+      }
+      const inputEnded = yield* Deferred.make<void>();
+      const decoder = new TextDecoder();
+      const stdin = Sink.forEach((bytes: Uint8Array) =>
+        Effect.sync(() => {
+          call.stdin += decoder.decode(bytes, { stream: true });
+        }),
+      ).pipe(Sink.mapEffect(() => Deferred.succeed(inputEnded, undefined).pipe(Effect.asVoid)));
+      // ChildProcess の stream 入力と handle.stdin の両方が同じ外部入力になる。
+      if (Stream.isStream(command.options.stdin)) {
+        yield* Stream.run(command.options.stdin, stdin);
+      } else if (
+        typeof command.options.stdin === "object" &&
+        Stream.isStream(command.options.stdin.stream)
+      ) {
+        yield* Stream.run(command.options.stdin.stream, stdin);
+      }
+      const respond = Effect.gen(function* () {
+        const args = call.args;
+        if (args.includes("whoami")) {
+          return state.authentication === "signed-out"
+            ? { exitCode: 1, stdout: "not signed in" }
+            : {
+                exitCode: 0,
+                stdout: JSON.stringify({
+                  account_uuid: "test-account",
+                  url: "test.1password.com",
+                  email: "test@example.invalid",
+                  user_uuid: "test-user",
+                }),
+              };
+        }
+        const operation = args[1];
+        if (operation === "create" && args.includes("--dry-run")) {
+          yield* Deferred.await(inputEnded);
+          return { exitCode: 0, stdout: JSON.stringify({ vault: defaultVault }) };
+        }
+        if (operation === state.fail) {
+          return { exitCode: 1, stdout: `${accessKeyIdSentinel} ${secretAccessKeySentinel}` };
+        }
+        if (args[0] === "read") {
+          const reference = args[1];
+          for (const item of items) {
+            for (const field of item.fields) {
+              const parts = reference?.split("/");
+              if (
+                (parts?.length === 5 || parts?.length === 6) &&
+                [item.vault.id, item.vault.name].includes(parts[2]!) &&
+                [item.id, item.title].includes(parts[3]!) &&
+                [field.id, field.label].includes(parts.at(-1)!) &&
+                (parts.length === 5 ? field.section === undefined : parts[4] === field.section?.id)
+              ) {
+                return { exitCode: 0, stdout: `${field.value}\n` };
+              }
+            }
+          }
+          return { exitCode: 1, stdout: "reference not found" };
+        }
+        if (operation === "list")
+          return {
+            exitCode: 0,
+            stdout: JSON.stringify(
+              items
+                .filter((item) => {
+                  const vault = flagValue(args, "--vault");
+                  return vault === undefined || [item.vault.id, item.vault.name].includes(vault);
+                })
+                .map((item) => ({ id: item.id, title: item.title, vault: item.vault })),
+            ),
+          };
+        if (operation === "get") {
+          const item = items.find(
+            (candidate) => args.includes(candidate.id) || args.includes(candidate.title),
+          );
+          return item === undefined
+            ? { exitCode: 1, stdout: "item not found" }
+            : { exitCode: 0, stdout: JSON.stringify(item) };
+        }
+        if (operation === "create" || operation === "edit") {
+          yield* Deferred.await(inputEnded);
+          const template = JSON.parse(call.stdin) as {
+            title?: string;
+            fields: OpItemValue["fields"];
+            vault?: { id: string };
+          };
+          const existing =
+            operation === "edit"
+              ? items.find(
+                  (candidate) => args.includes(candidate.id) || args.includes(candidate.title),
+                )
+              : undefined;
+          if (operation === "edit" && existing === undefined)
+            return yield* Effect.die("更新対象が存在しない");
+          const requestedVault = flagValue(args, "--vault") ?? template.vault?.id;
+          const vault =
+            requestedVault === undefined ||
+            [defaultVault.id, defaultVault.name].includes(requestedVault)
+              ? defaultVault
+              : { id: "other-vault-id", name: requestedVault };
+          const item = yield* Schema.decodeUnknownEffect(OpItem)({
+            ...template,
+            id: existing?.id ?? "created-r2",
+            title: template.title ?? existing?.title ?? flagValue(args, "--title"),
+            vault: existing?.vault ?? vault,
+            fields: template.fields.map((field, index) => ({
+              ...field,
+              id: field.id ?? `field-${index}`,
+            })),
+          }).pipe(Effect.orDie);
+          if (existing === undefined) items.push(item);
+          else items.splice(items.indexOf(existing), 1, item);
+          return { exitCode: 0, stdout: JSON.stringify(item) };
+        }
+        return yield* Effect.die(`未対応の op 操作: ${args.join(" ")}`);
+      });
+      const response = yield* Effect.cached(respond);
+      const stdout = Stream.fromEffect(
+        response.pipe(Effect.map((response) => new TextEncoder().encode(response.stdout))),
+      );
+      return ChildProcessSpawner.makeHandle({
+        all: stdout,
+        stdout,
+        stderr: Stream.empty,
+        stdin,
+        exitCode: response.pipe(
+          Effect.map((response) => ChildProcessSpawner.ExitCode(response.exitCode)),
+        ),
+        getInputFd: () => stdin,
+        getOutputFd: () => Stream.empty,
+        isRunning: Effect.succeed(false),
+        kill: () => Effect.void,
+        pid: ChildProcessSpawner.ProcessId(1),
+        unref: Effect.succeed(Effect.void),
+      });
+    }),
+  );
+  return { calls, items, spawner, state };
+};
+
 /**
  * `cf` の偽物。`test/helpers.ts` の `fakeSpawner` は規則を args の完全一致で選ぶが、デプロイ用
  * トークンの `--policies` の正確な形がこの時点で確定できない（上の未解決事項）ため、この偽物は
  * 呼び出しの種類（`classifyCfCall`）だけで応答を選ぶ。記録した呼び出しは `calls` にすべて残るので、
  * `--profile` の伝播や `--expires-on` の値は呼び出し後にテストが直接検査する。
  */
-const fakeCf = (script: CfScript) => {
+const fakeCf = (script: CfScript, op: ReturnType<typeof fakeR2OnePassword>) => {
   const calls: Array<CfCall> = [];
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.gen(function* () {
       if (command._tag !== "StandardCommand") {
         return yield* Effect.die("fakeCf は StandardCommand だけに応答する");
       }
+      if (command.command === "op") return yield* op.spawner.spawn(command);
       calls.push({
         args: command.args,
         command: command.command,
@@ -787,11 +1005,8 @@ const fakeProvisioning = (result: {
 }) => {
   const state = { applied: false, applyCalls: 0 };
   const planInputs: Array<{ accountId: string; deployToken: Redacted.Redacted<string> }> = [];
-  // testing-003: plan が返したハンドルがそのまま apply に渡ることを、値の等価性ではなく参照同一性で
-  // 確認できるよう、plan の戻り値と apply が受け取った引数の両方を記録する（plan.md:214 の
-  // C-APPLY-YES。ハンドルは不透明な公開面を持つ契約で、plan を取り直さない経路を参照同一性で検証する）。
-  const planOutputs: Array<ProvisioningPlan> = [];
-  const applyInputs: Array<ProvisioningPlan> = [];
+  const planOutputs: ProvisioningPlan[] = [];
+  const applyInputs: ProvisioningPlan[] = [];
   const planRow = (kind: "account-api-token" | "bucket") => ({
     action: state.applied ? "unchanged" : "create",
     kind,
@@ -821,10 +1036,10 @@ const fakeProvisioning = (result: {
       }),
   });
   return {
-    applyInputs,
     layer: Layer.succeed(CloudflareProvisioning, service),
     planInputs,
     planOutputs,
+    applyInputs,
     state,
   };
 };
@@ -880,18 +1095,23 @@ const withCreateFlow = <A, E, R>(
   adapter: { layer: Layer.Layer<CloudflareProvisioning> },
   use: (context: { cfCalls: ReadonlyArray<CfCall>; configRoot: string }) => Effect.Effect<A, E, R>,
   parentEnv: Record<string, string> = {},
+  op = fakeR2OnePassword({ authentication: "missing" }),
   configEnv: Record<string, string> = {},
 ) =>
   Effect.gen(function* () {
     const configRoot = yield* temporaryDirectory(prefix);
-    const cf = fakeCf(cfScript);
+    const cf = fakeCf(cfScript, op);
     const cloudflare = Layer.mergeAll(
       Cf.layer(parentEnv).pipe(Layer.provide(cf.layer)),
       CloudflareEnvironment.layer({ configRoot }),
+      OnePasswordR2.layer({ configRoot }).pipe(Layer.provide(cf.layer)),
       adapter.layer,
+      StaticSecrets.layer({ configRoot }).pipe(Layer.provide(cf.layer)),
     ).pipe(Layer.provide(NodeServices.layer));
     return yield* use({ cfCalls: cf.calls, configRoot }).pipe(
-      Effect.provide(Layer.mergeAll(cloudflare, NodeServices.layer, environment(configEnv))),
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, cf.layer, cloudflare, environment(configEnv)),
+      ),
     );
   });
 
@@ -976,6 +1196,7 @@ describe("nyaucast cloudflare R2 environment warning", () => {
           assertWarningAfterSummary(result.output);
         }),
       {},
+      undefined,
       env,
     );
   });
@@ -997,6 +1218,7 @@ describe("nyaucast cloudflare R2 environment warning", () => {
           assertValuesHidden(result.logs);
         }),
       {},
+      undefined,
       env,
     ),
   );
@@ -1015,11 +1237,12 @@ describe("nyaucast cloudflare R2 environment warning", () => {
             writeSecrets(configRoot, { R2_ACCESS_KEY_ID: onePasswordReference });
             const result = yield* runCloudflare(["--yes"]);
             assert.strictEqual(result.outcome._tag, "Success");
-            assert.include(result.logs, "accessKey=file");
+            assert.include(result.logs, "accessKey=one_password");
             assert.deepStrictEqual(result.errors, []);
             assertValuesHidden(result.logs);
           }),
         r2Environment,
+        fakeR2OnePassword({ authentication: "authenticated" }),
         { LEGACY_R2_ACCESS_KEY_ID: r2Environment.R2_ACCESS_KEY_ID },
       );
     },
@@ -1053,6 +1276,7 @@ describe("nyaucast cloudflare R2 environment warning", () => {
             assert.deepStrictEqual(second.errors, first.errors);
           }),
         {},
+        undefined,
         r2Environment,
       );
     },
@@ -1076,6 +1300,7 @@ describe("nyaucast cloudflare R2 environment warning", () => {
           assertValuesHidden([...result.logs, ...terminal.state.display]);
         }),
       {},
+      undefined,
       r2Environment,
     );
   });
@@ -1315,6 +1540,8 @@ describe("nyaucast cloudflare confirmation", () => {
             assert.strictEqual(adapter.planInputs.length, 1);
             assert.strictEqual(adapter.state.applyCalls, applies ? 1 : 0);
             if (applies) {
+              assert.lengthOf(adapter.planOutputs, 1);
+              assert.lengthOf(adapter.applyInputs, 1);
               assert.strictEqual(adapter.applyInputs[0], adapter.planOutputs[0]);
               assert.deepStrictEqual(
                 JSON.parse(readFileSync(environmentPathOf(configRoot), "utf8")),
@@ -1400,6 +1627,8 @@ describe("nyaucast cloudflare confirmation", () => {
           assert.strictEqual(terminal.state.prompts, 0);
           assert.strictEqual(adapter.planInputs.length, 1);
           assert.strictEqual(adapter.state.applyCalls, 1);
+          assert.lengthOf(adapter.planOutputs, 1);
+          assert.lengthOf(adapter.applyInputs, 1);
           assert.strictEqual(adapter.applyInputs[0], adapter.planOutputs[0]);
           assert.deepStrictEqual(JSON.parse(readFileSync(environmentPathOf(configRoot), "utf8")), {
             accountId,
@@ -1469,14 +1698,12 @@ describe("nyaucast cloudflare --yes (create)", () => {
             assert.include(logs, `bucket=${bucket}`);
             assert.include(logs, "accessKey=file");
 
-            // C10/C16: plan が返したハンドルがそのまま apply に渡り、plan は1回だけ呼ばれる。
-            // testing-003: 回数だけでなく、apply が受け取った引数が plan の戻り値そのもの（参照同一性）
-            // であることも確認する。plan を取り直して別オブジェクトを渡す配線ではここで検出できる。
+            // plan を取り直さず、1 回の apply で保存まで完了する既存契約を保つ。
             assert.strictEqual(adapter.planInputs.length, 1);
-            assert.strictEqual(adapter.planOutputs.length, 1);
-            assert.strictEqual(adapter.applyInputs.length, 1);
-            assert.strictEqual(adapter.applyInputs[0], adapter.planOutputs[0]);
             assert.strictEqual(adapter.state.applyCalls, 1);
+            assert.lengthOf(adapter.planOutputs, 1);
+            assert.lengthOf(adapter.applyInputs, 1);
+            assert.strictEqual(adapter.applyInputs[0], adapter.planOutputs[0]);
             assert.strictEqual(adapter.planInputs[0]?.accountId, accountId);
             // C6/C15: cf が作ったトークンの値が、そのまま plan の入力に渡る。
             assert.strictEqual(
@@ -1639,6 +1866,7 @@ describe("nyaucast cloudflare --yes (create)", () => {
             }
           }),
         {},
+        undefined,
         r2Environment,
       );
     },
@@ -2386,4 +2614,491 @@ describe("nyaucast cloudflare account selection", () => {
       );
     },
   );
+});
+
+describe("nyaucast cloudflare R2 access key storage", () => {
+  const script = {
+    r2BucketsList: r2BucketsListSuccess,
+    accountsList: accountsListResponse([{ id: accountId, name: accountName }]),
+    tokensCreate: tokensCreateSuccess(deployTokenSentinel),
+    whoami: whoamiAuthenticated,
+  };
+  const adapterForStorage = () =>
+    fakeProvisioning({
+      accessKeyId: accessKeyIdSentinel,
+      accountId,
+      bucket,
+      secretAccessKey: secretAccessKeySentinel,
+    });
+  const unrelated = { NYAUCAST_YOUTUBE_CLIENT_SECRET: "op://Other/YouTube/client_secret" };
+  const referencesOf = (configRoot: string) =>
+    Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.String))(
+      JSON.parse(readFileSync(join(configRoot, "secrets.json"), "utf8")),
+    );
+  const mutationsOf = (op: ReturnType<typeof fakeR2OnePassword>) =>
+    op.calls.filter(
+      (call) =>
+        call.args[0] === "item" &&
+        !call.args.includes("--dry-run") &&
+        (call.args[1] === "create" || call.args[1] === "edit"),
+    );
+  const assertSafeTransfer = (
+    op: ReturnType<typeof fakeR2OnePassword>,
+    lines: readonly string[],
+  ) => {
+    assertNothingLeaked(lines, secretValues);
+    for (const call of op.calls) assertNothingLeaked(call.args, secretValues);
+    const mutations = mutationsOf(op);
+    assert.isNotEmpty(mutations);
+    for (const call of mutations) {
+      const template = Schema.decodeUnknownSync(
+        Schema.Struct({
+          fields: Schema.Array(Schema.Struct({ label: Schema.String, value: Schema.String })),
+        }),
+      )(JSON.parse(call.stdin));
+      const values = Object.fromEntries(template.fields.map((field) => [field.label, field.value]));
+      assert.strictEqual(values["R2_ACCESS_KEY_ID"], accessKeyIdSentinel);
+      assert.strictEqual(values["R2_SECRET_ACCESS_KEY"], secretAccessKeySentinel);
+    }
+  };
+  const assertSavedReferences = (configRoot: string, op: ReturnType<typeof fakeR2OnePassword>) =>
+    Effect.gen(function* () {
+      const references = referencesOf(configRoot);
+      assert.strictEqual(
+        references["NYAUCAST_YOUTUBE_CLIENT_SECRET"],
+        unrelated.NYAUCAST_YOUTUBE_CLIENT_SECRET,
+      );
+      for (const name of ["R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"]) {
+        assert.match(references[name]!, /^op:\/\/[^/]+\/[^/]+\/(?:[^/]+\/)?[^/]+$/u);
+        assertNothingLeaked([references[name]!], secretValues);
+      }
+      const secrets = yield* StaticSecrets;
+      assert.strictEqual(yield* secrets.resolve("R2_ACCESS_KEY_ID"), accessKeyIdSentinel);
+      assert.strictEqual(yield* secrets.resolve("R2_SECRET_ACCESS_KEY"), secretAccessKeySentinel);
+      for (const name of ["R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"]) {
+        assert.isTrue(
+          op.calls.some((call) => call.args[0] === "read" && call.args[1] === references[name]),
+        );
+      }
+    });
+
+  it.effect(
+    "creates one R2 item and saves resolvable references without plaintext in the environment",
+    () => {
+      const op = fakeR2OnePassword({ authentication: "authenticated" });
+      const adapter = adapterForStorage();
+      return withCreateFlow(
+        "nyaucast-r2-op-create-",
+        script,
+        adapter,
+        ({ configRoot }) =>
+          Effect.gen(function* () {
+            writeSecrets(configRoot, unrelated);
+            const result = yield* runCloudflare(["--yes"]);
+            assert.strictEqual(result.outcome._tag, "Success");
+            assert.lengthOf(op.items, 1);
+            assert.strictEqual(op.items[0]!.title, "nyaucast R2");
+            assert.strictEqual(op.items[0]!.vault.id, defaultVault.id);
+            assert.deepStrictEqual(
+              Object.fromEntries(op.items[0]!.fields.map((field) => [field.label, field.value])),
+              secretsBlock,
+            );
+            assert.deepStrictEqual(
+              mutationsOf(op).map((call) => call.args[1]),
+              ["create"],
+            );
+            assert.deepStrictEqual(
+              JSON.parse(readFileSync(environmentPathOf(configRoot), "utf8")),
+              createdEnvironment,
+            );
+            assert.include(result.logs, "plan.accessKey=one_password");
+            assert.include(result.logs, "accessKey=one_password");
+            assertSafeTransfer(op, [...result.logs, ...result.errors]);
+            yield* assertSavedReferences(configRoot, op);
+            const beforeStatus = op.calls.length;
+            const status = yield* runStatus();
+            assert.strictEqual(status.outcome._tag, "Success");
+            assert.strictEqual(statusFacts(status.logs)["accessKey"], "one_password");
+            assert.strictEqual(statusFacts(status.logs)["account"], accountId);
+            assert.strictEqual(statusFacts(status.logs)["bucket"], bucket);
+            assert.strictEqual(op.calls.length, beforeStatus);
+          }),
+        {},
+        op,
+      );
+    },
+  );
+
+  it.effect("updates the existing R2 item instead of creating a second item", () => {
+    const op = fakeR2OnePassword({
+      authentication: "authenticated",
+      existing: opItem("existing-r2"),
+    });
+    return withCreateFlow(
+      "nyaucast-r2-op-edit-",
+      script,
+      adapterForStorage(),
+      ({ configRoot }) =>
+        Effect.gen(function* () {
+          writeSecrets(configRoot, unrelated);
+          const result = yield* runCloudflare(["--yes"]);
+          assert.strictEqual(result.outcome._tag, "Success");
+          assert.deepStrictEqual(
+            mutationsOf(op).map((call) => call.args[1]),
+            ["edit"],
+          );
+          assert.lengthOf(op.items, 1);
+          assert.strictEqual(op.items[0]!.id, "existing-r2");
+          assert.deepStrictEqual(
+            Object.fromEntries(op.items[0]!.fields.map((field) => [field.label, field.value])),
+            secretsBlock,
+          );
+          assertSafeTransfer(op, [...result.logs, ...result.errors]);
+          yield* assertSavedReferences(configRoot, op);
+        }),
+      {},
+      op,
+    );
+  });
+
+  it.effect("limits an existing item lookup to the default vault", () => {
+    const other = { ...opItem("other-r2"), vault: { id: "other-vault-id", name: "Other" } };
+    const op = fakeR2OnePassword({ authentication: "authenticated", existing: other });
+    return withCreateFlow(
+      "nyaucast-r2-op-default-vault-",
+      script,
+      adapterForStorage(),
+      ({ configRoot }) =>
+        Effect.gen(function* () {
+          writeSecrets(configRoot, unrelated);
+          const result = yield* runCloudflare(["--yes"]);
+          assert.strictEqual(result.outcome._tag, "Success");
+          assert.lengthOf(op.items, 2);
+          assert.deepStrictEqual(
+            op.items.find((item) => item.id === "other-r2"),
+            other,
+          );
+          assert.strictEqual(
+            op.items.find((item) => item.id !== "other-r2")!.vault.id,
+            defaultVault.id,
+          );
+          yield* assertSavedReferences(configRoot, op);
+          assertSafeTransfer(op, [...result.logs, ...result.errors]);
+        }),
+      {},
+      op,
+    );
+  });
+
+  it.effect("updates section fields while retaining the existing item template", () => {
+    const section = { id: "r2-section", label: "R2" };
+    const unrelatedField = { id: "unrelated", label: "description", type: "STRING", value: "keep" };
+    const existing = {
+      ...opItem("existing-r2"),
+      category: "SECURE_NOTE",
+      sections: [section],
+      fields: [
+        ...opItem("existing-r2").fields.map((field) => ({
+          ...field,
+          section: { id: section.id },
+        })),
+        unrelatedField,
+      ],
+    };
+    const op = fakeR2OnePassword({ authentication: "authenticated", existing });
+    return withCreateFlow(
+      "nyaucast-r2-op-section-",
+      script,
+      adapterForStorage(),
+      ({ configRoot }) =>
+        Effect.gen(function* () {
+          writeSecrets(configRoot, unrelated);
+          const result = yield* runCloudflare(["--yes"]);
+          assert.strictEqual(result.outcome._tag, "Success");
+          assert.lengthOf(op.items, 1);
+          const item = op.items[0]!;
+          assert.deepStrictEqual(
+            item.fields.find((field) => field.id === "unrelated"),
+            unrelatedField,
+          );
+          const template = JSON.parse(mutationsOf(op)[0]!.stdin);
+          assert.strictEqual(template.category, existing.category);
+          assert.deepStrictEqual(template.sections, existing.sections);
+          yield* assertSavedReferences(configRoot, op);
+          assertSafeTransfer(op, [...result.logs, ...result.errors]);
+        }),
+      {},
+      op,
+    );
+  });
+
+  it.effect.each(["missing", "signed-out"] as const)(
+    "keeps file storage when op is %s and no R2 references exist",
+    (authentication) => {
+      const op = fakeR2OnePassword({ authentication });
+      return withCreateFlow(
+        "nyaucast-r2-op-unavailable-",
+        script,
+        adapterForStorage(),
+        ({ configRoot }) =>
+          Effect.gen(function* () {
+            writeSecrets(configRoot, unrelated);
+            const result = yield* runCloudflare(["--yes"]);
+            assert.strictEqual(result.outcome._tag, "Success");
+            assert.include(result.logs, "plan.accessKey=file");
+            assert.include(result.logs, "accessKey=file");
+            assert.deepStrictEqual(
+              JSON.parse(readFileSync(environmentPathOf(configRoot), "utf8")),
+              { ...createdEnvironment, secrets: secretsBlock },
+            );
+            assert.deepStrictEqual(referencesOf(configRoot), unrelated);
+            assert.deepStrictEqual(mutationsOf(op), []);
+            assertNothingLeaked([...result.logs, ...result.errors], secretValues);
+          }),
+        {},
+        op,
+      );
+    },
+  );
+
+  it.effect.each(["R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"])(
+    "stops without applying or rewriting files when signed out with an existing %s reference",
+    (name) => {
+      const op = fakeR2OnePassword({ authentication: "signed-out" });
+      const adapter = adapterForStorage();
+      return withCreateFlow(
+        "nyaucast-r2-op-signin-",
+        script,
+        adapter,
+        ({ configRoot }) =>
+          Effect.gen(function* () {
+            writeEnvironment(configRoot, { ...createdEnvironment, secrets: secretsBlock });
+            writeSecrets(configRoot, {
+              ...unrelated,
+              [name]: "op://vault-test-id/existing-r2/id-field",
+            });
+            const beforeEnvironment = readFileSync(environmentPathOf(configRoot), "utf8");
+            const beforeReferences = readFileSync(join(configRoot, "secrets.json"), "utf8");
+            const result = yield* runCloudflare(["--yes"]);
+            assert.strictEqual(result.outcome._tag, "Failure");
+            assert.match(result.errors.join("\n"), /(?:サインイン|signin|sign in)/iu);
+            assert.strictEqual(adapter.state.applyCalls, 0);
+            assert.deepStrictEqual(mutationsOf(op), []);
+            assert.strictEqual(
+              readFileSync(environmentPathOf(configRoot), "utf8"),
+              beforeEnvironment,
+            );
+            assert.strictEqual(
+              readFileSync(join(configRoot, "secrets.json"), "utf8"),
+              beforeReferences,
+            );
+            assertNothingLeaked([...result.logs, ...result.errors], secretValues);
+          }),
+        {},
+        op,
+      );
+    },
+  );
+
+  it.effect(
+    "migrates file secrets on the next apply and the same secret reader follows the new references",
+    () => {
+      const op = fakeR2OnePassword({ authentication: "missing" });
+      const adapter = adapterForStorage();
+      return withCreateFlow(
+        "nyaucast-r2-op-migrate-",
+        script,
+        adapter,
+        ({ configRoot }) =>
+          Effect.gen(function* () {
+            writeSecrets(configRoot, unrelated);
+            const secrets = yield* StaticSecrets;
+            const first = yield* runCloudflare(["--yes"]);
+            assert.strictEqual(first.outcome._tag, "Success");
+            assert.strictEqual(yield* secrets.resolve("R2_ACCESS_KEY_ID"), accessKeyIdSentinel);
+            assert.strictEqual(
+              yield* secrets.resolve("R2_SECRET_ACCESS_KEY"),
+              secretAccessKeySentinel,
+            );
+            assert.deepStrictEqual(
+              JSON.parse(readFileSync(environmentPathOf(configRoot), "utf8")),
+              { ...createdEnvironment, secrets: secretsBlock },
+            );
+            op.state.authentication = "authenticated";
+            // 次の plan に変更がある場合だけ apply する既存契約を保つ。
+            adapter.state.applied = false;
+            const second = yield* runCloudflare(["--yes"]);
+            assert.strictEqual(second.outcome._tag, "Success");
+            assert.deepStrictEqual(
+              JSON.parse(readFileSync(environmentPathOf(configRoot), "utf8")),
+              createdEnvironment,
+            );
+            yield* assertSavedReferences(configRoot, op);
+            assertSafeTransfer(op, [...second.logs, ...second.errors]);
+          }),
+        {},
+        op,
+      );
+    },
+  );
+
+  it.effect.each(["list", "create", "edit"] as const)(
+    "does not fall back to file storage or expose diagnostics when op item %s fails",
+    (fail) => {
+      const op = fakeR2OnePassword({
+        authentication: "authenticated",
+        fail,
+        ...(fail === "edit" ? { existing: opItem("existing-r2") } : {}),
+      });
+      return withCreateFlow(
+        "nyaucast-r2-op-failure-",
+        script,
+        adapterForStorage(),
+        ({ configRoot }) =>
+          Effect.gen(function* () {
+            writeEnvironment(configRoot, { ...createdEnvironment, secrets: secretsBlock });
+            writeSecrets(configRoot, unrelated);
+            const beforeEnvironment = readFileSync(environmentPathOf(configRoot), "utf8");
+            const beforeReferences = readFileSync(join(configRoot, "secrets.json"), "utf8");
+            const result = yield* runCloudflare(["--yes"]);
+            assert.strictEqual(result.outcome._tag, "Failure");
+            assert.isFalse(result.logs.some((line) => line.startsWith("accessKey=")));
+            assert.strictEqual(
+              readFileSync(environmentPathOf(configRoot), "utf8"),
+              beforeEnvironment,
+            );
+            assert.strictEqual(
+              readFileSync(join(configRoot, "secrets.json"), "utf8"),
+              beforeReferences,
+            );
+            if (fail === "list") assert.deepStrictEqual(mutationsOf(op), []);
+            assertNothingLeaked(
+              [
+                ...result.logs,
+                ...result.errors,
+                JSON.stringify(
+                  failureFacts(
+                    result.outcome._tag === "Failure" ? result.outcome.failure : undefined,
+                  ),
+                ),
+              ],
+              secretValues,
+            );
+          }),
+        {},
+        op,
+      );
+    },
+  );
+
+  it.effect.each([
+    {
+      name: "declined confirmation",
+      args: [] as string[],
+      terminal: () => confirmationTerminal(true, "N"),
+      succeeds: true,
+    },
+    {
+      name: "approval required on non-TTY",
+      args: [] as string[],
+      terminal: () => confirmationTerminal(false, undefined),
+      succeeds: false,
+    },
+    {
+      name: "unchanged plan",
+      args: ["--yes"],
+      terminal: () => confirmationTerminal(false, undefined),
+      succeeds: true,
+    },
+  ])(
+    "shows the selected destination but writes no item for $name",
+    ({ name, args, terminal, succeeds }) => {
+      const op = fakeR2OnePassword({ authentication: "authenticated" });
+      const adapter = adapterForStorage();
+      if (name === "unchanged plan") adapter.state.applied = true;
+      return withCreateFlow(
+        "nyaucast-r2-op-no-apply-",
+        script,
+        adapter,
+        ({ configRoot }) =>
+          Effect.gen(function* () {
+            writeEnvironment(configRoot, { ...createdEnvironment, secrets: secretsBlock });
+            const before = readFileSync(environmentPathOf(configRoot), "utf8");
+            const consoleTerminal = terminal();
+            const result = yield* runCloudflare(args, consoleTerminal);
+            assert.strictEqual(result.outcome._tag, succeeds ? "Success" : "Failure");
+            assert.include(result.logs, "plan.accessKey=one_password");
+            if (name === "declined confirmation")
+              assert.include(consoleTerminal.state.planAtPrompt, "plan.accessKey=one_password");
+            if (name === "unchanged plan") assert.include(result.logs, "accessKey=file");
+            assert.strictEqual(adapter.state.applyCalls, 0);
+            assert.deepStrictEqual(mutationsOf(op), []);
+            assert.strictEqual(readFileSync(environmentPathOf(configRoot), "utf8"), before);
+            assert.isFalse(existsSync(join(configRoot, "secrets.json")));
+          }),
+        {},
+        op,
+      );
+    },
+  );
+
+  it.effect(
+    "preserves unreadable references and retries a later apply without duplicating the saved item",
+    () => {
+      const op = fakeR2OnePassword({ authentication: "authenticated" });
+      const adapter = adapterForStorage();
+      return withCreateFlow(
+        "nyaucast-r2-op-reference-failure-",
+        script,
+        adapter,
+        ({ configRoot }) =>
+          Effect.gen(function* () {
+            writeEnvironment(configRoot, { ...createdEnvironment, secrets: secretsBlock });
+            const referencesPath = join(configRoot, "secrets.json");
+            writeFileSync(referencesPath, "{");
+            const before = readFileSync(environmentPathOf(configRoot), "utf8");
+            const failed = yield* runCloudflare(["--yes"]);
+            assert.strictEqual(failed.outcome._tag, "Failure");
+            assert.strictEqual(readFileSync(referencesPath, "utf8"), "{");
+            assert.strictEqual(readFileSync(environmentPathOf(configRoot), "utf8"), before);
+            assert.isFalse(failed.logs.some((line) => line.startsWith("accessKey=")));
+            assertNothingLeaked([...failed.logs, ...failed.errors], secretValues);
+            // 参照ファイルを修復し、変更を含む次の apply を再実行する。
+            writeSecrets(configRoot, unrelated);
+            adapter.state.applied = false;
+            const retried = yield* runCloudflare(["--yes"]);
+            assert.strictEqual(retried.outcome._tag, "Success");
+            assert.lengthOf(op.items, 1);
+            assert.deepStrictEqual(
+              JSON.parse(readFileSync(environmentPathOf(configRoot), "utf8")),
+              createdEnvironment,
+            );
+            yield* assertSavedReferences(configRoot, op);
+            assertSafeTransfer(op, [...retried.logs, ...retried.errors]);
+          }),
+        {},
+        op,
+      );
+    },
+  );
+
+  it.effect("rejects a vault override before saving an item", () => {
+    const op = fakeR2OnePassword({ authentication: "authenticated" });
+    const adapter = adapterForStorage();
+    return withCreateFlow(
+      "nyaucast-r2-op-vault-",
+      script,
+      adapter,
+      ({ configRoot }) =>
+        Effect.gen(function* () {
+          const result = yield* runCloudflare(["--yes", "--vault", "Other"]);
+          assert.strictEqual(result.outcome._tag, "Failure");
+          assert.strictEqual(adapter.state.applyCalls, 0);
+          assert.deepStrictEqual(mutationsOf(op), []);
+          assert.isFalse(existsSync(environmentPathOf(configRoot)));
+        }),
+      {},
+      op,
+    );
+  });
 });
