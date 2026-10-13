@@ -42,6 +42,25 @@ const childEnvOf = (options?: { env?: Record<string, string> }) =>
     return JSON.parse(stdout) as Record<string, string | undefined>;
   });
 
+describe("runCommand output", () => {
+  it.effect.each([0, 1])("collects stdout and stderr separately with exit code %s", (exitCode) =>
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const output = yield* runCommand(spawner, process.execPath, [
+        "-e",
+        `process.stdout.write("result\\n"); process.stderr.write("[10042] R2 is not enabled\\n"); process.exitCode = ${exitCode};`,
+      ]);
+
+      const expected = {
+        exitCode: ChildProcessSpawner.ExitCode(exitCode),
+        stdout: "result\n",
+        stderr: "[10042] R2 is not enabled\n",
+      };
+      assert.deepStrictEqual(output, expected);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
+
 describe("runCommand (command-output.ts) の子プロセス環境の受け渡し", () => {
   it.effect(
     "env を渡すときはそれが子プロセスの環境の全体になり、ホスト自身の環境変数は重ならない",

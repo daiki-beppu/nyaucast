@@ -16,7 +16,7 @@ Instagram へ投稿するには、動画を R2 に置いて URL で渡す必要�
 ## Decision
 
 1. **利用者の Cloudflare 環境は、v0.1 から Alchemy v2 で作る。** 資源の差分の計算（plan）と適用（apply）は Alchemy の仕事にする。対象は R2 の bucket・7 日のライフサイクルルール・`AccountApiToken`（R2 のアクセスキーの元）の 3 つ。dogfood でも同じ操作で、提供者自身のアカウントに作る
-2. **`cf` は認証にだけ使う。** 利用者は `cf auth login` でブラウザから同意する。nyaucast はそのログインで、R2 の書き込みと API トークンの作成の権限だけを持ち、有効期限の短いデプロイ用トークンを `cf accounts tokens create` で作り、`ConfigProvider` で Alchemy に渡す。デプロイ用トークンは消さず、期限で失効させる
+2. **`cf` は認証と、plan 前の R2 利用可否確認に使う。**（改訂 #701） 利用者は `cf auth login` でブラウザから同意する。nyaucast はそのログインで、R2 の書き込みと API トークンの作成の権限だけを持ち、有効期限の短いデプロイ用トークンを `cf accounts tokens create` で作り、`ConfigProvider` で Alchemy に渡す。デプロイ用トークンは消さず、期限で失効させる。選択済みアカウントの R2 利用可否は `cf r2 buckets list` で確認する。資源の plan と apply は引き続き Alchemy に任せる
 3. **Alchemy はライブラリとして、nyaucast と同じプロセスで呼ぶ。** 文書に無い Layer の組み立ては、1 つのアダプタのファイルに閉じ込める。apply の出力から導いたアクセスキーは、`op` があれば 1Password に書き、チャンネルをまたぐ設定にその参照を書く（ADR-0009 決定 6）。`op` が無い利用者には、nyaucast が書いたファイルから渡す（決定 9）
 4. **作成の操作は、人間が CLI で起こす。** エージェントがシェル越しに代わりに叩いてもよい。MCP tool にはしない。plan を表示して確認を取ってから apply し、エージェント向けに確認を省く `--yes` を置く
 5. **資源を消す操作は置かない。** destroy のコマンドは作らない。宣言から外した資源を Alchemy が消さないよう、すべての資源に `RemovalPolicy.retain()` を付ける（ADR-0009 決定 11・14 の「削除する tool を置かない」と揃える）

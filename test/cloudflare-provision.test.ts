@@ -50,19 +50,18 @@ describe("prepareProvisioning account selection", () => {
       const accounts = [{ id: "selected", name: "Account" }];
       const tokenTargets: string[] = [];
       const planTargets: string[] = [];
-      const layer = Layer.mergeAll(
-        Layer.succeed(
-          Cf,
-          Cf.of({
-            whoami: Effect.succeed(true),
-            listAccounts: Effect.succeed(accounts),
-            createToken: (input) =>
-              Effect.sync(() => {
-                tokenTargets.push(input.accountId);
-                return Redacted.make("test-deploy-token");
-              }),
+      const cfService = {
+        whoami: Effect.succeed(true),
+        listAccounts: Effect.succeed(accounts),
+        checkR2Availability: () => Effect.void,
+        createToken: (input: Parameters<Cf["Service"]["createToken"]>[0]) =>
+          Effect.sync(() => {
+            tokenTargets.push(input.accountId);
+            return Redacted.make("test-deploy-token");
           }),
-        ),
+      };
+      const layer = Layer.mergeAll(
+        Layer.succeed(Cf, Cf.of(cfService)),
         Layer.succeed(
           CloudflareEnvironment,
           CloudflareEnvironment.of({

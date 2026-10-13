@@ -10,8 +10,13 @@ export const cfProfileName = "nyaucast";
 // 失敗は、どの操作で起きたかだけを事実に持つ。cf 自身の標準出力・標準エラーは、認証の案内や
 // アカウント名を含みうるため事実にしない（issue #696 AC 3 行目: 秘密の値は標準出力に出さない）。
 export class CfCommandFailed extends Schema.TaggedError<CfCommandFailed>()("CfCommandFailed", {
-  operation: Schema.Literals(["accounts", "token", "whoami"]),
+  operation: Schema.Literals(["accounts", "token", "whoami", "r2"]),
 }) {}
+
+export class CloudflareR2CheckoutRequired extends Schema.TaggedError<CloudflareR2CheckoutRequired>()(
+  "CloudflareR2CheckoutRequired",
+  { accountId: Schema.String },
+) {}
 
 // このモジュールの外は `Cf` の呼び出し元として構造的に合わせるだけで、型名を import しない。
 type CfAccount = { readonly id: string; readonly name: string };
@@ -30,7 +35,7 @@ type CfCreateTokenInput = {
   readonly policies: ReadonlyArray<CfTokenPolicy>;
 };
 
-type CfOperation = "accounts" | "token" | "whoami";
+type CfOperation = "accounts" | "token" | "whoami" | "r2";
 
 const WhoamiResponseSchema = Schema.Struct({ authenticated: Schema.Boolean });
 const decodeWhoami = Schema.decodeUnknownEffect(Schema.fromJsonString(WhoamiResponseSchema));
@@ -86,22 +91,42 @@ const makeCf = (parentEnv: Record<string, string | undefined>) =>
     // shebang に頼ると PATH の env node が要る）。全呼び出しに専用プロファイルの指定を添える（要件 13）。
     // 子プロセス環境は `Cf` 境界が唯一組む: 親環境の継承分 → 委譲抑止 → 呼び出しごとの追加値の順で重ねる
     // （呼び出しごとの追加値が最後に重なるので、同名キーがあってもそれが勝つ）。
-    const invoke = (
+    const execute = (
       operation: CfOperation,
       args: ReadonlyArray<string>,
-      extraEnv: Record<string, string> = {},
+      extraEnv: Record<string, string>,
     ) =>
       runCommand(
         spawner,
         process.execPath,
         [cfExecutablePath(), ...args, "--profile", cfProfileName],
         { env: { ...baseChildEnv, ...extraEnv } },
-      ).pipe(
-        Effect.mapError(() => new CfCommandFailed({ operation })),
+      ).pipe(Effect.mapError(() => new CfCommandFailed({ operation })));
+
+    const invoke = (
+      operation: CfOperation,
+      args: ReadonlyArray<string>,
+      extraEnv: Record<string, string> = {},
+    ) =>
+      execute(operation, args, extraEnv).pipe(
         Effect.flatMap(({ exitCode, stdout }) =>
           exitCode === 0 ? Effect.succeed(stdout) : Effect.fail(new CfCommandFailed({ operation })),
         ),
       );
+
+    const checkR2Availability = Effect.fnUntraced(function* (accountId: string) {
+      const { exitCode, stderr } = yield* execute("r2", ["r2", "buckets", "list"], {
+        CLOUDFLARE_ACCOUNT_ID: accountId,
+      });
+      if (exitCode === 0) return;
+      // 10042 / NotEntitled は R2 subscription がないことを示す。cf@1.0.0-beta.12 は
+      // API エラーを stderr の [code] 形式で表示するため、診断中の数字とは区別する。
+      // https://developers.cloudflare.com/r2/api/error-codes/
+      if (/\[10042\]/u.test(stderr)) {
+        return yield* new CloudflareR2CheckoutRequired({ accountId });
+      }
+      return yield* new CfCommandFailed({ operation: "r2" });
+    });
 
     const whoami = invoke("whoami", ["auth", "whoami"]).pipe(
       Effect.flatMap((stdout) =>
@@ -144,7 +169,7 @@ const makeCf = (parentEnv: Record<string, string | undefined>) =>
         ),
       );
 
-    return Cf.of({ createToken, listAccounts, whoami });
+    return Cf.of({ checkR2Availability, createToken, listAccounts, whoami });
   });
 
 /**
@@ -156,6 +181,9 @@ export class Cf extends Context.Service<
   {
     readonly whoami: Effect.Effect<boolean, CfCommandFailed>;
     readonly listAccounts: Effect.Effect<ReadonlyArray<CfAccount>, CfCommandFailed>;
+    readonly checkR2Availability: (
+      accountId: string,
+    ) => Effect.Effect<void, CfCommandFailed | CloudflareR2CheckoutRequired>;
     readonly createToken: (
       input: CfCreateTokenInput,
     ) => Effect.Effect<Redacted.Redacted<string>, CfCommandFailed>;

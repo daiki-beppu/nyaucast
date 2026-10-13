@@ -7,7 +7,12 @@ import {
   type ProvisioningPlanRow,
   type ProvisioningResult,
 } from "./alchemy.ts";
-import { Cf, cfProfileName, type CfCommandFailed } from "./cf.ts";
+import {
+  Cf,
+  cfProfileName,
+  type CfCommandFailed,
+  type CloudflareR2CheckoutRequired,
+} from "./cf.ts";
 import { type CloudflareEnvironmentWriteFailed } from "./environment-file.ts";
 import { CloudflareEnvironment, type CloudflareEnvironmentInvalid } from "./environment.ts";
 
@@ -166,7 +171,7 @@ const applyAndWrite = (
   );
 
 /**
- * ログイン確認 → アカウント選択 → デプロイ用トークン作成 → plan、の一連の準備。`apply` は plan が
+ * ログイン確認 → アカウント選択 → R2 利用可否確認 → デプロイ用トークン作成 → plan、の一連の準備。`apply` は plan が
  * 返したハンドルを閉じ込めた継続で、呼び出せば adapter.apply → environment.json への書き込みまで行う
  * （plan を取り直さない。要件 23）。呼び出し側は `Effect.scoped` を 1 つにして prepare と apply を
  * 同じ scope の中に収める。
@@ -183,6 +188,7 @@ export const prepareProvisioning = Effect.fnUntraced(function* <E, R>(
   | CloudflareAccountConflict
   | CloudflareEnvironmentInvalid
   | CfCommandFailed
+  | CloudflareR2CheckoutRequired
   | CloudflareProvisioningFailed,
   R | Cf | CloudflareEnvironment | CloudflareProvisioning | Scope.Scope
 > {
@@ -200,6 +206,7 @@ export const prepareProvisioning = Effect.fnUntraced(function* <E, R>(
     Option.isSome(saved) ? saved.value.accountId : undefined,
     selection,
   );
+  yield* cf.checkR2Availability(account.id);
   const deployToken = yield* createDeployToken(cf, account.id);
 
   const provisioning = yield* CloudflareProvisioning;
