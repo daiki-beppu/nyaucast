@@ -1,4 +1,4 @@
-import { Clock, Effect, Redacted, Schema, type Scope } from "effect";
+import { Clock, Effect, Option, Redacted, Schema, type Scope } from "effect";
 
 import {
   CloudflareProvisioning,
@@ -9,7 +9,7 @@ import {
 } from "./alchemy.ts";
 import { Cf, cfProfileName, type CfCommandFailed } from "./cf.ts";
 import { type CloudflareEnvironmentWriteFailed } from "./environment-file.ts";
-import { CloudflareEnvironment } from "./environment.ts";
+import { CloudflareEnvironment, type CloudflareEnvironmentInvalid } from "./environment.ts";
 
 // 未ログイン（order.md 決定 1 行目）。この ticket では cf auth login を起こさない。
 // `prepareProvisioning` の失敗チャンネルにのみ現れ、呼び出し側は構造（_tag）で見分ける
@@ -19,10 +19,27 @@ class CloudflareLoginRequired extends Schema.TaggedError<CloudflareLoginRequired
   { profile: Schema.String },
 ) {}
 
-// アカウントが 0 件・複数件（order.md 決定 2 行目）。どちらも同じ「未対応」。
-class CloudflareAccountsUnsupported extends Schema.TaggedError<CloudflareAccountsUnsupported>()(
-  "CloudflareAccountsUnsupported",
-  { count: Schema.Finite },
+class CloudflareAccountRequired extends Schema.TaggedError<CloudflareAccountRequired>()(
+  "CloudflareAccountRequired",
+  {},
+) {}
+
+const AccountSchema = Schema.Struct({ id: Schema.String, name: Schema.String });
+type Account = typeof AccountSchema.Type;
+
+class CloudflareAccountSelectionRequired extends Schema.TaggedError<CloudflareAccountSelectionRequired>()(
+  "CloudflareAccountSelectionRequired",
+  { accounts: Schema.Array(AccountSchema) },
+) {}
+
+class CloudflareAccountNotFound extends Schema.TaggedError<CloudflareAccountNotFound>()(
+  "CloudflareAccountNotFound",
+  { accountId: Schema.String, accounts: Schema.Array(AccountSchema) },
+) {}
+
+class CloudflareAccountConflict extends Schema.TaggedError<CloudflareAccountConflict>()(
+  "CloudflareAccountConflict",
+  { accountId: Schema.String, savedAccountId: Schema.String },
 ) {}
 
 // --yes が無く、plan に変更があるとき（order.md 決定 6 行目）。事実は持たない。
@@ -56,12 +73,56 @@ const deployTokenExpiresOn = Effect.map(Clock.currentTimeMillis, (ms) =>
   new Date(ms + oneHourMillis).toISOString(),
 );
 
-const requireSingleAccount = (
-  accounts: ReadonlyArray<{ readonly id: string; readonly name: string }>,
-): Effect.Effect<{ readonly id: string; readonly name: string }, CloudflareAccountsUnsupported> =>
-  accounts.length === 1
-    ? Effect.succeed(accounts[0]!)
-    : new CloudflareAccountsUnsupported({ count: accounts.length });
+type AccountSelection<E, R> = {
+  readonly accountId: string | undefined;
+  readonly chooseAccount:
+    | ((accounts: ReadonlyArray<Account>) => Effect.Effect<string, E, R>)
+    | undefined;
+};
+
+const selectAccount = Effect.fnUntraced(function* <E, R>(
+  accounts: ReadonlyArray<Account>,
+  savedAccountId: string | undefined,
+  selection: AccountSelection<E, R>,
+) {
+  if (accounts.length === 0) return yield* new CloudflareAccountRequired({});
+  if (savedAccountId !== undefined) {
+    return yield* reuseSavedAccount(accounts, savedAccountId, selection.accountId);
+  }
+  if (accounts.length === 1) return accounts[0]!;
+  return yield* chooseNewAccount(accounts, selection);
+});
+
+const reuseSavedAccount = (
+  accounts: ReadonlyArray<Account>,
+  savedAccountId: string,
+  accountId: string | undefined,
+) => {
+  if (accountId !== undefined && accountId !== savedAccountId) {
+    return new CloudflareAccountConflict({ accountId, savedAccountId });
+  }
+  return requireAccount(accounts, savedAccountId);
+};
+
+const chooseNewAccount = Effect.fnUntraced(function* <E, R>(
+  accounts: ReadonlyArray<Account>,
+  selection: AccountSelection<E, R>,
+) {
+  if (selection.accountId !== undefined) {
+    return yield* requireAccount(accounts, selection.accountId);
+  }
+  if (selection.chooseAccount === undefined) {
+    return yield* new CloudflareAccountSelectionRequired({ accounts });
+  }
+  return yield* requireAccount(accounts, yield* selection.chooseAccount(accounts));
+});
+
+const requireAccount = (accounts: ReadonlyArray<Account>, accountId: string) => {
+  const account = accounts.find((candidate) => candidate.id === accountId);
+  return account === undefined
+    ? new CloudflareAccountNotFound({ accountId, accounts })
+    : Effect.succeed(account);
+};
 
 const createDeployToken = (cf: Cf["Service"], accountId: string) =>
   deployTokenExpiresOn.pipe(
@@ -105,19 +166,26 @@ const applyAndWrite = (
   );
 
 /**
- * ログイン確認 → アカウント 1 件 → デプロイ用トークン作成 → plan、の一連の準備。`apply` は plan が
+ * ログイン確認 → アカウント選択 → デプロイ用トークン作成 → plan、の一連の準備。`apply` は plan が
  * 返したハンドルを閉じ込めた継続で、呼び出せば adapter.apply → environment.json への書き込みまで行う
  * （plan を取り直さない。要件 23）。呼び出し側は `Effect.scoped` を 1 つにして prepare と apply を
  * 同じ scope の中に収める。
  */
-export const prepareProvisioning: Effect.Effect<
+export const prepareProvisioning = Effect.fnUntraced(function* <E, R>(
+  selection: AccountSelection<E, R>,
+): Effect.fn.Return<
   PreparedProvisioning,
+  | E
   | CloudflareLoginRequired
-  | CloudflareAccountsUnsupported
+  | CloudflareAccountRequired
+  | CloudflareAccountSelectionRequired
+  | CloudflareAccountNotFound
+  | CloudflareAccountConflict
+  | CloudflareEnvironmentInvalid
   | CfCommandFailed
   | CloudflareProvisioningFailed,
-  Cf | CloudflareEnvironment | CloudflareProvisioning | Scope.Scope
-> = Effect.gen(function* () {
+  R | Cf | CloudflareEnvironment | CloudflareProvisioning | Scope.Scope
+> {
   const cf = yield* Cf;
   const authenticated = yield* cf.whoami;
   if (!authenticated) {
@@ -125,13 +193,18 @@ export const prepareProvisioning: Effect.Effect<
   }
 
   const accounts = yield* cf.listAccounts;
-  const account = yield* requireSingleAccount(accounts);
+  const cloudflareEnvironment = yield* CloudflareEnvironment;
+  const saved = yield* cloudflareEnvironment.read;
+  const account = yield* selectAccount(
+    accounts,
+    Option.isSome(saved) ? saved.value.accountId : undefined,
+    selection,
+  );
   const deployToken = yield* createDeployToken(cf, account.id);
 
   const provisioning = yield* CloudflareProvisioning;
   const plan = yield* provisioning.plan({ accountId: account.id, deployToken });
 
-  const cloudflareEnvironment = yield* CloudflareEnvironment;
   const apply = applyAndWrite(provisioning, cloudflareEnvironment, plan);
 
   return { account, apply, rows: plan.rows };

@@ -1,4 +1,4 @@
-import { Console, Effect } from "effect";
+import { Console, Effect, Option } from "effect";
 import { Command, Flag, Prompt } from "effect/cli";
 
 import { StdinTerminal } from "../videos/stdin-terminal.ts";
@@ -69,10 +69,24 @@ const applyAndShowSummary = (prepared: PreparedProvisioning) =>
     showSummary({ accountId: result.accountId, bucket: result.bucket }),
   );
 
-const create = (yes: boolean) =>
+const chooseAccount = (accounts: ReadonlyArray<PreparedProvisioning["account"]>) =>
+  Prompt.run(
+    Prompt.Select({
+      message: "Cloudflare アカウントを選択してください",
+      choices: accounts.map((account) => ({
+        title: `${account.name} (${account.id})`,
+        value: account.id,
+      })),
+    }),
+  );
+
+const create = (yes: boolean, accountId: Option.Option<string>) =>
   Effect.scoped(
     Effect.gen(function* () {
-      const prepared = yield* prepareProvisioning;
+      const prepared = yield* prepareProvisioning({
+        accountId: Option.getOrUndefined(accountId),
+        chooseAccount: (yield* StdinTerminal).isTerminal ? chooseAccount : undefined,
+      });
       yield* showPlan(prepared);
       const decision = yield* decideProvisioning(prepared.rows, yes).pipe(
         Effect.catchTag("CloudflareConfirmationRequired", (error) =>
@@ -96,8 +110,11 @@ const create = (yes: boolean) =>
 
 export const cloudflareCommand = Command.make(
   "cloudflare",
-  { yes: Flag.Boolean("yes").pipe(Flag.withDefault(false)) },
-  ({ yes }) => create(yes),
+  {
+    account: Flag.String("account").pipe(Flag.optional),
+    yes: Flag.Boolean("yes").pipe(Flag.withDefault(false)),
+  },
+  ({ account, yes }) => create(yes, account),
 ).pipe(
   Command.withSubcommands([status]),
   Command.withDescription(

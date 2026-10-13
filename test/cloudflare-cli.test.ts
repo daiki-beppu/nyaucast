@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { NodeServices } from "@effect/platform-node";
@@ -78,7 +78,10 @@ const forwardedCloudflare = Layer.effectContext(
   Effect.context<Cf | CloudflareEnvironment | CloudflareProvisioning | StdinTerminal>(),
 );
 
-const confirmationTerminal = (isTerminal: boolean, answer: string | undefined) => {
+const confirmationTerminal = (
+  isTerminal: boolean,
+  answer: string | ReadonlyArray<ReadonlyArray<string>> | undefined,
+) => {
   const state = { prompts: 0, planAtPrompt: [] as string[], display: [] as string[] };
   const layer = Layer.mergeAll(
     Layer.succeed(StdinTerminal, StdinTerminal.of({ isTerminal })),
@@ -93,14 +96,22 @@ const confirmationTerminal = (isTerminal: boolean, answer: string | undefined) =
         readInput: Effect.gen(function* () {
           state.prompts += 1;
           state.planAtPrompt = (yield* TestConsole.logLines).map(String);
-          if (answer === undefined || state.prompts !== 1) {
-            return yield* Effect.die("確認を求めてはいけない条件で入力が要求された");
+          const keys =
+            typeof answer === "string"
+              ? state.prompts === 1
+                ? [answer]
+                : undefined
+              : answer?.[state.prompts - 1];
+          if (keys === undefined) {
+            return yield* Effect.die("入力を求めてはいけない条件で入力が要求された");
           }
           const input = yield* Queue.unbounded<Terminal.UserInput, never>();
-          yield* Queue.offer(input, {
-            input: answer === "enter" ? Option.none() : Option.some(answer),
-            key: { ctrl: false, meta: false, name: answer, shift: false },
-          });
+          for (const key of keys) {
+            yield* Queue.offer(input, {
+              input: key === "enter" || key === "down" ? Option.none() : Option.some(key),
+              key: { ctrl: false, meta: false, name: key, shift: false },
+            });
+          }
           return input;
         }),
         readLine: Effect.die("確認は文字入力で行う"),
@@ -872,7 +883,7 @@ describe("nyaucast cloudflare confirmation", () => {
         ({ configRoot }) =>
           Effect.gen(function* () {
             writeEnvironment(configRoot, {
-              accountId: "previous-account",
+              accountId,
               bucket: "previous-bucket",
             });
             const before = readFileSync(environmentPathOf(configRoot), "utf8");
@@ -1296,50 +1307,6 @@ describe("nyaucast cloudflare --yes (create)", () => {
       ),
   );
 
-  describe("account enumeration", () => {
-    it.effect.each([
-      { accounts: [], count: 0 },
-      {
-        accounts: [
-          { id: "account-one", name: "Account One" },
-          { id: "account-two", name: "Account Two" },
-        ],
-        count: 2,
-      },
-    ])(
-      "stops with CloudflareAccountsUnsupported carrying only the count when cf reports $count accounts",
-      ({ accounts, count }) =>
-        withCreateFlow(
-          "nyaucast-cloudflare-cli-accounts-unsupported-",
-          { accountsList: accountsListResponse(accounts), whoami: whoamiAuthenticated },
-          fakeProvisioning({
-            accessKeyId: accessKeyIdSentinel,
-            accountId,
-            bucket,
-            secretAccessKey: secretAccessKeySentinel,
-          }),
-          ({ cfCalls, configRoot }) =>
-            Effect.gen(function* () {
-              const { errors, logs, outcome } = yield* runCloudflare(["--yes"]);
-
-              assert.deepStrictEqual(failureFacts(failureOf(outcome)), {
-                _tag: "CloudflareAccountsUnsupported",
-                count,
-              });
-              assert.deepStrictEqual(logs, []);
-              // トークン作成以降は起こさない。記録は whoami とアカウント一覧の2件だけ。
-              assert.deepStrictEqual(
-                cfCalls.map((call) => classifyCfCall(call.args)),
-                ["whoami", "accounts-list"],
-              );
-              assertProfileOnEveryCall(cfCalls);
-              assert.deepStrictEqual(readdirSync(configRoot, { recursive: true }), []);
-              assertNothingLeaked(errors, secretValues);
-            }),
-        ),
-    );
-  });
-
   it.effect(
     "shows the plan but stops with CloudflareConfirmationRequired, without applying or writing, when --yes is omitted and the plan has changes",
     () => {
@@ -1617,27 +1584,310 @@ describe("nyaucast cloudflare parent environment handling", () => {
 });
 
 describe("nyaucast cloudflare --help", () => {
-  it.effect("documents --yes, keeps status as the only subcommand, and creates nothing", () =>
-    withConfigRoot("nyaucast-cloudflare-cli-help-", ({ configRoot, spawned }) =>
-      Effect.gen(function* () {
-        const { errors, logs, outcome } = yield* runCloudflare(["--help"]);
+  it.effect(
+    "documents --yes and --account, keeps status as the only subcommand, and creates nothing",
+    () =>
+      withConfigRoot("nyaucast-cloudflare-cli-help-", ({ configRoot, spawned }) =>
+        Effect.gen(function* () {
+          const { errors, logs, outcome } = yield* runCloudflare(["--help"]);
 
-        // --help は effect/cli の組み込みアクションフラグで、ヘルプを表示して成功で終える
-        // （`test/auth-cli.test.ts` の "describes how to move from the old per-channel files in its
-        // help" と同じ観測: outcome は検査せず、表示された内容だけを確かめる）。
-        assert.strictEqual(outcome._tag, "Success");
-        const help = [...logs, ...errors].join("\n");
-        // この ticket が足すサブコマンドは status だけ（plan と apply は親コマンドのハンドラに付く）。
-        assert.deepStrictEqual(subcommandNames(help), ["status"]);
-        assert.include(flagNames(help), "--yes");
-        // --dry-run・--account はこの ticket では足さない（ADR-0012 決定 10 / order.md 決定 2 行目）。
-        for (const flag of ["--account", "--dry-run"]) {
-          assert.notInclude(flagNames(help), flag);
-        }
-        // --help は見るだけ。資源も設定ファイルも作らず、外部コマンドも起こさない。
-        assert.deepStrictEqual(readdirSync(configRoot, { recursive: true }), []);
-        assert.deepStrictEqual(spawned, []);
-      }),
-    ),
+          // --help は effect/cli の組み込みアクションフラグで、ヘルプを表示して成功で終える
+          // （`test/auth-cli.test.ts` の "describes how to move from the old per-channel files in its
+          // help" と同じ観測: outcome は検査せず、表示された内容だけを確かめる）。
+          assert.strictEqual(outcome._tag, "Success");
+          const help = [...logs, ...errors].join("\n");
+          // この ticket が足すサブコマンドは status だけ（plan と apply は親コマンドのハンドラに付く）。
+          assert.deepStrictEqual(subcommandNames(help), ["status"]);
+          assert.include(flagNames(help), "--yes");
+          assert.include(flagNames(help), "--account");
+          assert.notInclude(flagNames(help), "--dry-run");
+          // --help は見るだけ。資源も設定ファイルも作らず、外部コマンドも起こさない。
+          assert.deepStrictEqual(readdirSync(configRoot, { recursive: true }), []);
+          assert.deepStrictEqual(spawned, []);
+        }),
+      ),
+  );
+});
+
+describe("nyaucast cloudflare account selection", () => {
+  const accounts = [
+    { id: "account-one", name: "Shared Name" },
+    { id: "account-two", name: "Shared Name" },
+  ];
+  const script = {
+    accountsList: accountsListResponse(accounts),
+    tokensCreate: tokensCreateSuccess(deployTokenSentinel),
+    whoami: whoamiAuthenticated,
+  };
+  const adapterForSelection = () =>
+    fakeProvisioning({
+      accessKeyId: accessKeyIdSentinel,
+      accountId: accounts[1]!.id,
+      bucket,
+      secretAccessKey: secretAccessKeySentinel,
+    });
+  const assertCandidates = (output: string) => {
+    for (const account of accounts) {
+      assert.include(output, account.id);
+      assert.include(output, account.name);
+    }
+  };
+  const assertSelected = (
+    cfCalls: ReadonlyArray<CfCall>,
+    adapter: ReturnType<typeof fakeProvisioning>,
+    logs: ReadonlyArray<string>,
+    configRoot: string,
+  ) => {
+    assert.strictEqual(
+      requireTokensCreateCall(cfCalls).env?.["CLOUDFLARE_ACCOUNT_ID"],
+      accounts[1]!.id,
+    );
+    assert.deepStrictEqual(
+      adapter.planInputs.map((input) => input.accountId),
+      [accounts[1]!.id],
+    );
+    assert.include(logs, `plan.account=${accounts[1]!.id}`);
+    assert.include(logs, `plan.accountName=${accounts[1]!.name}`);
+    assert.include(logs, `account=${accounts[1]!.id}`);
+    assert.strictEqual(adapter.state.applyCalls, 1);
+    assert.deepStrictEqual(JSON.parse(readFileSync(environmentPathOf(configRoot), "utf8")), {
+      accountId: accounts[1]!.id,
+      bucket,
+      secrets: secretsBlock,
+    });
+  };
+  const assertStopped = (
+    cfCalls: ReadonlyArray<CfCall>,
+    adapter: ReturnType<typeof fakeProvisioning>,
+    configRoot: string,
+  ) => {
+    assert.isFalse(cfCalls.some((call) => classifyCfCall(call.args) === "tokens-create"));
+    assert.deepStrictEqual(adapter.planInputs, []);
+    assert.strictEqual(adapter.state.applyCalls, 0);
+    assert.isFalse(existsSync(environmentPathOf(configRoot)));
+  };
+
+  it.effect("guides users with no accounts to sign up and rerun before creating resources", () => {
+    const adapter = adapterForSelection();
+    const terminal = confirmationTerminal(false, undefined);
+    return withCreateFlow(
+      "nyaucast-no-accounts-",
+      {
+        accountsList: accountsListResponse([]),
+        whoami: whoamiAuthenticated,
+      },
+      adapter,
+      ({ cfCalls, configRoot }) =>
+        Effect.gen(function* () {
+          const { errors, logs, outcome } = yield* runCloudflare(["--yes"], terminal);
+          assert.isString(failureFacts(failureOf(outcome))["_tag"]);
+          const output = [...logs, ...errors].join("\n");
+          assert.match(
+            output,
+            /https:\/\/(?:dash\.cloudflare\.com\/sign-up|www\.cloudflare\.com\/(?:[a-z-]+\/)?sign-up)/u,
+          );
+          assert.match(output, /アカウント.*(?:作成|作っ).*再実行/u);
+          assert.strictEqual(terminal.state.prompts, 0);
+          assertStopped(cfCalls, adapter, configRoot);
+        }),
+    );
+  });
+
+  it.effect("uses an explicit second account without prompting and saves it after apply", () => {
+    const adapter = adapterForSelection();
+    const terminal = confirmationTerminal(false, undefined);
+    return withCreateFlow(
+      "nyaucast-explicit-account-",
+      script,
+      adapter,
+      ({ cfCalls, configRoot }) =>
+        Effect.gen(function* () {
+          const { errors, logs, outcome } = yield* runCloudflare(
+            ["--account", accounts[1]!.id, "--yes"],
+            terminal,
+          );
+          assert.strictEqual(outcome._tag, "Success");
+          assert.strictEqual(terminal.state.prompts, 0);
+          assertSelected(cfCalls, adapter, logs, configRoot);
+          assertNothingLeaked([...logs, ...errors], secretValues);
+        }),
+    );
+  });
+
+  it.effect(
+    "rejects an unknown explicit account with candidate ids and names before side effects",
+    () => {
+      const adapter = adapterForSelection();
+      const terminal = confirmationTerminal(true, undefined);
+      return withCreateFlow(
+        "nyaucast-invalid-account-",
+        script,
+        adapter,
+        ({ cfCalls, configRoot }) =>
+          Effect.gen(function* () {
+            const { errors, logs, outcome } = yield* runCloudflare(
+              ["--account", "unknown-account", "--yes"],
+              terminal,
+            );
+            assert.isString(failureFacts(failureOf(outcome))["_tag"]);
+            assertCandidates([...logs, ...errors].join("\n"));
+            assert.strictEqual(terminal.state.prompts, 0);
+            assertStopped(cfCalls, adapter, configRoot);
+          }),
+      );
+    },
+  );
+
+  it.effect(
+    "requires account selection on non-TTY stdin even with --yes and lists candidates",
+    () => {
+      const adapter = adapterForSelection();
+      const terminal = confirmationTerminal(false, undefined);
+      return withCreateFlow(
+        "nyaucast-account-no-tty-",
+        script,
+        adapter,
+        ({ cfCalls, configRoot }) =>
+          Effect.gen(function* () {
+            const { errors, logs, outcome } = yield* runCloudflare(["--yes"], terminal);
+            assert.isString(failureFacts(failureOf(outcome))["_tag"]);
+            assertCandidates([...logs, ...errors].join("\n"));
+            assert.strictEqual(terminal.state.prompts, 0);
+            assertStopped(cfCalls, adapter, configRoot);
+          }),
+      );
+    },
+  );
+
+  it.effect(
+    "selects the second same-name account with down and enter on a TTY despite --yes",
+    () => {
+      const adapter = adapterForSelection();
+      const terminal = confirmationTerminal(true, [["down", "enter"]]);
+      return withCreateFlow("nyaucast-account-tty-", script, adapter, ({ cfCalls, configRoot }) =>
+        Effect.gen(function* () {
+          const { errors, logs, outcome } = yield* runCloudflare(["--yes"], terminal);
+          assert.strictEqual(outcome._tag, "Success");
+          assert.strictEqual(terminal.state.prompts, 1);
+          assertCandidates(terminal.state.display.join(""));
+          assertSelected(cfCalls, adapter, logs, configRoot);
+          assertNothingLeaked([...logs, ...errors, ...terminal.state.display], secretValues);
+        }),
+      );
+    },
+  );
+
+  it.effect(
+    "asks for apply approval after account selection and leaves the environment absent on decline",
+    () => {
+      const adapter = adapterForSelection();
+      const terminal = confirmationTerminal(true, [["down", "enter"], ["N"]]);
+      return withCreateFlow("nyaucast-account-declined-", script, adapter, ({ configRoot }) =>
+        Effect.gen(function* () {
+          const { logs, outcome } = yield* runCloudflare([], terminal);
+          assert.strictEqual(outcome._tag, "Success");
+          assert.strictEqual(terminal.state.prompts, 2);
+          assert.include(terminal.state.planAtPrompt, `plan.account=${accounts[1]!.id}`);
+          assert.include(logs, `plan.account=${accounts[1]!.id}`);
+          assert.deepStrictEqual(
+            adapter.planInputs.map((input) => input.accountId),
+            [accounts[1]!.id],
+          );
+          assert.strictEqual(adapter.state.applyCalls, 0);
+          assert.isFalse(existsSync(environmentPathOf(configRoot)));
+        }),
+      );
+    },
+  );
+
+  it.effect(
+    "rejects a saved account missing from the current list instead of switching accounts",
+    () => {
+      const adapter = adapterForSelection();
+      return withCreateFlow(
+        "nyaucast-saved-account-missing-",
+        {
+          ...script,
+          accountsList: accountsListResponse([accounts[0]!]),
+        },
+        adapter,
+        ({ cfCalls, configRoot }) =>
+          Effect.gen(function* () {
+            writeEnvironment(configRoot, { accountId: accounts[1]!.id, bucket });
+            const before = readFileSync(environmentPathOf(configRoot), "utf8");
+            const { outcome } = yield* runCloudflare(["--yes"]);
+            assert.isString(failureFacts(failureOf(outcome))["_tag"]);
+            assert.isFalse(cfCalls.some((call) => classifyCfCall(call.args) === "tokens-create"));
+            assert.deepStrictEqual(adapter.planInputs, []);
+            assert.strictEqual(adapter.state.applyCalls, 0);
+            assert.strictEqual(readFileSync(environmentPathOf(configRoot), "utf8"), before);
+          }),
+      );
+    },
+  );
+
+  it.effect("does not treat an invalid saved environment as an uncreated environment", () => {
+    const adapter = adapterForSelection();
+    return withCreateFlow(
+      "nyaucast-saved-account-invalid-",
+      {
+        ...script,
+        accountsList: accountsListResponse([accounts[1]!]),
+      },
+      adapter,
+      ({ cfCalls, configRoot }) =>
+        Effect.gen(function* () {
+          writeEnvironmentText(configRoot, "{");
+          const { outcome } = yield* runCloudflare(["--yes"]);
+          assert.deepStrictEqual(failureFacts(failureOf(outcome)), {
+            _tag: "CloudflareEnvironmentInvalid",
+            path: environmentPathOf(configRoot),
+          });
+          assert.isFalse(cfCalls.some((call) => classifyCfCall(call.args) === "tokens-create"));
+          assert.deepStrictEqual(adapter.planInputs, []);
+          assert.strictEqual(adapter.state.applyCalls, 0);
+          assert.strictEqual(readFileSync(environmentPathOf(configRoot), "utf8"), "{");
+        }),
+    );
+  });
+
+  it.effect(
+    "reuses the saved second account on rerun and rejects a different --account without changing the file",
+    () => {
+      const adapter = adapterForSelection();
+      return withCreateFlow("nyaucast-account-rerun-", script, adapter, ({ cfCalls, configRoot }) =>
+        Effect.gen(function* () {
+          const first = yield* runCloudflare(["--account", accounts[1]!.id, "--yes"]);
+          assert.strictEqual(first.outcome._tag, "Success");
+          const before = readFileSync(environmentPathOf(configRoot), "utf8");
+          const terminal = confirmationTerminal(false, undefined);
+          const second = yield* runCloudflare([], terminal);
+          assert.strictEqual(second.outcome._tag, "Success");
+          assert.strictEqual(terminal.state.prompts, 0);
+          assert.include(second.logs, `plan.account=${accounts[1]!.id}`);
+          assert.include(second.logs, `account=${accounts[1]!.id}`);
+          assert.deepStrictEqual(
+            adapter.planInputs.map((input) => input.accountId),
+            [accounts[1]!.id, accounts[1]!.id],
+          );
+          for (const call of cfCalls.filter(
+            (call) => classifyCfCall(call.args) === "tokens-create",
+          )) {
+            assert.strictEqual(call.env?.["CLOUDFLARE_ACCOUNT_ID"], accounts[1]!.id);
+          }
+          const callsBefore = cfCalls.length;
+          const rejected = yield* runCloudflare(["--account", accounts[0]!.id, "--yes"]);
+          assert.isString(failureFacts(failureOf(rejected.outcome))["_tag"]);
+          assert.isFalse(
+            cfCalls
+              .slice(callsBefore)
+              .some((call) => classifyCfCall(call.args) === "tokens-create"),
+          );
+          assert.lengthOf(adapter.planInputs, 2);
+          assert.strictEqual(adapter.state.applyCalls, 1);
+          assert.strictEqual(readFileSync(environmentPathOf(configRoot), "utf8"), before);
+        }),
+      );
+    },
   );
 });

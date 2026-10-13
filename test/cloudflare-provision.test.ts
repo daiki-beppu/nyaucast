@@ -1,8 +1,14 @@
 import { assert, describe, it } from "@effect/vitest";
-import { Effect } from "effect";
+import { Effect, Layer, Option, Redacted } from "effect";
 
-import type { ProvisioningPlanRow } from "../src/cloudflare/alchemy.ts";
-import { decideProvisioning } from "../src/cloudflare/provision.ts";
+import {
+  CloudflareProvisioning,
+  type ProvisioningPlan,
+  type ProvisioningPlanRow,
+} from "../src/cloudflare/alchemy.ts";
+import { Cf } from "../src/cloudflare/cf.ts";
+import { CloudflareEnvironment } from "../src/cloudflare/environment.ts";
+import { decideProvisioning, prepareProvisioning } from "../src/cloudflare/provision.ts";
 
 // `test/cloudflare-cli.test.ts` の `fakeProvisioning` は、全行が同じ action（全行 create か
 // 全行 unchanged）しか作らない。そのため `decideProvisioning` が rows の一部だけを見て変更ありと
@@ -17,6 +23,85 @@ const row = (
   action,
   kind,
   resource: kind === "bucket" ? "Media" : "MediaWriter",
+});
+
+describe("prepareProvisioning account selection", () => {
+  it.effect.each([
+    {
+      name: "automatically uses the only account before creation",
+      saved: false,
+      explicit: "other",
+      succeeds: true,
+    },
+    {
+      name: "accepts an explicit id matching the saved account",
+      saved: true,
+      explicit: "selected",
+      succeeds: true,
+    },
+    {
+      name: "rejects a different explicit id even with only one account",
+      saved: true,
+      explicit: "other",
+      succeeds: false,
+    },
+  ])("$name", ({ saved, explicit, succeeds }) =>
+    Effect.gen(function* () {
+      const accounts = [{ id: "selected", name: "Account" }];
+      const tokenTargets: string[] = [];
+      const planTargets: string[] = [];
+      const layer = Layer.mergeAll(
+        Layer.succeed(
+          Cf,
+          Cf.of({
+            whoami: Effect.succeed(true),
+            listAccounts: Effect.succeed(accounts),
+            createToken: (input) =>
+              Effect.sync(() => {
+                tokenTargets.push(input.accountId);
+                return Redacted.make("test-deploy-token");
+              }),
+          }),
+        ),
+        Layer.succeed(
+          CloudflareEnvironment,
+          CloudflareEnvironment.of({
+            read: Effect.succeed(
+              saved
+                ? Option.some({ accountId: "selected", bucket: "nyaucast-media" })
+                : Option.none(),
+            ),
+            accessKeyReference: Effect.die("selection does not resolve secrets"),
+            write: () => Effect.die("preparation does not save the account"),
+          }),
+        ),
+        Layer.succeed(
+          CloudflareProvisioning,
+          CloudflareProvisioning.of({
+            plan: (input) =>
+              Effect.sync(() => {
+                planTargets.push(input.accountId);
+                return { rows: [] } as unknown as ProvisioningPlan;
+              }),
+            apply: () => Effect.die("preparation does not apply resources"),
+          }),
+        ),
+      );
+      const result = yield* prepareProvisioning({
+        accountId: explicit,
+        chooseAccount: () => Effect.die("a single or saved account does not require input"),
+      }).pipe(Effect.provide(layer), Effect.result);
+
+      assert.strictEqual(result._tag, succeeds ? "Success" : "Failure");
+      if (result._tag === "Success") {
+        assert.deepStrictEqual(result.success.account, accounts[0]);
+      } else {
+        assert.strictEqual(result.failure._tag, "CloudflareAccountConflict");
+      }
+      assert.deepStrictEqual(tokenTargets, succeeds ? ["selected"] : []);
+      assert.deepStrictEqual(planTargets, succeeds ? ["selected"] : []);
+    }),
+  );
 });
 
 const failureTagOf = (decision: Effect.Effect<"apply" | "unchanged", { readonly _tag: string }>) =>
