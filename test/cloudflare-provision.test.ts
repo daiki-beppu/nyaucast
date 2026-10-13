@@ -59,6 +59,7 @@ describe("prepareProvisioning account selection", () => {
       const planTargets: string[] = [];
       const accountListings: string[] = [];
       const cfService = {
+        authenticate: Effect.die("authenticated preparation must not authenticate"),
         whoami: Effect.succeed(true),
         listAccounts: Effect.sync(() => {
           accountListings.push("accounts");

@@ -2,7 +2,48 @@ import { assert, describe, it } from "@effect/vitest";
 import { Effect, Layer, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/process";
 
-import { Cf } from "./cf.ts";
+import { Cf, CfCommandFailed } from "./cf.ts";
+
+describe("Cf.authenticate", () => {
+  it.effect.each([0, 1, 130])("waits for exit %s and releases the child", (exitCode) => {
+    const released = { count: 0 };
+    const spawner = ChildProcessSpawner.make(() =>
+      Effect.acquireRelease(
+        Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            all: Stream.empty,
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            pid: ChildProcessSpawner.ProcessId(1),
+            stderr: Stream.empty,
+            stdin: Sink.drain,
+            stdout: Stream.empty,
+            unref: Effect.succeed(Effect.void),
+          }),
+        ),
+        () =>
+          Effect.sync(() => {
+            released.count += 1;
+          }),
+      ),
+    );
+    const layer = Cf.layer({}).pipe(
+      Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+    );
+    return Effect.gen(function* () {
+      const outcome = yield* Effect.result((yield* Cf).authenticate);
+      assert.strictEqual(outcome._tag, exitCode === 0 ? "Success" : "Failure");
+      if (outcome._tag === "Failure") {
+        assert.instanceOf(outcome.failure, CfCommandFailed);
+        assert.strictEqual(outcome.failure.operation, "authenticate");
+      }
+      assert.strictEqual(released.count, 1);
+    }).pipe(Effect.provide(layer));
+  });
+});
 
 describe("Cf.checkR2Availability", () => {
   it.effect.each([

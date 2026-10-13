@@ -7,24 +7,11 @@ import {
   type ProvisioningPlanRow,
   type ProvisioningResult,
 } from "./alchemy.ts";
-import {
-  Cf,
-  cfProfileName,
-  type CfCommandFailed,
-  type CloudflareR2CheckoutRequired,
-} from "./cf.ts";
+import { Cf, type CfCommandFailed, type CloudflareR2CheckoutRequired } from "./cf.ts";
 import { OnePasswordR2, type OnePasswordCommandFailed } from "./one-password.ts";
 import { type SecretReferencesWriteFailed } from "../auth/secrets.ts";
 import { type CloudflareEnvironmentWriteFailed } from "./environment-file.ts";
 import { CloudflareEnvironment, type CloudflareEnvironmentInvalid } from "./environment.ts";
-
-// 未ログイン（order.md 決定 1 行目）。この ticket では cf auth login を起こさない。
-// `prepareProvisioning` の失敗チャンネルにのみ現れ、呼び出し側は構造（_tag）で見分ける
-// （`cli.ts` はこの型を import しない）ので export しない。
-class CloudflareLoginRequired extends Schema.TaggedError<CloudflareLoginRequired>()(
-  "CloudflareLoginRequired",
-  { profile: Schema.String },
-) {}
 
 class CloudflareAccountRequired extends Schema.TaggedError<CloudflareAccountRequired>()(
   "CloudflareAccountRequired",
@@ -203,7 +190,6 @@ export const prepareProvisioning = Effect.fnUntraced(function* <E, R>(
 ): Effect.fn.Return<
   PreparedProvisioning,
   | E
-  | CloudflareLoginRequired
   | CloudflareAccountRequired
   | CloudflareAccountSelectionRequired
   | CloudflareAccountNotFound
@@ -218,7 +204,7 @@ export const prepareProvisioning = Effect.fnUntraced(function* <E, R>(
   const cf = yield* Cf;
   const authenticated = yield* cf.whoami;
   if (!authenticated) {
-    return yield* new CloudflareLoginRequired({ profile: cfProfileName });
+    yield* cf.authenticate;
   }
 
   const cloudflareEnvironment = yield* CloudflareEnvironment;

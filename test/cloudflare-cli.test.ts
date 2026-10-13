@@ -4,10 +4,12 @@ import { dirname, join } from "node:path";
 import { NodeServices } from "@effect/platform-node";
 import { assert, describe, it } from "@effect/vitest";
 import {
+  Cause,
   Console,
   Deferred,
   Effect,
   FileSystem,
+  Fiber,
   Layer,
   Option,
   PlatformError,
@@ -18,7 +20,7 @@ import {
   Stream,
   Terminal,
 } from "effect";
-import { ChildProcessSpawner } from "effect/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { TestConsole } from "effect/testing";
 
 import { StaticSecrets } from "../src/auth/secrets.ts";
@@ -701,9 +703,18 @@ type CfCall = {
   // `Cf` 境界は常に env を1つ組んで渡すため、cf への呼び出しでは undefined にならない
   // （command-output.ts の env 無し・ホスト継承の経路は `op read` だけが使う）。
   readonly env: Record<string, string | undefined> | undefined;
+  readonly options: ChildProcess.CommandOptions;
 };
 type CfResponse = { readonly exitCode: number; readonly stdout: string; readonly stderr?: string };
+type AuthenticationScript = {
+  readonly exitCode: Effect.Effect<number>;
+  readonly started?: Deferred.Deferred<void>;
+  readonly spawnFailure?: PlatformError.PlatformError;
+  readonly released: { count: number };
+};
+
 type CfScript = {
+  readonly authCreate?: AuthenticationScript;
   readonly accountsList?: CfResponse;
   readonly r2BucketsList?: CfResponse | (() => CfResponse);
   readonly tokensCreate?: CfResponse;
@@ -713,11 +724,12 @@ type CfScript = {
 /** `cf` の呼び出しの種類を、位置引数に含まれるサブコマンド名だけで分類する（フラグの並びに依存しない）。 */
 const classifyCfCall = (
   args: ReadonlyArray<string>,
-): "accounts-list" | "r2-buckets-list" | "tokens-create" | "unknown" | "whoami" => {
+): "accounts-list" | "auth-create" | "r2-buckets-list" | "tokens-create" | "unknown" | "whoami" => {
   if (args.includes("r2") && args.includes("buckets") && args.includes("list")) {
     return "r2-buckets-list";
   }
   if (args.includes("whoami")) return "whoami";
+  if (args[1] === "auth" && args[2] === "create") return "auth-create";
   if (args.includes("tokens") && args.includes("create")) return "tokens-create";
   if (args.includes("accounts") && args.includes("list")) return "accounts-list";
   return "unknown";
@@ -933,8 +945,39 @@ const fakeCf = (script: CfScript, op: ReturnType<typeof fakeR2OnePassword>) => {
         args: command.args,
         command: command.command,
         env: command.options.env,
+        options: command.options,
       });
       const kind = classifyCfCall(command.args);
+      if (kind === "auth-create") {
+        const authentication = script.authCreate;
+        if (authentication === undefined) return yield* Effect.die("unexpected authentication");
+        if (authentication.spawnFailure !== undefined) return yield* authentication.spawnFailure;
+        return yield* Effect.acquireRelease(
+          Effect.gen(function* () {
+            const exitCode = yield* Effect.cached(authentication.exitCode);
+            if (authentication.started !== undefined) {
+              yield* Deferred.succeed(authentication.started, undefined);
+            }
+            return ChildProcessSpawner.makeHandle({
+              all: Stream.empty,
+              exitCode: exitCode.pipe(Effect.map(ChildProcessSpawner.ExitCode)),
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+              isRunning: Effect.succeed(true),
+              kill: () => Effect.void,
+              pid: ChildProcessSpawner.ProcessId(1),
+              stderr: Stream.empty,
+              stdin: Sink.drain,
+              stdout: Stream.empty,
+              unref: Effect.succeed(Effect.void),
+            });
+          }),
+          () =>
+            Effect.sync(() => {
+              authentication.released.count += 1;
+            }),
+        );
+      }
       const response =
         kind === "r2-buckets-list"
           ? typeof script.r2BucketsList === "function"
@@ -1063,11 +1106,22 @@ const assertProfileOnEveryCall = (calls: ReadonlyArray<CfCall>): void => {
   for (const call of calls) {
     assert.strictEqual(call.command, process.execPath, "cf は nyaucast 自身の依存解決から起こす");
     assert.strictEqual(call.args[0], cfExecutablePath());
-    assert.strictEqual(
-      flagValue(call.args, "--profile"),
-      "nyaucast",
-      `専用プロファイルの指定が無い: ${call.args.join(" ")}`,
-    );
+    if (classifyCfCall(call.args) === "auth-create") {
+      assert.deepStrictEqual(call.args.slice(1), [
+        "auth",
+        "create",
+        "nyaucast",
+        "--scopes",
+        "workers-r2.write",
+        "account_api_tokens:create",
+      ]);
+    } else {
+      assert.strictEqual(
+        flagValue(call.args, "--profile"),
+        "nyaucast",
+        `専用プロファイルの指定が無い: ${call.args.join(" ")}`,
+      );
+    }
   }
 };
 
@@ -1114,6 +1168,337 @@ const withCreateFlow = <A, E, R>(
       ),
     );
   });
+
+describe("nyaucast cloudflare authentication", () => {
+  const adapterForAuthentication = () =>
+    fakeProvisioning({
+      accessKeyId: accessKeyIdSentinel,
+      accountId,
+      bucket,
+      secretAccessKey: secretAccessKeySentinel,
+    });
+  const authenticatedScript = {
+    accountsList: accountsListResponse([{ id: accountId, name: accountName }]),
+    r2BucketsList: r2BucketsListSuccess,
+    tokensCreate: tokensCreateSuccess(deployTokenSentinel),
+    whoami: whoamiAuthenticated,
+  };
+  const assertNoProvisioning = (
+    cfCalls: ReadonlyArray<CfCall>,
+    adapter: ReturnType<typeof fakeProvisioning>,
+    configRoot: string,
+  ) => {
+    assert.deepStrictEqual(
+      cfCalls.map((call) => classifyCfCall(call.args)),
+      ["whoami", "auth-create"],
+    );
+    assert.deepStrictEqual(adapter.planInputs, []);
+    assert.strictEqual(adapter.state.applyCalls, 0);
+    assert.deepStrictEqual(readdirSync(configRoot, { recursive: true }), []);
+  };
+
+  it.effect(
+    "waits for named-profile authentication before continuing the same CLI invocation to plan",
+    () =>
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const approved = yield* Deferred.make<number>();
+        const released = { count: 0 };
+        const adapter = adapterForAuthentication();
+        yield* withCreateFlow(
+          "nyaucast-authentication-wait-",
+          {
+            ...authenticatedScript,
+            whoami: whoamiNotAuthenticated,
+            authCreate: { started, exitCode: Deferred.await(approved), released },
+          },
+          adapter,
+          ({ cfCalls, configRoot }) =>
+            Effect.gen(function* () {
+              const fiber = yield* runCloudflare([]).pipe(Effect.forkScoped);
+              // 終了した旧停止経路を待機成功と取り違えず、待機fixtureのハングも防ぐ。
+              yield* Effect.raceFirst(
+                Deferred.await(started),
+                Fiber.join(fiber).pipe(
+                  Effect.andThen(Effect.die("CLI ended before authentication started")),
+                ),
+              );
+              assertNoProvisioning(cfCalls, adapter, configRoot);
+              assert.strictEqual(released.count, 0);
+              yield* Deferred.succeed(approved, 0);
+              const { logs, outcome } = yield* Fiber.join(fiber);
+              assert.deepStrictEqual(failureFacts(failureOf(outcome)), {
+                _tag: "CloudflareConfirmationRequired",
+              });
+              assert.deepStrictEqual(
+                cfCalls.map((call) => classifyCfCall(call.args)),
+                ["whoami", "auth-create", "accounts-list", "r2-buckets-list", "tokens-create"],
+              );
+              assertProfileOnEveryCall(cfCalls);
+              assert.deepStrictEqual(
+                adapter.planInputs.map((input) => input.accountId),
+                [accountId],
+              );
+              assert.strictEqual(
+                Redacted.value(adapter.planInputs[0]!.deployToken),
+                deployTokenSentinel,
+              );
+              assert.include(logs, `plan.account=${accountId}`);
+              assert.include(logs, "plan.accountApiToken=create");
+              assert.strictEqual(adapter.state.applyCalls, 0);
+              assert.deepStrictEqual(readdirSync(configRoot, { recursive: true }), []);
+              assert.strictEqual(released.count, 1);
+            }),
+        );
+      }),
+  );
+
+  it.effect(
+    "inherits all three authentication streams and excludes parent tokens without activating a profile",
+    () => {
+      const adapter = adapterForAuthentication();
+      return withCreateFlow(
+        "nyaucast-authentication-stdio-",
+        {
+          ...authenticatedScript,
+          whoami: whoamiNotAuthenticated,
+          authCreate: { exitCode: Effect.succeed(0), released: { count: 0 } },
+        },
+        adapter,
+        ({ cfCalls }) =>
+          Effect.gen(function* () {
+            const result = yield* runCloudflare(["--yes"]);
+            assert.strictEqual(result.outcome._tag, "Success");
+            const authentication = cfCalls.find(
+              (call) => classifyCfCall(call.args) === "auth-create",
+            );
+            assert.exists(authentication);
+            assert.deepStrictEqual(
+              [
+                authentication!.options.stdin,
+                authentication!.options.stdout,
+                authentication!.options.stderr,
+              ],
+              ["inherit", "inherit", "inherit"],
+            );
+            assert.isNotTrue(authentication!.options.extendEnv);
+            assertProfileOnEveryCall(cfCalls);
+            for (const call of cfCalls) {
+              for (const key of ["CLOUDFLARE_API_TOKEN", "CF_API_TOKEN"]) {
+                assert.isFalse(Object.hasOwn(call.env!, key));
+              }
+              assert.strictEqual(call.env?.["CF_DELEGATION"], "1");
+              assert.strictEqual(call.env?.["HOME"], "/fake/home");
+            }
+            assert.deepStrictEqual(
+              cfCalls.map((call) => classifyCfCall(call.args)),
+              ["whoami", "auth-create", "accounts-list", "r2-buckets-list", "tokens-create"],
+            );
+          }),
+        {
+          CLOUDFLARE_API_TOKEN: "PARENT_TOKEN",
+          CF_API_TOKEN: "OLD_PARENT_TOKEN",
+          CF_DELEGATION: "0",
+          HOME: "/fake/home",
+        },
+      );
+    },
+  );
+
+  it.effect.each([1, 130])(
+    "stops with a typed failure and releases the authentication child on exit %s",
+    (exitCode) => {
+      const adapter = adapterForAuthentication();
+      const released = { count: 0 };
+      return withCreateFlow(
+        "nyaucast-authentication-exit-",
+        {
+          whoami: whoamiNotAuthenticated,
+          authCreate: { exitCode: Effect.succeed(exitCode), released },
+        },
+        adapter,
+        ({ cfCalls, configRoot }) =>
+          Effect.gen(function* () {
+            const { outcome, logs } = yield* runCloudflare(["--yes"]);
+            assert.deepStrictEqual(failureFacts(failureOf(outcome)), {
+              _tag: "CfCommandFailed",
+              operation: "authenticate",
+            });
+            assertNoProvisioning(cfCalls, adapter, configRoot);
+            assert.deepStrictEqual(logs, []);
+            assert.strictEqual(released.count, 1);
+          }),
+      );
+    },
+  );
+
+  it.effect("stops with a typed failure when authentication cannot spawn", () => {
+    const adapter = adapterForAuthentication();
+    const released = { count: 0 };
+    return withCreateFlow(
+      "nyaucast-authentication-spawn-",
+      {
+        whoami: whoamiNotAuthenticated,
+        authCreate: {
+          exitCode: Effect.succeed(0),
+          released,
+          spawnFailure: new PlatformError.PlatformError(
+            new PlatformError.SystemError({
+              module: "ChildProcess",
+              method: "spawn",
+              _tag: "NotFound",
+              description: "test spawn failure",
+            }),
+          ),
+        },
+      },
+      adapter,
+      ({ cfCalls, configRoot }) =>
+        Effect.gen(function* () {
+          const { outcome, logs } = yield* runCloudflare(["--yes"]);
+          assert.deepStrictEqual(failureFacts(failureOf(outcome)), {
+            _tag: "CfCommandFailed",
+            operation: "authenticate",
+          });
+          assertNoProvisioning(cfCalls, adapter, configRoot);
+          assert.deepStrictEqual(logs, []);
+          assert.strictEqual(released.count, 0);
+        }),
+    );
+  });
+
+  it.effect(
+    "preserves parent interruption and releases the pending authentication child without provisioning",
+    () =>
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const released = { count: 0 };
+        const adapter = adapterForAuthentication();
+        yield* withCreateFlow(
+          "nyaucast-authentication-interrupt-",
+          {
+            whoami: whoamiNotAuthenticated,
+            authCreate: { started, exitCode: Effect.never, released },
+          },
+          adapter,
+          ({ cfCalls, configRoot }) =>
+            Effect.gen(function* () {
+              const fiber = yield* runCloudflare(["--yes"]).pipe(Effect.forkScoped);
+              yield* Effect.raceFirst(
+                Deferred.await(started),
+                Fiber.join(fiber).pipe(
+                  Effect.andThen(Effect.die("CLI ended before authentication started")),
+                ),
+              );
+              assert.strictEqual(released.count, 0);
+              yield* Fiber.interrupt(fiber);
+              const exit = yield* Fiber.await(fiber);
+              assert.strictEqual(exit._tag, "Failure");
+              if (exit._tag === "Failure") assert.isTrue(Cause.hasInterruptsOnly(exit.cause));
+              assert.strictEqual(released.count, 1);
+              assertNoProvisioning(cfCalls, adapter, configRoot);
+            }),
+        );
+      }),
+  );
+
+  it.effect("does not start authentication for an already authenticated profile", () => {
+    const adapter = adapterForAuthentication();
+    return withCreateFlow(
+      "nyaucast-authentication-already-",
+      authenticatedScript,
+      adapter,
+      ({ cfCalls }) =>
+        Effect.gen(function* () {
+          const { outcome } = yield* runCloudflare(["--yes"]);
+          assert.strictEqual(outcome._tag, "Success");
+          assert.deepStrictEqual(
+            cfCalls.map((call) => classifyCfCall(call.args)),
+            ["whoami", "accounts-list", "r2-buckets-list", "tokens-create"],
+          );
+          assert.lengthOf(adapter.planInputs, 1);
+        }),
+    );
+  });
+
+  it.effect("can authenticate on rerun after a failed attempt with the same services", () => {
+    const adapter = adapterForAuthentication();
+    const released = { count: 0 };
+    let attempts = 0;
+    return withCreateFlow(
+      "nyaucast-authentication-rerun-",
+      {
+        ...authenticatedScript,
+        whoami: whoamiNotAuthenticated,
+        authCreate: {
+          released,
+          exitCode: Effect.sync(() => {
+            attempts += 1;
+            return attempts === 1 ? 1 : 0;
+          }),
+        },
+      },
+      adapter,
+      ({ cfCalls, configRoot }) =>
+        Effect.gen(function* () {
+          const first = yield* runCloudflare(["--yes"]);
+          assert.deepStrictEqual(failureFacts(failureOf(first.outcome)), {
+            _tag: "CfCommandFailed",
+            operation: "authenticate",
+          });
+          assertNoProvisioning(cfCalls, adapter, configRoot);
+          assert.strictEqual(released.count, 1);
+          const second = yield* runCloudflare(["--yes"]);
+          assert.strictEqual(second.outcome._tag, "Success");
+          assert.deepStrictEqual(
+            cfCalls.map((call) => classifyCfCall(call.args)),
+            [
+              "whoami",
+              "auth-create",
+              "whoami",
+              "auth-create",
+              "accounts-list",
+              "r2-buckets-list",
+              "tokens-create",
+            ],
+          );
+          assertProfileOnEveryCall(cfCalls);
+          assert.strictEqual(released.count, 2);
+          assert.lengthOf(adapter.planInputs, 1);
+          assert.strictEqual(adapter.state.applyCalls, 1);
+          assert.isTrue(existsSync(environmentPathOf(configRoot)));
+          assert.include(second.logs, `plan.account=${accountId}`);
+        }),
+    );
+  });
+
+  it.effect.each([
+    { name: "non-zero whoami", response: { exitCode: 1, stdout: '{"authenticated":false}' } },
+    { name: "invalid whoami JSON", response: { exitCode: 0, stdout: "not JSON" } },
+  ])("does not reinterpret $name as an authentication request", ({ response }) => {
+    const adapter = adapterForAuthentication();
+    return withCreateFlow(
+      "nyaucast-authentication-whoami-",
+      { whoami: response },
+      adapter,
+      ({ cfCalls, configRoot }) =>
+        Effect.gen(function* () {
+          const { outcome } = yield* runCloudflare(["--yes"]);
+          assert.deepStrictEqual(failureFacts(failureOf(outcome)), {
+            _tag: "CfCommandFailed",
+            operation: "whoami",
+          });
+          assert.deepStrictEqual(
+            cfCalls.map((call) => classifyCfCall(call.args)),
+            ["whoami"],
+          );
+          assert.deepStrictEqual(adapter.planInputs, []);
+          assert.strictEqual(adapter.state.applyCalls, 0);
+          assert.deepStrictEqual(readdirSync(configRoot, { recursive: true }), []);
+        }),
+    );
+  });
+});
 
 describe("nyaucast cloudflare R2 environment warning", () => {
   const script = {
@@ -1932,38 +2317,6 @@ describe("nyaucast cloudflare --yes (create)", () => {
   );
 
   it.effect(
-    "stops with CloudflareLoginRequired before enumerating accounts when cf auth whoami reports the nyaucast profile is not authenticated",
-    () =>
-      withCreateFlow(
-        "nyaucast-cloudflare-cli-login-required-",
-        { whoami: whoamiNotAuthenticated },
-        fakeProvisioning({
-          accessKeyId: accessKeyIdSentinel,
-          accountId,
-          bucket,
-          secretAccessKey: secretAccessKeySentinel,
-        }),
-        ({ cfCalls, configRoot }) =>
-          Effect.gen(function* () {
-            const { errors, logs, outcome } = yield* runCloudflare(["--yes"]);
-
-            // C2: 未ログインは「ログインが要る」タグつきの失敗。事実はプロファイル名だけ。
-            assert.deepStrictEqual(failureFacts(failureOf(outcome)), {
-              _tag: "CloudflareLoginRequired",
-              profile: "nyaucast",
-            });
-            assert.deepStrictEqual(logs, []);
-            // アカウント一覧・トークン作成・cf auth login は一切起こさない。記録は whoami の1件だけ。
-            assert.strictEqual(cfCalls.length, 1);
-            assert.strictEqual(classifyCfCall(cfCalls[0]!.args), "whoami");
-            assertProfileOnEveryCall(cfCalls);
-            assert.deepStrictEqual(readdirSync(configRoot, { recursive: true }), []);
-            assertNothingLeaked(errors, secretValues);
-          }),
-      ),
-  );
-
-  it.effect(
     "shows the plan but stops with CloudflareConfirmationRequired, without applying or writing, when --yes is omitted and the plan has changes",
     () => {
       const adapter = fakeProvisioning({
@@ -2082,11 +2435,14 @@ describe("nyaucast cloudflare parent environment handling", () => {
     assert.isFalse(Object.hasOwn(env ?? {}, key), `${key} が子プロセスの環境に残っている`);
 
   it.effect(
-    "stops with CloudflareLoginRequired and drops CLOUDFLARE_API_TOKEN from the child environment when the parent process has it",
+    "stops on authentication failure and drops CLOUDFLARE_API_TOKEN from the child environment when the parent process has it",
     () =>
       withCreateFlow(
         "nyaucast-cloudflare-cli-parent-token-",
-        { whoami: whoamiNotAuthenticated },
+        {
+          whoami: whoamiNotAuthenticated,
+          authCreate: { exitCode: Effect.succeed(1), released: { count: 0 } },
+        },
         fakeProvisioning({
           accessKeyId: accessKeyIdSentinel,
           accountId,
@@ -2099,17 +2455,23 @@ describe("nyaucast cloudflare parent environment handling", () => {
 
             // SCN-FIX1-P1: 親環境の CLOUDFLARE_API_TOKEN は専用プロファイルの判定を乗っ取らない。
             assert.deepStrictEqual(failureFacts(failureOf(outcome)), {
-              _tag: "CloudflareLoginRequired",
-              profile: "nyaucast",
+              _tag: "CfCommandFailed",
+              operation: "authenticate",
             });
-            assert.strictEqual(cfCalls.length, 1);
-            assert.strictEqual(classifyCfCall(cfCalls[0]!.args), "whoami");
+            assert.deepStrictEqual(
+              cfCalls.map((call) => classifyCfCall(call.args)),
+              ["whoami", "auth-create"],
+            );
+            assertProfileOnEveryCall(cfCalls);
             assert.deepStrictEqual(readdirSync(configRoot, { recursive: true }), []);
 
-            assertEnvKeyAbsent(cfCalls[0]!.env, "CLOUDFLARE_API_TOKEN");
-            assert.strictEqual(cfCalls[0]!.env?.["PATH"], "/fake/bin");
-            assert.strictEqual(cfCalls[0]!.env?.["HOME"], "/fake/home");
-            assert.strictEqual(cfCalls[0]!.env?.["XDG_CONFIG_HOME"], "/fake/home/.config");
+            for (const call of cfCalls) {
+              assertEnvKeyAbsent(call.env, "CLOUDFLARE_API_TOKEN");
+              assert.strictEqual(call.env?.["PATH"], "/fake/bin");
+              assert.strictEqual(call.env?.["HOME"], "/fake/home");
+              assert.strictEqual(call.env?.["XDG_CONFIG_HOME"], "/fake/home/.config");
+              assert.strictEqual(call.env?.["CF_DELEGATION"], "1");
+            }
           }),
         {
           CLOUDFLARE_API_TOKEN: "ENV_TOKEN_SENTINEL",
@@ -2120,31 +2482,37 @@ describe("nyaucast cloudflare parent environment handling", () => {
       ),
   );
 
-  it.effect(
-    "stops with CloudflareLoginRequired and drops the deprecated CF_API_TOKEN name too",
-    () =>
-      withCreateFlow(
-        "nyaucast-cloudflare-cli-parent-deprecated-token-",
-        { whoami: whoamiNotAuthenticated },
-        fakeProvisioning({
-          accessKeyId: accessKeyIdSentinel,
-          accountId,
-          bucket,
-          secretAccessKey: secretAccessKeySentinel,
-        }),
-        ({ cfCalls }) =>
-          Effect.gen(function* () {
-            const { outcome } = yield* runCloudflare(["--yes"]);
+  it.effect("stops on authentication failure and drops the deprecated CF_API_TOKEN name too", () =>
+    withCreateFlow(
+      "nyaucast-cloudflare-cli-parent-deprecated-token-",
+      {
+        whoami: whoamiNotAuthenticated,
+        authCreate: { exitCode: Effect.succeed(1), released: { count: 0 } },
+      },
+      fakeProvisioning({
+        accessKeyId: accessKeyIdSentinel,
+        accountId,
+        bucket,
+        secretAccessKey: secretAccessKeySentinel,
+      }),
+      ({ cfCalls }) =>
+        Effect.gen(function* () {
+          const { outcome } = yield* runCloudflare(["--yes"]);
 
-            // SCN-FIX1-P2: 旧名 CF_API_TOKEN だけが置かれている場合も認証元は専用プロファイルに固定される。
-            assert.deepStrictEqual(failureFacts(failureOf(outcome)), {
-              _tag: "CloudflareLoginRequired",
-              profile: "nyaucast",
-            });
-            assertEnvKeyAbsent(cfCalls[0]!.env, "CF_API_TOKEN");
-          }),
-        { CF_API_TOKEN: "ENV_TOKEN_SENTINEL" },
-      ),
+          // SCN-FIX1-P2: 旧名 CF_API_TOKEN だけが置かれている場合も認証元は専用プロファイルに固定される。
+          assert.deepStrictEqual(failureFacts(failureOf(outcome)), {
+            _tag: "CfCommandFailed",
+            operation: "authenticate",
+          });
+          assert.deepStrictEqual(
+            cfCalls.map((call) => classifyCfCall(call.args)),
+            ["whoami", "auth-create"],
+          );
+          assertProfileOnEveryCall(cfCalls);
+          for (const call of cfCalls) assertEnvKeyAbsent(call.env, "CF_API_TOKEN");
+        }),
+      { CF_API_TOKEN: "ENV_TOKEN_SENTINEL" },
+    ),
   );
 
   it.effect("forwards look-alike parent environment entries to every cf call unchanged", () => {
