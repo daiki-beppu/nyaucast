@@ -73,6 +73,15 @@ interface CliEnvironment<E2, R2, E3, R3, E4, R4, E5, R5, E6, R6> {
   >;
 }
 
+const describeCliFailure = (error: unknown): string => {
+  if (Predicate.isTagged(error, "CloudflareAccountRequired")) {
+    return `${describeFailure(error)}: https://dash.cloudflare.com/sign-up でアカウントを作成してから nyaucast cloudflare を再実行してください。`;
+  }
+  return Predicate.isTagged(error, "CloudflareConfirmationRequired")
+    ? `${describeFailure(error)}: 承認を得たら --yes を付けて再実行してください。`
+    : describeFailure(error);
+};
+
 // effect/cli の引数の誤りは、cli 自身が使い方とエラーを出力済み。二重に出さない。
 const reportFailure = (cause: Cause.Cause<unknown>) => {
   const failure = Cause.findFail(cause);
@@ -80,14 +89,7 @@ const reportFailure = (cause: Cause.Cause<unknown>) => {
     return Console.error("UnexpectedFailure");
   }
   const error = failure.success.error;
-  if (CliError.isCliError(error)) {
-    return Effect.void;
-  }
-  return Console.error(
-    Predicate.isTagged(error, "CloudflareConfirmationRequired")
-      ? `${describeFailure(error)}: 承認を得たら --yes を付けて再実行してください。`
-      : describeFailure(error),
-  );
+  return CliError.isCliError(error) ? Effect.void : Console.error(describeCliFailure(error));
 };
 
 export const cliTeardown: Runtime.Teardown = (exit, onExit) => {
