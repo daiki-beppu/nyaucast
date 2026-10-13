@@ -2861,33 +2861,49 @@ describe("nyaucast cloudflare R2 access key storage", () => {
     },
   );
 
-  it.effect.each(["R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"])(
-    "stops without applying or rewriting files when signed out with an existing %s reference",
-    (name) => {
-      const op = fakeR2OnePassword({ authentication: "signed-out" });
+  it.effect.each([
+    { name: "R2_ACCESS_KEY_ID", authentication: "signed-out" as const, saved: true },
+    { name: "R2_SECRET_ACCESS_KEY", authentication: "signed-out" as const, saved: true },
+    { name: "R2_ACCESS_KEY_ID", authentication: "missing" as const, saved: false },
+    { name: "R2_SECRET_ACCESS_KEY", authentication: "missing" as const, saved: false },
+  ])(
+    "stops without applying or rewriting files with an existing $name reference when op is $authentication",
+    ({ name, authentication, saved }) => {
+      const op = fakeR2OnePassword({ authentication });
       const adapter = adapterForStorage();
       return withCreateFlow(
         "nyaucast-r2-op-signin-",
         script,
         adapter,
-        ({ configRoot }) =>
+        ({ cfCalls, configRoot }) =>
           Effect.gen(function* () {
-            writeEnvironment(configRoot, { ...createdEnvironment, secrets: secretsBlock });
+            if (saved)
+              writeEnvironment(configRoot, { ...createdEnvironment, secrets: secretsBlock });
             writeSecrets(configRoot, {
               ...unrelated,
               [name]: "op://vault-test-id/existing-r2/id-field",
             });
-            const beforeEnvironment = readFileSync(environmentPathOf(configRoot), "utf8");
+            const beforeEnvironment = saved
+              ? readFileSync(environmentPathOf(configRoot), "utf8")
+              : undefined;
             const beforeReferences = readFileSync(join(configRoot, "secrets.json"), "utf8");
             const result = yield* runCloudflare(["--yes"]);
-            assert.strictEqual(result.outcome._tag, "Failure");
+            assert.deepStrictEqual(failureFacts(failureOf(result.outcome)), {
+              _tag: "OnePasswordSignInRequired",
+            });
+            assert.deepStrictEqual(adapter.planInputs, []);
+            assert.isFalse(cfCalls.some((call) => classifyCfCall(call.args) === "tokens-create"));
             assert.match(result.errors.join("\n"), /(?:サインイン|signin|sign in)/iu);
             assert.strictEqual(adapter.state.applyCalls, 0);
             assert.deepStrictEqual(mutationsOf(op), []);
-            assert.strictEqual(
-              readFileSync(environmentPathOf(configRoot), "utf8"),
-              beforeEnvironment,
-            );
+            if (saved) {
+              assert.strictEqual(
+                readFileSync(environmentPathOf(configRoot), "utf8"),
+                beforeEnvironment,
+              );
+            } else {
+              assert.isFalse(existsSync(environmentPathOf(configRoot)));
+            }
             assert.strictEqual(
               readFileSync(join(configRoot, "secrets.json"), "utf8"),
               beforeReferences,
@@ -2900,9 +2916,12 @@ describe("nyaucast cloudflare R2 access key storage", () => {
     },
   );
 
-  it.effect(
-    "migrates file secrets on the next apply and the same secret reader follows the new references",
-    () => {
+  it.effect.each([
+    { name: "--yes", args: ["--yes"], isTerminal: false, answer: undefined },
+    { name: "TTY approval", args: [], isTerminal: true, answer: "y" },
+  ])(
+    "migrates file secrets with unchanged resources after $name and the same reader follows the references",
+    ({ args, isTerminal, answer }) => {
       const op = fakeR2OnePassword({ authentication: "missing" });
       const adapter = adapterForStorage();
       return withCreateFlow(
@@ -2925,16 +2944,70 @@ describe("nyaucast cloudflare R2 access key storage", () => {
               { ...createdEnvironment, secrets: secretsBlock },
             );
             op.state.authentication = "authenticated";
-            // 次の plan に変更がある場合だけ apply する既存契約を保つ。
-            adapter.state.applied = false;
-            const second = yield* runCloudflare(["--yes"]);
+            const terminal = confirmationTerminal(isTerminal, answer);
+            const second = yield* runCloudflare(args, terminal);
             assert.strictEqual(second.outcome._tag, "Success");
+            assert.strictEqual(terminal.state.prompts, isTerminal ? 1 : 0);
+            assert.include(second.logs, "plan.accountApiToken=unchanged");
+            assert.include(
+              second.logs,
+              `plan.bucket=unchanged name=${bucket} lifecycle=delete-objects-after-7-days`,
+            );
+            assert.isTrue(
+              second.logs.some((line) => line.includes("ファイルから 1Password へ移す")),
+            );
+            if (isTerminal) {
+              assert.isTrue(
+                terminal.state.planAtPrompt.some((line) =>
+                  line.includes("ファイルから 1Password へ移す"),
+                ),
+              );
+            }
+            assert.strictEqual(adapter.state.applyCalls, 2);
+            assert.lengthOf(op.items, 1);
+            assert.deepStrictEqual(
+              Object.fromEntries(op.items[0]!.fields.map((field) => [field.label, field.value])),
+              secretsBlock,
+            );
             assert.deepStrictEqual(
               JSON.parse(readFileSync(environmentPathOf(configRoot), "utf8")),
               createdEnvironment,
             );
+            const references = referencesOf(configRoot);
+            assert.strictEqual(yield* secrets.resolve("R2_ACCESS_KEY_ID"), accessKeyIdSentinel);
+            assert.strictEqual(
+              yield* secrets.resolve("R2_SECRET_ACCESS_KEY"),
+              secretAccessKeySentinel,
+            );
+            for (const name of Object.keys(secretsBlock)) {
+              assert.isTrue(
+                op.calls.some(
+                  (call) => call.args[0] === "read" && call.args[1] === references[name],
+                ),
+              );
+            }
             yield* assertSavedReferences(configRoot, op);
             assertSafeTransfer(op, [...second.logs, ...second.errors]);
+            const beforeEnvironment = readFileSync(environmentPathOf(configRoot), "utf8");
+            const beforeReferences = readFileSync(join(configRoot, "secrets.json"), "utf8");
+            const thirdTerminal = confirmationTerminal(true, undefined);
+            const third = yield* runCloudflare([], thirdTerminal);
+            assert.strictEqual(third.outcome._tag, "Success");
+            assert.strictEqual(thirdTerminal.state.prompts, 0);
+            assert.strictEqual(adapter.state.applyCalls, 2);
+            assert.lengthOf(mutationsOf(op), 1);
+            assert.include(third.logs, "accessKey=one_password");
+            assert.isFalse(
+              third.logs.some((line) => line.includes("ファイルから 1Password へ移す")),
+            );
+            assert.strictEqual(
+              readFileSync(environmentPathOf(configRoot), "utf8"),
+              beforeEnvironment,
+            );
+            assert.strictEqual(
+              readFileSync(join(configRoot, "secrets.json"), "utf8"),
+              beforeReferences,
+            );
           }),
         {},
         op,
@@ -2992,30 +3065,14 @@ describe("nyaucast cloudflare R2 access key storage", () => {
   );
 
   it.effect.each([
-    {
-      name: "declined confirmation",
-      args: [] as string[],
-      terminal: () => confirmationTerminal(true, "N"),
-      succeeds: true,
-    },
-    {
-      name: "approval required on non-TTY",
-      args: [] as string[],
-      terminal: () => confirmationTerminal(false, undefined),
-      succeeds: false,
-    },
-    {
-      name: "unchanged plan",
-      args: ["--yes"],
-      terminal: () => confirmationTerminal(false, undefined),
-      succeeds: true,
-    },
+    { name: "declined confirmation", isTerminal: true, answer: "N", succeeds: true },
+    { name: "approval required on non-TTY", isTerminal: false, answer: undefined, succeeds: false },
   ])(
-    "shows the selected destination but writes no item for $name",
-    ({ name, args, terminal, succeeds }) => {
+    "shows migration with unchanged resources but preserves files for $name",
+    ({ isTerminal, answer, succeeds }) => {
       const op = fakeR2OnePassword({ authentication: "authenticated" });
       const adapter = adapterForStorage();
-      if (name === "unchanged plan") adapter.state.applied = true;
+      adapter.state.applied = true;
       return withCreateFlow(
         "nyaucast-r2-op-no-apply-",
         script,
@@ -3023,18 +3080,45 @@ describe("nyaucast cloudflare R2 access key storage", () => {
         ({ configRoot }) =>
           Effect.gen(function* () {
             writeEnvironment(configRoot, { ...createdEnvironment, secrets: secretsBlock });
+            writeSecrets(configRoot, unrelated);
             const before = readFileSync(environmentPathOf(configRoot), "utf8");
-            const consoleTerminal = terminal();
-            const result = yield* runCloudflare(args, consoleTerminal);
+            const beforeReferences = readFileSync(join(configRoot, "secrets.json"), "utf8");
+            const terminal = confirmationTerminal(isTerminal, answer);
+            const result = yield* runCloudflare([], terminal);
             assert.strictEqual(result.outcome._tag, succeeds ? "Success" : "Failure");
             assert.include(result.logs, "plan.accessKey=one_password");
-            if (name === "declined confirmation")
-              assert.include(consoleTerminal.state.planAtPrompt, "plan.accessKey=one_password");
-            if (name === "unchanged plan") assert.include(result.logs, "accessKey=file");
+            assert.include(result.logs, "plan.accountApiToken=unchanged");
+            assert.include(
+              result.logs,
+              `plan.bucket=unchanged name=${bucket} lifecycle=delete-objects-after-7-days`,
+            );
+            assert.isTrue(
+              result.logs.some((line) => line.includes("ファイルから 1Password へ移す")),
+            );
+            assert.strictEqual(terminal.state.prompts, isTerminal ? 1 : 0);
+            if (isTerminal) {
+              assert.isTrue(
+                terminal.state.planAtPrompt.some((line) =>
+                  line.includes("ファイルから 1Password へ移す"),
+                ),
+              );
+            } else {
+              assert.deepStrictEqual(failureFacts(failureOf(result.outcome)), {
+                _tag: "CloudflareConfirmationRequired",
+              });
+              assert.match(result.errors.join("\n"), /承認.*--yes.*再実行/u);
+            }
             assert.strictEqual(adapter.state.applyCalls, 0);
             assert.deepStrictEqual(mutationsOf(op), []);
             assert.strictEqual(readFileSync(environmentPathOf(configRoot), "utf8"), before);
-            assert.isFalse(existsSync(join(configRoot, "secrets.json")));
+            assert.strictEqual(
+              readFileSync(join(configRoot, "secrets.json"), "utf8"),
+              beforeReferences,
+            );
+            assertNothingLeaked(
+              [...result.logs, ...result.errors, ...terminal.state.display],
+              secretValues,
+            );
           }),
         {},
         op,
@@ -3063,9 +3147,8 @@ describe("nyaucast cloudflare R2 access key storage", () => {
             assert.strictEqual(readFileSync(environmentPathOf(configRoot), "utf8"), before);
             assert.isFalse(failed.logs.some((line) => line.startsWith("accessKey=")));
             assertNothingLeaked([...failed.logs, ...failed.errors], secretValues);
-            // 参照ファイルを修復し、変更を含む次の apply を再実行する。
+            // 資源は適用済みでも、参照保存の失敗で残った秘密ブロックを再試行で移す。
             writeSecrets(configRoot, unrelated);
-            adapter.state.applied = false;
             const retried = yield* runCloudflare(["--yes"]);
             assert.strictEqual(retried.outcome._tag, "Success");
             assert.lengthOf(op.items, 1);

@@ -48,6 +48,7 @@ const showPlan = (prepared: PreparedProvisioning) =>
       `plan.account=${prepared.account.id}`,
       `plan.accountName=${prepared.account.name}`,
       `plan.accessKey=${prepared.accessKeyDestination}`,
+      ...(prepared.migrateSecrets ? ["ファイルから 1Password へ移す"] : []),
       ...prepared.rows.map(describePlanRow),
     ],
     (line) => Console.log(line),
@@ -120,7 +121,7 @@ const create = (yes: boolean, accountId: Option.Option<string>) =>
         chooseAccount: (yield* StdinTerminal).isTerminal ? chooseAccount : undefined,
       });
       yield* showPlan(prepared);
-      const decision = yield* decideProvisioning(prepared.rows, yes).pipe(
+      const decision = yield* decideProvisioning(prepared.rows, yes, prepared.migrateSecrets).pipe(
         Effect.catchTag("CloudflareConfirmationRequired", (error) =>
           Effect.gen(function* () {
             if (!(yield* StdinTerminal).isTerminal) {

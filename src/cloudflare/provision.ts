@@ -57,6 +57,7 @@ class CloudflareConfirmationRequired extends Schema.TaggedError<CloudflareConfir
 
 export type PreparedProvisioning = {
   readonly accessKeyDestination: "file" | "one_password";
+  readonly migrateSecrets: boolean;
   readonly account: { readonly id: string; readonly name: string };
   readonly apply: Effect.Effect<
     ProvisioningResult,
@@ -229,6 +230,9 @@ export const prepareProvisioning = Effect.fnUntraced(function* <E, R>(
   yield* cf.checkR2Availability(account.id);
   const onePassword = yield* OnePasswordR2;
   const accessKeyDestination = yield* selectAccessKeyDestination(onePassword);
+  const migrateSecrets =
+    accessKeyDestination === "one_password" &&
+    Option.exists(saved, (environment) => environment.secrets !== undefined);
   const deployToken = yield* createDeployToken(cf, account.id);
 
   const provisioning = yield* CloudflareProvisioning;
@@ -242,18 +246,19 @@ export const prepareProvisioning = Effect.fnUntraced(function* <E, R>(
     plan,
   );
 
-  return { account, apply, rows: plan.rows, accessKeyDestination };
+  return { account, apply, rows: plan.rows, accessKeyDestination, migrateSecrets };
 });
 
 /**
  * plan の全行から、apply を呼ぶか・変更なしで終えるか・確認が要るかを決める。
- * 全行 unchanged → "unchanged"。変更あり + yes → "apply"。変更あり + !yes → CloudflareConfirmationRequired。
+ * 資源変更も秘密の移し替えもないときだけ "unchanged"。それ以外は承認後に apply する。
  */
 export const decideProvisioning = (
   rows: ReadonlyArray<ProvisioningPlanRow>,
   yes: boolean,
+  migrateSecrets: boolean,
 ): Effect.Effect<"apply" | "unchanged", CloudflareConfirmationRequired> => {
   const hasChanges = rows.some((row) => row.action !== "unchanged");
-  if (!hasChanges) return Effect.succeed("unchanged");
+  if (!hasChanges && !migrateSecrets) return Effect.succeed("unchanged");
   return yes ? Effect.succeed("apply") : new CloudflareConfirmationRequired({});
 };

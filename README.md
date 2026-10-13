@@ -22,6 +22,19 @@ lockfile と `package.json` の乖離は check の最初のゲートが検出す
 
 全ゲートの入口は `pnpm run check`。ゲートの構成は `package.json` の `check` script だけが定義する。
 
+## R2アクセスキーの保存先
+
+ファイルで運用していた場合、`op whoami` が成功するようになった後の `nyaucast cloudflare` で、planに「ファイルから 1Password へ移す」と表示します。資源がすべて変更なしでも確認し、承認後に両キーを1Passwordへ保存して参照を記録し、`environment.json` の秘密ブロックを消します。
+
+1Passwordに保存済みのR2参照がある間は、サインアウトや`op`の不在でファイル保存へ自動で切り替えません。サインインして再実行してください。
+
+1Passwordの利用をやめてファイル保存へ切り替える場合は、次の手順を実行します。
+
+1. サインイン中に、1Passwordの `nyaucast R2` itemから両キーを取り出し、`~/.config/nyaucast/cloudflare/environment.json` の `secrets` オブジェクトへ `R2_ACCESS_KEY_ID` と `R2_SECRET_ACCESS_KEY` として保存します。既存の `accountId` と `bucket` は保持し、ファイルの権限は0600にします。キーをコマンド引数やログへ出さないでください。
+2. `~/.config/nyaucast/secrets.json` から `R2_ACCESS_KEY_ID` と `R2_SECRET_ACCESS_KEY` の2つの参照だけを削除します。ほかのシークレットの参照は残します。
+3. `op` をPATHから外すか、サインアウトして `op whoami` が成功しない状態にします。
+4. `nyaucast cloudflare` を再実行します。資源変更があればplanを確認して承認します。変更なしの場合は保存を省略し、手順1で保存したキーを使います。
+
 ## Status
 
 v0.1.0 に向けて開発中。ゲートは first-party の解説動画チャンネルでの dogfood 完走（解説動画 lifecycle 1 周と 3 SNS（YouTube・Instagram・X）への公開。ADR-0009）。Python 版 (`youtube-channels-automation`) は nyaucast が実運用カバレッジに達するまでメンテナンスモードで維持される。

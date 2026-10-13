@@ -135,12 +135,31 @@ const failureTagOf = (decision: Effect.Effect<"apply" | "unchanged", { readonly 
   });
 
 describe("decideProvisioning", () => {
-  it.effect('returns "unchanged" regardless of --yes when every row is unchanged', () =>
+  it.effect(
+    'returns "unchanged" regardless of --yes when every row is unchanged and no secrets need migration',
+    () =>
+      Effect.gen(function* () {
+        const rows = [row("unchanged", "bucket"), row("unchanged", "account-api-token")];
+
+        assert.strictEqual(yield* decideProvisioning(rows, false, false), "unchanged");
+        assert.strictEqual(yield* decideProvisioning(rows, true, false), "unchanged");
+      }),
+  );
+
+  it.effect("requires approval for secret migration even when every resource is unchanged", () =>
     Effect.gen(function* () {
       const rows = [row("unchanged", "bucket"), row("unchanged", "account-api-token")];
+      assert.strictEqual(
+        yield* failureTagOf(decideProvisioning(rows, false, true)),
+        "CloudflareConfirmationRequired",
+      );
+    }),
+  );
 
-      assert.strictEqual(yield* decideProvisioning(rows, false), "unchanged");
-      assert.strictEqual(yield* decideProvisioning(rows, true), "unchanged");
+  it.effect("applies secret migration with --yes even when every resource is unchanged", () =>
+    Effect.gen(function* () {
+      const rows = [row("unchanged", "bucket"), row("unchanged", "account-api-token")];
+      assert.strictEqual(yield* decideProvisioning(rows, true, true), "apply");
     }),
   );
 
@@ -159,9 +178,9 @@ describe("decideProvisioning", () => {
         ];
 
         for (const rows of [mixedRows, mixedRowsReversed]) {
-          assert.strictEqual(yield* decideProvisioning(rows, true), "apply");
+          assert.strictEqual(yield* decideProvisioning(rows, true, false), "apply");
           assert.strictEqual(
-            yield* failureTagOf(decideProvisioning(rows, false)),
+            yield* failureTagOf(decideProvisioning(rows, false, false)),
             "CloudflareConfirmationRequired",
           );
         }
