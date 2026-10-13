@@ -675,9 +675,10 @@ type CfCall = {
   // （command-output.ts の env 無し・ホスト継承の経路は `op read` だけが使う）。
   readonly env: Record<string, string | undefined> | undefined;
 };
-type CfResponse = { readonly exitCode: number; readonly stdout: string };
+type CfResponse = { readonly exitCode: number; readonly stdout: string; readonly stderr?: string };
 type CfScript = {
   readonly accountsList?: CfResponse;
+  readonly r2BucketsList?: CfResponse | (() => CfResponse);
   readonly tokensCreate?: CfResponse;
   readonly whoami: CfResponse;
 };
@@ -685,7 +686,10 @@ type CfScript = {
 /** `cf` の呼び出しの種類を、位置引数に含まれるサブコマンド名だけで分類する（フラグの並びに依存しない）。 */
 const classifyCfCall = (
   args: ReadonlyArray<string>,
-): "accounts-list" | "tokens-create" | "unknown" | "whoami" => {
+): "accounts-list" | "r2-buckets-list" | "tokens-create" | "unknown" | "whoami" => {
+  if (args.includes("r2") && args.includes("buckets") && args.includes("list")) {
+    return "r2-buckets-list";
+  }
   if (args.includes("whoami")) return "whoami";
   if (args.includes("tokens") && args.includes("create")) return "tokens-create";
   if (args.includes("accounts") && args.includes("list")) return "accounts-list";
@@ -905,13 +909,17 @@ const fakeCf = (script: CfScript, op: ReturnType<typeof fakeR2OnePassword>) => {
       });
       const kind = classifyCfCall(command.args);
       const response =
-        kind === "whoami"
-          ? script.whoami
-          : kind === "accounts-list"
-            ? script.accountsList
-            : kind === "tokens-create"
-              ? script.tokensCreate
-              : undefined;
+        kind === "r2-buckets-list"
+          ? typeof script.r2BucketsList === "function"
+            ? script.r2BucketsList()
+            : script.r2BucketsList
+          : kind === "whoami"
+            ? script.whoami
+            : kind === "accounts-list"
+              ? script.accountsList
+              : kind === "tokens-create"
+                ? script.tokensCreate
+                : undefined;
       if (response === undefined) {
         return yield* Effect.die(`fakeCf に一致する規則がありません: ${command.args.join(" ")}`);
       }
@@ -924,7 +932,7 @@ const fakeCf = (script: CfScript, op: ReturnType<typeof fakeR2OnePassword>) => {
         isRunning: Effect.succeed(false),
         kill: () => Effect.void,
         pid: ChildProcessSpawner.ProcessId(1),
-        stderr: Stream.empty,
+        stderr: Stream.make(new TextEncoder().encode(response.stderr ?? "")),
         stdin: Sink.drain,
         stdout,
         unref: Effect.succeed(Effect.void),
@@ -950,6 +958,8 @@ const accountsListResponse = (
   exitCode: 0,
   stdout: `${JSON.stringify(accounts)}\n`,
 });
+const r2BucketsListSuccess: CfResponse = { exitCode: 0, stdout: '{"buckets":[]}\n' };
+
 const tokensCreateSuccess = (value: string): CfResponse => ({
   exitCode: 0,
   stdout: `${JSON.stringify({ id: "TOKEN_ID_SENTINEL", name: "DEPLOY_TOKEN_NAME_SENTINEL", status: "active", value })}\n`,
@@ -1074,6 +1084,189 @@ const withCreateFlow = <A, E, R>(
     );
   });
 
+describe("nyaucast cloudflare R2 availability", () => {
+  const accounts = [
+    { id: "account-one", name: "Shared Name" },
+    { id: "account-two", name: "Shared Name" },
+  ];
+  const targetAccount = "account-two";
+  const overviewUrl = "https://dash.cloudflare.com/account-two/r2/overview";
+  const diagnosticSentinel = "R2_DIAGNOSTIC_SENTINEL";
+  // cf@1.0.0-beta.12 renders API errors to stderr as [code] message.
+  // The meaning of 10042 is documented at https://developers.cloudflare.com/r2/api/error-codes/.
+  const notEnabled: CfResponse = {
+    exitCode: 1,
+    stdout: diagnosticSentinel,
+    stderr: `[10042] Please enable R2 through the Cloudflare Dashboard. ${diagnosticSentinel}\n`,
+  };
+  const scriptWithR2 = (response: NonNullable<CfScript["r2BucketsList"]>): CfScript => ({
+    accountsList: accountsListResponse(accounts),
+    r2BucketsList: response,
+    tokensCreate: tokensCreateSuccess(deployTokenSentinel),
+    whoami: whoamiAuthenticated,
+  });
+  const adapterForR2 = () =>
+    fakeProvisioning({
+      accessKeyId: accessKeyIdSentinel,
+      accountId: targetAccount,
+      bucket,
+      secretAccessKey: secretAccessKeySentinel,
+    });
+  const assertStoppedBeforePlan = (
+    cfCalls: ReadonlyArray<CfCall>,
+    adapter: ReturnType<typeof fakeProvisioning>,
+    logs: ReadonlyArray<string>,
+    configRoot: string,
+  ) => {
+    assert.deepStrictEqual(
+      cfCalls.map((call) => classifyCfCall(call.args)),
+      ["whoami", "accounts-list", "r2-buckets-list"],
+    );
+    assert.deepStrictEqual(adapter.planInputs, []);
+    assert.strictEqual(adapter.state.applyCalls, 0);
+    assert.deepStrictEqual(logs, []);
+    assert.isFalse(existsSync(environmentPathOf(configRoot)));
+  };
+
+  it.effect.each([true, false])(
+    "guides the selected account to checkout and stops before plan with --yes=%s",
+    (yes) => {
+      const adapter = adapterForR2();
+      return withCreateFlow(
+        "nyaucast-r2-checkout-",
+        scriptWithR2(notEnabled),
+        adapter,
+        ({ cfCalls, configRoot }) =>
+          Effect.gen(function* () {
+            const { errors, logs, outcome } = yield* runCloudflare([
+              "--account",
+              targetAccount,
+              ...(yes ? ["--yes"] : []),
+            ]);
+            const facts = failureFacts(failureOf(outcome));
+            assert.isString(facts["_tag"]);
+            assert.notStrictEqual(facts["_tag"], "CfCommandFailed");
+            assert.sameMembers(Object.keys(facts), ["_tag", "accountId"]);
+            assert.strictEqual(facts["accountId"], targetAccount);
+            assert.include(errors.join("\n"), overviewUrl);
+            assert.match(errors.join("\n"), /checkout.*完了.*nyaucast cloudflare.*再実行/iu);
+            for (const line of errors) {
+              assert.notMatch(
+                line,
+                /(?:支払い情報|クレジットカード).*(?:必要です|必須|入力してください)|(?:payment details|credit card).*required/iu,
+              );
+            }
+            assertNothingLeaked([...logs, ...errors], [diagnosticSentinel, ...secretValues]);
+            assertStoppedBeforePlan(cfCalls, adapter, logs, configRoot);
+            assert.strictEqual(cfCalls[2]!.env?.["CLOUDFLARE_ACCOUNT_ID"], targetAccount);
+          }),
+      );
+    },
+  );
+
+  it.effect.each([
+    { name: "permission denied", stderr: "[10000] R2 permission denied (403)\n", stdout: "" },
+    { name: "network failure", stderr: "fetch failed: ECONNRESET\n", stdout: "" },
+    { name: "unknown failure", stderr: "R2 request failed\n", stdout: "" },
+    { name: "longer error code", stderr: "[100420] R2 request failed\n", stdout: "" },
+    { name: "number in diagnostic text", stderr: "request id 10042 failed\n", stdout: "" },
+    { name: "code only on stdout", stderr: "request failed\n", stdout: "[10042] enable R2\n" },
+  ])("keeps $name as a general failure without checkout guidance", ({ stderr, stdout }) => {
+    const adapter = adapterForR2();
+    return withCreateFlow(
+      "nyaucast-r2-other-failure-",
+      scriptWithR2({ exitCode: 1, stderr: `${stderr}${diagnosticSentinel}\n`, stdout }),
+      adapter,
+      ({ cfCalls, configRoot }) =>
+        Effect.gen(function* () {
+          const { errors, logs, outcome } = yield* runCloudflare([
+            "--account",
+            targetAccount,
+            "--yes",
+          ]);
+          const facts = failureFacts(failureOf(outcome));
+          assert.strictEqual(facts["_tag"], "CfCommandFailed");
+          assert.sameMembers(Object.keys(facts), ["_tag", "operation"]);
+          assert.isString(facts["operation"]);
+          for (const line of errors) assert.notMatch(line, /checkout|dash\.cloudflare\.com/iu);
+          assertNothingLeaked([...logs, ...errors], [diagnosticSentinel, ...secretValues]);
+          assertStoppedBeforePlan(cfCalls, adapter, logs, configRoot);
+        }),
+    );
+  });
+
+  it.effect.each(["", "[10042] warning on a successful command\n"])(
+    "checks the selected account with an empty bucket list before creating and planning (stderr=%s)",
+    (stderr) => {
+      const adapter = adapterForR2();
+      return withCreateFlow(
+        "nyaucast-r2-enabled-",
+        scriptWithR2({ ...r2BucketsListSuccess, stderr }),
+        adapter,
+        ({ cfCalls, configRoot }) =>
+          Effect.gen(function* () {
+            const { logs, outcome } = yield* runCloudflare(["--account", targetAccount, "--yes"]);
+            assert.strictEqual(outcome._tag, "Success");
+            assert.deepStrictEqual(
+              cfCalls.map((call) => classifyCfCall(call.args)),
+              ["whoami", "accounts-list", "r2-buckets-list", "tokens-create"],
+            );
+            const r2Call = cfCalls[2]!;
+            assert.strictEqual(r2Call.env?.["CLOUDFLARE_ACCOUNT_ID"], targetAccount);
+            assertProfileOnEveryCall(cfCalls);
+            assert.strictEqual(r2Call.env?.["CF_DELEGATION"], "1");
+            for (const key of ["CLOUDFLARE_API_TOKEN", "CF_API_TOKEN"]) {
+              assert.isFalse(Object.hasOwn(r2Call.env!, key));
+            }
+            assert.deepStrictEqual(
+              adapter.planInputs.map((input) => input.accountId),
+              [targetAccount],
+            );
+            assert.strictEqual(adapter.state.applyCalls, 1);
+            assert.include(logs, `account=${targetAccount}`);
+            assert.isTrue(existsSync(environmentPathOf(configRoot)));
+          }),
+        {
+          CLOUDFLARE_ACCOUNT_ID: "parent-account",
+          CLOUDFLARE_API_TOKEN: "PARENT_TOKEN_SENTINEL",
+          CF_API_TOKEN: "PARENT_TOKEN_SENTINEL",
+        },
+      );
+    },
+  );
+
+  it.effect("rechecks R2 after checkout and continues to plan and apply on rerun", () => {
+    const adapter = adapterForR2();
+    const state = { enabled: false };
+    return withCreateFlow(
+      "nyaucast-r2-rerun-",
+      scriptWithR2(() => (state.enabled ? r2BucketsListSuccess : notEnabled)),
+      adapter,
+      ({ cfCalls, configRoot }) =>
+        Effect.gen(function* () {
+          const args = ["--account", targetAccount, "--yes"];
+          const first = yield* runCloudflare(args);
+          failureOf(first.outcome);
+          assertStoppedBeforePlan(cfCalls, adapter, first.logs, configRoot);
+          state.enabled = true;
+          const second = yield* runCloudflare(args);
+          assert.strictEqual(second.outcome._tag, "Success");
+          assert.lengthOf(
+            cfCalls.filter((call) => classifyCfCall(call.args) === "r2-buckets-list"),
+            2,
+          );
+          assert.deepStrictEqual(
+            adapter.planInputs.map((input) => input.accountId),
+            [targetAccount],
+          );
+          assert.strictEqual(adapter.state.applyCalls, 1);
+          assert.include(second.logs, `account=${targetAccount}`);
+          assert.isTrue(existsSync(environmentPathOf(configRoot)));
+        }),
+    );
+  });
+});
+
 describe("nyaucast cloudflare confirmation", () => {
   const adapterForConfirmation = () =>
     fakeProvisioning({
@@ -1084,6 +1277,7 @@ describe("nyaucast cloudflare confirmation", () => {
     });
   const authenticated = {
     accountsList: accountsListResponse([{ id: accountId, name: accountName }]),
+    r2BucketsList: r2BucketsListSuccess,
     tokensCreate: tokensCreateSuccess(deployTokenSentinel),
     whoami: whoamiAuthenticated,
   };
@@ -1254,6 +1448,7 @@ describe("nyaucast cloudflare --yes (create)", () => {
         "nyaucast-cloudflare-cli-create-",
         {
           accountsList: accountsListResponse([{ id: accountId, name: accountName }]),
+          r2BucketsList: r2BucketsListSuccess,
           tokensCreate: tokensCreateSuccess(deployTokenSentinel),
           whoami: whoamiAuthenticated,
         },
@@ -1294,12 +1489,12 @@ describe("nyaucast cloudflare --yes (create)", () => {
               deployTokenSentinel,
             );
 
-            // C7/C18: cf への3回の呼び出し（whoami・アカウント一覧・トークン作成）すべてに専用プロファイル。
-            assert.strictEqual(cfCalls.length, 3);
+            // C7/C18: cf への4回の呼び出し（whoami・アカウント一覧・R2 確認・トークン作成）すべてに専用プロファイル。
+            assert.strictEqual(cfCalls.length, 4);
             assertProfileOnEveryCall(cfCalls);
             assert.deepStrictEqual(
               cfCalls.map((call) => classifyCfCall(call.args)),
-              ["whoami", "accounts-list", "tokens-create"],
+              ["whoami", "accounts-list", "r2-buckets-list", "tokens-create"],
             );
 
             // C5: expires_on は固定した現在時刻 + 1時間。削除の呼び出しは無い。
@@ -1411,6 +1606,7 @@ describe("nyaucast cloudflare --yes (create)", () => {
         "nyaucast-cloudflare-cli-apply-failed-",
         {
           accountsList: accountsListResponse([{ id: accountId, name: accountName }]),
+          r2BucketsList: r2BucketsListSuccess,
           tokensCreate: tokensCreateSuccess(deployTokenSentinel),
           whoami: whoamiAuthenticated,
         },
@@ -1466,6 +1662,7 @@ describe("nyaucast cloudflare --yes (create)", () => {
         "nyaucast-cloudflare-cli-unchanged-",
         {
           accountsList: accountsListResponse([{ id: accountId, name: accountName }]),
+          r2BucketsList: r2BucketsListSuccess,
           tokensCreate: tokensCreateSuccess(deployTokenSentinel),
           whoami: whoamiAuthenticated,
         },
@@ -1498,8 +1695,8 @@ describe("nyaucast cloudflare --yes (create)", () => {
               readFileSync(environmentPathOf(configRoot), "utf8"),
               writtenAfterFirst,
             );
-            // デプロイ用トークンは消さない運用（R4）なので、2回目も改めて作る: cf は実行ごとに3回。
-            assert.strictEqual(cfCalls.length, 6);
+            // デプロイ用トークンは消さない運用（R4）なので、2回目も改めて作る: cf は実行ごとに4回。
+            assert.strictEqual(cfCalls.length, 8);
           }),
       );
     },
@@ -1550,6 +1747,7 @@ describe("nyaucast cloudflare --yes (create)", () => {
         "nyaucast-cloudflare-cli-confirmation-required-",
         {
           accountsList: accountsListResponse([{ id: accountId, name: accountName }]),
+          r2BucketsList: r2BucketsListSuccess,
           tokensCreate: tokensCreateSuccess(deployTokenSentinel),
           whoami: whoamiAuthenticated,
         },
@@ -1584,9 +1782,11 @@ describe("nyaucast cloudflare --yes (create)", () => {
         "nyaucast-cloudflare-cli-token-create-failed-",
         {
           accountsList: accountsListResponse([{ id: accountId, name: accountName }]),
+          r2BucketsList: r2BucketsListSuccess,
           tokensCreate: {
             exitCode: 1,
             stdout: "CF_TOKEN_STDOUT_SENTINEL: insufficient permissions\n",
+            stderr: "[10042] CF_TOKEN_STDERR_SENTINEL\n",
           },
           whoami: whoamiAuthenticated,
         },
@@ -1605,8 +1805,9 @@ describe("nyaucast cloudflare --yes (create)", () => {
               operation: "token",
             });
             assert.deepStrictEqual(logs, []);
-            assertNothingLeaked(errors, ["CF_TOKEN_STDOUT_SENTINEL"]);
-            assert.strictEqual(cfCalls.length, 3);
+            assertNothingLeaked(errors, ["CF_TOKEN_STDOUT_SENTINEL", "CF_TOKEN_STDERR_SENTINEL"]);
+            for (const line of errors) assert.notMatch(line, /checkout|dash\.cloudflare\.com/iu);
+            assert.strictEqual(cfCalls.length, 4);
           }),
       ),
   );
@@ -1728,6 +1929,7 @@ describe("nyaucast cloudflare parent environment handling", () => {
       "nyaucast-cloudflare-cli-parent-lookalike-",
       {
         accountsList: accountsListResponse([{ id: accountId, name: accountName }]),
+        r2BucketsList: r2BucketsListSuccess,
         tokensCreate: tokensCreateSuccess(deployTokenSentinel),
         whoami: whoamiAuthenticated,
       },
@@ -1738,7 +1940,7 @@ describe("nyaucast cloudflare parent environment handling", () => {
           const { outcome } = yield* runCloudflare(["--yes"]);
 
           assert.strictEqual(outcome._tag, "Success");
-          assert.strictEqual(cfCalls.length, 3);
+          assert.strictEqual(cfCalls.length, 4);
           for (const call of cfCalls) {
             assert.strictEqual(call.env?.["CLOUDFLARE_API_TOKEN_FILE"], "/fake/token.txt");
             assert.strictEqual(call.env?.["MY_CF_API_TOKEN"], "OTHER");
@@ -1761,6 +1963,7 @@ describe("nyaucast cloudflare parent environment handling", () => {
         "nyaucast-cloudflare-cli-parent-account-id-",
         {
           accountsList: accountsListResponse([{ id: accountId, name: accountName }]),
+          r2BucketsList: r2BucketsListSuccess,
           tokensCreate: tokensCreateSuccess(deployTokenSentinel),
           whoami: whoamiAuthenticated,
         },
@@ -1792,6 +1995,7 @@ describe("nyaucast cloudflare parent environment handling", () => {
         "nyaucast-cloudflare-cli-parent-delegation-",
         {
           accountsList: accountsListResponse([{ id: accountId, name: accountName }]),
+          r2BucketsList: r2BucketsListSuccess,
           tokensCreate: tokensCreateSuccess(deployTokenSentinel),
           whoami: whoamiAuthenticated,
         },
@@ -1802,7 +2006,7 @@ describe("nyaucast cloudflare parent environment handling", () => {
             const { outcome } = yield* runCloudflare(["--yes"]);
 
             assert.strictEqual(outcome._tag, "Success");
-            assert.strictEqual(cfCalls.length, 3);
+            assert.strictEqual(cfCalls.length, 4);
             for (const call of cfCalls) {
               assert.strictEqual(call.env?.["CF_DELEGATION"], "1");
             }
@@ -1846,6 +2050,7 @@ describe("nyaucast cloudflare account selection", () => {
   ];
   const script = {
     accountsList: accountsListResponse(accounts),
+    r2BucketsList: r2BucketsListSuccess,
     tokensCreate: tokensCreateSuccess(deployTokenSentinel),
     whoami: whoamiAuthenticated,
   };
@@ -2184,6 +2389,7 @@ describe("nyaucast cloudflare account selection", () => {
 
 describe("nyaucast cloudflare R2 access key storage", () => {
   const script = {
+    r2BucketsList: r2BucketsListSuccess,
     accountsList: accountsListResponse([{ id: accountId, name: accountName }]),
     tokensCreate: tokensCreateSuccess(deployTokenSentinel),
     whoami: whoamiAuthenticated,

@@ -2,11 +2,15 @@ import { Effect, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 // 呼び出し側は戻り値の形を構造的に受け取るだけで、この型名を import しない。
-type CommandOutput = { readonly exitCode: number; readonly stdout: string };
+type CommandOutput = {
+  readonly exitCode: number;
+  readonly stdout: string;
+  readonly stderr: string;
+};
 
 /**
- * `spawner` で外部コマンドを 1 回起こし、終了コードと標準出力をまとめて返す。
- * 標準出力の収集と終了コードの待機を同時に行う（順に待つとデッドロックしうる。`src/auth/secrets.ts` の
+ * `spawner` で外部コマンドを 1 回起こし、終了コードと標準出力・標準エラーをまとめて返す。
+ * 両出力の収集と終了コードの待機を同時に行う（順に待つとデッドロックしうる。`src/auth/secrets.ts` の
  * 旧実装の先例）。
  */
 export const runCommand = (
@@ -28,10 +32,14 @@ export const runCommand = (
             : { stdin: Stream.make(new TextEncoder().encode(options.stdin)) }),
         }),
       );
-      const [stdout, exitCode] = yield* Effect.all(
-        [Stream.mkString(Stream.decodeText(handle.stdout)), handle.exitCode],
+      const [stdout, stderr, exitCode] = yield* Effect.all(
+        [
+          Stream.mkString(Stream.decodeText(handle.stdout)),
+          Stream.mkString(Stream.decodeText(handle.stderr)),
+          handle.exitCode,
+        ],
         { concurrency: "unbounded" },
       );
-      return { exitCode, stdout } satisfies CommandOutput;
+      return { exitCode, stdout, stderr } satisfies CommandOutput;
     }),
   );

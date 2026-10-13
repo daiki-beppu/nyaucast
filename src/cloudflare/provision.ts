@@ -7,7 +7,12 @@ import {
   type ProvisioningPlanRow,
   type ProvisioningResult,
 } from "./alchemy.ts";
-import { Cf, cfProfileName, type CfCommandFailed } from "./cf.ts";
+import {
+  Cf,
+  cfProfileName,
+  type CfCommandFailed,
+  type CloudflareR2CheckoutRequired,
+} from "./cf.ts";
 import { OnePasswordR2, type OnePasswordCommandFailed } from "./one-password.ts";
 import { type SecretReferencesWriteFailed } from "../auth/secrets.ts";
 import { type CloudflareEnvironmentWriteFailed } from "./environment-file.ts";
@@ -187,7 +192,7 @@ const applyAndWrite = (
   );
 
 /**
- * ログイン確認 → アカウント選択 → デプロイ用トークン作成 → plan、の一連の準備。`apply` は plan が
+ * ログイン確認 → アカウント選択 → R2 利用可否確認 → デプロイ用トークン作成 → plan、の一連の準備。`apply` は plan が
  * 返したハンドルを閉じ込めた継続で、呼び出せば adapter.apply → environment.json への書き込みまで行う
  * （plan を取り直さない。要件 23）。呼び出し側は `Effect.scoped` を 1 つにして prepare と apply を
  * 同じ scope の中に収める。
@@ -205,6 +210,7 @@ export const prepareProvisioning = Effect.fnUntraced(function* <E, R>(
   | CloudflareEnvironmentInvalid
   | OnePasswordSignInRequired
   | CfCommandFailed
+  | CloudflareR2CheckoutRequired
   | CloudflareProvisioningFailed,
   R | Cf | CloudflareEnvironment | CloudflareProvisioning | OnePasswordR2 | Scope.Scope
 > {
@@ -220,6 +226,7 @@ export const prepareProvisioning = Effect.fnUntraced(function* <E, R>(
   yield* validateSavedAccount(savedAccountId, selection.accountId);
   const accounts = yield* cf.listAccounts;
   const account = yield* selectAccount(accounts, savedAccountId, selection);
+  yield* cf.checkR2Availability(account.id);
   const onePassword = yield* OnePasswordR2;
   const accessKeyDestination = yield* selectAccessKeyDestination(onePassword);
   const deployToken = yield* createDeployToken(cf, account.id);

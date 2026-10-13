@@ -1,4 +1,15 @@
-import { Cause, Console, Effect, Exit, Layer, Predicate, Result, Runtime } from "effect";
+import {
+  Cause,
+  Console,
+  Effect,
+  Exit,
+  Layer,
+  Match,
+  Predicate,
+  Result,
+  Runtime,
+  Schema,
+} from "effect";
 import type { HttpClient } from "effect/http";
 import type { SqlClient } from "effect/sql";
 import { CliError, Command } from "effect/cli";
@@ -10,7 +21,7 @@ import type { DeclaredAccounts } from "./auth/declared-accounts.ts";
 import type { StaticSecrets } from "./auth/secrets.ts";
 import type { ChannelSettings } from "./channel/channel-settings.ts";
 import type { CloudflareProvisioning } from "./cloudflare/alchemy.ts";
-import type { Cf } from "./cloudflare/cf.ts";
+import { type Cf, CloudflareR2CheckoutRequired } from "./cloudflare/cf.ts";
 import { cloudflareCommand } from "./cloudflare/cli.ts";
 import type { CloudflareEnvironment } from "./cloudflare/environment.ts";
 import type { OnePasswordR2 } from "./cloudflare/one-password.ts";
@@ -74,17 +85,29 @@ interface CliEnvironment<E2, R2, E3, R3, E4, R4, E5, R5, E6, R6> {
   >;
 }
 
-const describeCliFailure = (error: unknown): string => {
-  if (Predicate.isTagged(error, "OnePasswordSignInRequired")) {
-    return `${describeFailure(error)}: op signin で1Passwordにサインインしてから再実行してください。1Passwordを使わなくする場合はsecrets.jsonからR2の参照を削除してください。`;
-  }
-  if (Predicate.isTagged(error, "CloudflareAccountRequired")) {
-    return `${describeFailure(error)}: https://dash.cloudflare.com/sign-up でアカウントを作成してから nyaucast cloudflare を再実行してください。`;
-  }
-  return Predicate.isTagged(error, "CloudflareConfirmationRequired")
-    ? `${describeFailure(error)}: 承認を得たら --yes を付けて再実行してください。`
-    : describeFailure(error);
-};
+const describeCliFailure = (error: unknown): string =>
+  Match.value(error).pipe(
+    Match.when(
+      Predicate.isTagged("OnePasswordSignInRequired"),
+      (error) =>
+        `${describeFailure(error)}: op signin で1Passwordにサインインしてから再実行してください。1Passwordを使わなくする場合はsecrets.jsonからR2の参照を削除してください。`,
+    ),
+    Match.when(
+      Schema.is(CloudflareR2CheckoutRequired),
+      (error) =>
+        `${describeFailure(error)}: https://dash.cloudflare.com/${error.accountId}/r2/overview で checkout を完了してから nyaucast cloudflare を再実行してください。`,
+    ),
+    Match.when(
+      Predicate.isTagged("CloudflareAccountRequired"),
+      (error) =>
+        `${describeFailure(error)}: https://dash.cloudflare.com/sign-up でアカウントを作成してから nyaucast cloudflare を再実行してください。`,
+    ),
+    Match.when(
+      Predicate.isTagged("CloudflareConfirmationRequired"),
+      (error) => `${describeFailure(error)}: 承認を得たら --yes を付けて再実行してください。`,
+    ),
+    Match.orElse(describeFailure),
+  );
 
 // effect/cli の引数の誤りは、cli 自身が使い方とエラーを出力済み。二重に出さない。
 const reportFailure = (cause: Cause.Cause<unknown>) => {
