@@ -40,6 +40,12 @@ describe("prepareProvisioning account selection", () => {
       succeeds: true,
     },
     {
+      name: "uses the saved account with no explicit id",
+      saved: true,
+      explicit: undefined,
+      succeeds: true,
+    },
+    {
       name: "rejects a different explicit id even with only one account",
       saved: true,
       explicit: "other",
@@ -50,9 +56,13 @@ describe("prepareProvisioning account selection", () => {
       const accounts = [{ id: "selected", name: "Account" }];
       const tokenTargets: string[] = [];
       const planTargets: string[] = [];
+      const accountListings: string[] = [];
       const cfService = {
         whoami: Effect.succeed(true),
-        listAccounts: Effect.succeed(accounts),
+        listAccounts: Effect.sync(() => {
+          accountListings.push("accounts");
+          return accounts;
+        }),
         checkR2Availability: () => Effect.void,
         createToken: (input: Parameters<Cf["Service"]["createToken"]>[0]) =>
           Effect.sync(() => {
@@ -96,7 +106,12 @@ describe("prepareProvisioning account selection", () => {
         assert.deepStrictEqual(result.success.account, accounts[0]);
       } else {
         assert.strictEqual(result.failure._tag, "CloudflareAccountConflict");
+        if (result.failure._tag === "CloudflareAccountConflict") {
+          assert.strictEqual(result.failure.accountId, explicit);
+          assert.strictEqual(result.failure.savedAccountId, "selected");
+        }
       }
+      assert.deepStrictEqual(accountListings, succeeds ? ["accounts"] : []);
       assert.deepStrictEqual(tokenTargets, succeeds ? ["selected"] : []);
       assert.deepStrictEqual(planTargets, succeeds ? ["selected"] : []);
     }),

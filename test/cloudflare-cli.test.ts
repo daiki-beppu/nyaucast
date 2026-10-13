@@ -2057,7 +2057,7 @@ describe("nyaucast cloudflare account selection", () => {
   });
 
   it.effect(
-    "reuses the saved second account on rerun and rejects a different --account without changing the file",
+    "reuses the saved second account with omitted or matching --account and rejects a different id",
     () => {
       const adapter = adapterForSelection();
       return withCreateFlow("nyaucast-account-rerun-", script, adapter, ({ cfCalls, configRoot }) =>
@@ -2065,33 +2065,93 @@ describe("nyaucast cloudflare account selection", () => {
           const first = yield* runCloudflare(["--account", accounts[1]!.id, "--yes"]);
           assert.strictEqual(first.outcome._tag, "Success");
           const before = readFileSync(environmentPathOf(configRoot), "utf8");
-          const terminal = confirmationTerminal(false, undefined);
+          const terminal = confirmationTerminal(true, undefined);
           const second = yield* runCloudflare([], terminal);
           assert.strictEqual(second.outcome._tag, "Success");
           assert.strictEqual(terminal.state.prompts, 0);
           assert.include(second.logs, `plan.account=${accounts[1]!.id}`);
           assert.include(second.logs, `account=${accounts[1]!.id}`);
+          const matching = yield* runCloudflare(["--account", accounts[1]!.id, "--yes"], terminal);
+          assert.strictEqual(matching.outcome._tag, "Success");
+          assert.strictEqual(terminal.state.prompts, 0);
+          assert.include(matching.logs, `plan.account=${accounts[1]!.id}`);
+          assert.include(matching.logs, `account=${accounts[1]!.id}`);
           assert.deepStrictEqual(
             adapter.planInputs.map((input) => input.accountId),
-            [accounts[1]!.id, accounts[1]!.id],
+            [accounts[1]!.id, accounts[1]!.id, accounts[1]!.id],
           );
-          for (const call of cfCalls.filter(
+          const tokenCalls = cfCalls.filter(
             (call) => classifyCfCall(call.args) === "tokens-create",
-          )) {
+          );
+          assert.lengthOf(tokenCalls, 3);
+          for (const call of tokenCalls) {
             assert.strictEqual(call.env?.["CLOUDFLARE_ACCOUNT_ID"], accounts[1]!.id);
           }
           const callsBefore = cfCalls.length;
-          const rejected = yield* runCloudflare(["--account", accounts[0]!.id, "--yes"]);
-          assert.isString(failureFacts(failureOf(rejected.outcome))["_tag"]);
+          const rejected = yield* runCloudflare(["--account", accounts[0]!.id, "--yes"], terminal);
+          assert.deepStrictEqual(failureFacts(failureOf(rejected.outcome)), {
+            _tag: "CloudflareAccountConflict",
+            accountId: accounts[0]!.id,
+            savedAccountId: accounts[1]!.id,
+          });
+          assert.deepStrictEqual(rejected.errors, [
+            `CloudflareAccountConflict ${JSON.stringify({ accountId: accounts[0]!.id, savedAccountId: accounts[1]!.id })}`,
+          ]);
+          assert.deepStrictEqual(rejected.logs, []);
+          assert.strictEqual(terminal.state.prompts, 0);
           assert.isFalse(
             cfCalls
               .slice(callsBefore)
               .some((call) => classifyCfCall(call.args) === "tokens-create"),
           );
-          assert.lengthOf(adapter.planInputs, 2);
+          assert.lengthOf(adapter.planInputs, 3);
           assert.strictEqual(adapter.state.applyCalls, 1);
           assert.strictEqual(readFileSync(environmentPathOf(configRoot), "utf8"), before);
         }),
+      );
+    },
+  );
+
+  it.effect.each([
+    { name: "empty account list", accountsList: accountsListResponse([]) },
+    { name: "failed account listing", accountsList: { exitCode: 1, stdout: "" } },
+  ])(
+    "rejects a conflicting saved account despite $name without creating or replacing resources",
+    ({ accountsList }) => {
+      const adapter = adapterForSelection();
+      const terminal = confirmationTerminal(true, undefined);
+      return withCreateFlow(
+        "nyaucast-account-conflict-",
+        { ...script, accountsList },
+        adapter,
+        ({ cfCalls, configRoot }) =>
+          Effect.gen(function* () {
+            writeEnvironment(configRoot, {
+              accountId: accounts[1]!.id,
+              bucket,
+              secrets: secretsBlock,
+            });
+            const before = readFileSync(environmentPathOf(configRoot), "utf8");
+            const { errors, logs, outcome } = yield* runCloudflare(
+              ["--account", accounts[0]!.id, "--yes"],
+              terminal,
+            );
+            assert.isFalse(cfCalls.some((call) => classifyCfCall(call.args) === "tokens-create"));
+            assert.deepStrictEqual(adapter.planInputs, []);
+            assert.strictEqual(adapter.state.applyCalls, 0);
+            assert.strictEqual(readFileSync(environmentPathOf(configRoot), "utf8"), before);
+            assert.deepStrictEqual(logs, []);
+            assert.strictEqual(terminal.state.prompts, 0);
+            assert.deepStrictEqual(failureFacts(failureOf(outcome)), {
+              _tag: "CloudflareAccountConflict",
+              accountId: accounts[0]!.id,
+              savedAccountId: accounts[1]!.id,
+            });
+            assert.deepStrictEqual(errors, [
+              `CloudflareAccountConflict ${JSON.stringify({ accountId: accounts[0]!.id, savedAccountId: accounts[1]!.id })}`,
+            ]);
+            assert.isFalse(cfCalls.some((call) => classifyCfCall(call.args) === "accounts-list"));
+          }),
       );
     },
   );

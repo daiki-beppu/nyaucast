@@ -92,22 +92,11 @@ const selectAccount = Effect.fnUntraced(function* <E, R>(
 ) {
   if (accounts.length === 0) return yield* new CloudflareAccountRequired({});
   if (savedAccountId !== undefined) {
-    return yield* reuseSavedAccount(accounts, savedAccountId, selection.accountId);
+    return yield* requireAccount(accounts, savedAccountId);
   }
   if (accounts.length === 1) return accounts[0]!;
   return yield* chooseNewAccount(accounts, selection);
 });
-
-const reuseSavedAccount = (
-  accounts: ReadonlyArray<Account>,
-  savedAccountId: string,
-  accountId: string | undefined,
-) => {
-  if (accountId !== undefined && accountId !== savedAccountId) {
-    return new CloudflareAccountConflict({ accountId, savedAccountId });
-  }
-  return requireAccount(accounts, savedAccountId);
-};
 
 const chooseNewAccount = Effect.fnUntraced(function* <E, R>(
   accounts: ReadonlyArray<Account>,
@@ -128,6 +117,11 @@ const requireAccount = (accounts: ReadonlyArray<Account>, accountId: string) => 
     ? new CloudflareAccountNotFound({ accountId, accounts })
     : Effect.succeed(account);
 };
+
+const validateSavedAccount = (savedAccountId: string | undefined, accountId: string | undefined) =>
+  savedAccountId !== undefined && accountId !== undefined && accountId !== savedAccountId
+    ? new CloudflareAccountConflict({ accountId, savedAccountId })
+    : Effect.void;
 
 const createDeployToken = (cf: Cf["Service"], accountId: string) =>
   deployTokenExpiresOn.pipe(
@@ -198,14 +192,12 @@ export const prepareProvisioning = Effect.fnUntraced(function* <E, R>(
     return yield* new CloudflareLoginRequired({ profile: cfProfileName });
   }
 
-  const accounts = yield* cf.listAccounts;
   const cloudflareEnvironment = yield* CloudflareEnvironment;
   const saved = yield* cloudflareEnvironment.read;
-  const account = yield* selectAccount(
-    accounts,
-    Option.isSome(saved) ? saved.value.accountId : undefined,
-    selection,
-  );
+  const savedAccountId = Option.isSome(saved) ? saved.value.accountId : undefined;
+  yield* validateSavedAccount(savedAccountId, selection.accountId);
+  const accounts = yield* cf.listAccounts;
+  const account = yield* selectAccount(accounts, savedAccountId, selection);
   yield* cf.checkR2Availability(account.id);
   const deployToken = yield* createDeployToken(cf, account.id);
 
