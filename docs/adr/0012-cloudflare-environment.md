@@ -2,7 +2,7 @@
 
 ## Status
 
-accepted (2026-10-05 / #652。map #648) / 改訂 2026-10-06（#653。Alchemy の state の置き場と単位を決め、決定 8 を追加。Consequences の「置き場は #653 で決める」を改める） / 改訂 2026-10-06（#654。apply が書くものと、1Password を使わない利用者へのアクセスキーの渡し方を決め、決定 9 を追加。決定 3 の「永続させる場所は #654 で決める」を改める） / 改訂 2026-10-06（#667。Cloudflare 環境を作るコマンドの形を決め、決定 10 を追加する）
+accepted (2026-10-05 / #652。map #648) / 改訂 2026-10-06（#653。Alchemy の state の置き場と単位を決め、決定 8 を追加。Consequences の「置き場は #653 で決める」を改める） / 改訂 2026-10-06（#654。apply が書くものと、1Password を使わない利用者へのアクセスキーの渡し方を決め、決定 9 を追加。決定 3 の「永続させる場所は #654 で決める」を改める） / 改訂 2026-10-06（#667。Cloudflare 環境を作るコマンドの形を決め、決定 10 を追加する） / 改訂 2026-10-14（#700。決定 2・10 の専用プロファイル認証を固定版 cf の auth create と配列スコープに合わせる）
 
 ## Context
 
@@ -11,12 +11,12 @@ Instagram へ投稿するには、動画を R2 に置いて URL で渡す必要�
 決める材料として 2 本を調べた（詳細は各 issue の解決コメントと調査ノート）。
 
 - **Alchemy v2**（#649、`alchemy@2.0.0-beta.80`）: `effect` は `^4.0.0` の peer なので、nyaucast と同じ 1 つの `effect@4.0.0` に載る。`alchemy/Deploy` の `deploy()` を nyaucast の Effect から呼べるが、そのための Layer は文書に無く、beta.77 で互換性のない変更が入った。bucket とライフサイクルは資源として宣言できる。アクセスキーは `AccountApiToken` を作り、ID と値の SHA-256 から導く。認証は環境変数か `~/.alchemy` から読み、`cf` や wrangler のログインは読まない。Alchemy 自身の OAuth のスコープには、API トークンを作る権限が無い。ローカルの state はトークンの値を平文で持ち、state を失うとトークンを二重に発行する。`node_modules` は 1.3 GB 増え、LGPL-3.0 の `sharp-libvips` が推移的に入る。直近 21 版のうち 11 版に破壊的変更がある
-- **`cf` と Cloudflare API**（#650、`cf@1.0.0-beta.12`）: `cf auth login` はブラウザの同意で OAuth のトークンを得る。そのスコープには R2 の書き込みと `account_api_tokens:create` が入る。ただし、トークンを外へ取り出すコマンドは無い。他のツールと共有できる認証は `CLOUDFLARE_API_TOKEN` だけである。API トークンは `expires_on` を持てる。R2 の資源は API を 4 回呼べば作れる
+- **`cf` と Cloudflare API**（#650、`cf@1.0.0-beta.12`）: `cf auth create nyaucast` はブラウザの同意で OAuth のトークンを得る。そのスコープには R2 の書き込みと `account_api_tokens:create` が入る。ただし、トークンを外へ取り出すコマンドは無い。他のツールと共有できる認証は `CLOUDFLARE_API_TOKEN` だけである。API トークンは `expires_on` を持てる。R2 の資源は API を 4 回呼べば作れる
 
 ## Decision
 
 1. **利用者の Cloudflare 環境は、v0.1 から Alchemy v2 で作る。** 資源の差分の計算（plan）と適用（apply）は Alchemy の仕事にする。対象は R2 の bucket・7 日のライフサイクルルール・`AccountApiToken`（R2 のアクセスキーの元）の 3 つ。dogfood でも同じ操作で、提供者自身のアカウントに作る
-2. **`cf` は認証と、plan 前の R2 利用可否確認に使う。**（改訂 #701） 利用者は `cf auth login` でブラウザから同意する。nyaucast はそのログインで、R2 の書き込みと API トークンの作成の権限だけを持ち、有効期限の短いデプロイ用トークンを `cf accounts tokens create` で作り、`ConfigProvider` で Alchemy に渡す。デプロイ用トークンは消さず、期限で失効させる。選択済みアカウントの R2 利用可否は `cf r2 buckets list` で確認する。資源の plan と apply は引き続き Alchemy に任せる
+2. **`cf` は認証と、plan 前の R2 利用可否確認に使う。**（改訂 #701） nyaucast は `cf auth create nyaucast --scopes workers-r2.write account_api_tokens:create` を起こし、利用者がブラウザから同意する。初回作成と既存の専用プロファイルの再認証に同じ操作を使い、利用者の既定プロファイルは読み書きしない。nyaucast はそのログインで、R2 の書き込みと API トークンの作成の権限だけを持ち、有効期限の短いデプロイ用トークンを `cf accounts tokens create` で作り、`ConfigProvider` で Alchemy に渡す。デプロイ用トークンは消さず、期限で失効させる。選択済みアカウントの R2 利用可否は `cf r2 buckets list` で確認する。資源の plan と apply は引き続き Alchemy に任せる
 3. **Alchemy はライブラリとして、nyaucast と同じプロセスで呼ぶ。** 文書に無い Layer の組み立ては、1 つのアダプタのファイルに閉じ込める。apply の出力から導いたアクセスキーは、`op` があれば 1Password に書き、チャンネルをまたぐ設定にその参照を書く（ADR-0009 決定 6）。`op` が無い利用者には、nyaucast が書いたファイルから渡す（決定 9）
 4. **作成の操作は、人間が CLI で起こす。** エージェントがシェル越しに代わりに叩いてもよい。MCP tool にはしない。plan を表示して確認を取ってから apply し、エージェント向けに確認を省く `--yes` を置く
 5. **資源を消す操作は置かない。** destroy のコマンドは作らない。宣言から外した資源を Alchemy が消さないよう、すべての資源に `RemovalPolicy.retain()` を付ける（ADR-0009 決定 11・14 の「削除する tool を置かない」と揃える）
@@ -35,7 +35,7 @@ Instagram へ投稿するには、動画を R2 に置いて URL で渡す必要�
    - 置き場は常に 1 つに保つ。ファイルで運用していた利用者が `op` を入れると、次の apply で 1Password に移し、ファイルの秘密のブロックを消す。`secrets.json` に R2 の参照があるのに `op whoami` が失敗したときは、ファイルへ移さずにエラーで止め、サインインを促す。1Password をやめる利用者は、`secrets.json` から R2 の参照を消す（案内に書く）
 10. **Cloudflare 環境は `nyaucast cloudflare` で作る。**（改訂 2026-10-06 / #667）
     - `nyaucast cloudflare` は、plan・確認・apply を 1 回で行う。チャンネルを引数に取らない（決定 8）。`nyaucast cloudflare status` は、`environment.json` と `secrets.json` だけを読み、作成済みかと、アカウント・bucket・アクセスキーの置き場を表示する。ネットワークに出ない
-    - `cf` のログインは nyaucast が起こす。nyaucast 専用の `cf` のプロファイルで `cf auth whoami` を確かめ、未ログインなら、スコープを R2 の書き込みと `account_api_tokens:create` に絞った `cf auth login` を子プロセスで起こす。標準入出力を引き継ぐので、device flow の URL がそのまま表示される。利用者がほかの用途で使う `cf` のログインには触れない
+    - `cf` のログインは nyaucast が起こす。nyaucast 専用の `cf` のプロファイルで `cf auth whoami` を確かめ、未ログインなら、`cf auth create nyaucast --scopes workers-r2.write account_api_tokens:create` を子プロセスで起こす。専用名は位置引数、2 つのスコープは独立した引数として渡し、認証には `--profile` を付けず、`auth activate` も呼ばない。標準入力・標準出力・標準エラーを引き継ぐので、device flow の URL とコードがそのまま表示される。認証成功を待ち、同じ CLI 実行で plan に進む。起動失敗・非 0 終了では型付きの失敗で止め、親 Effect の中断は構造化された中断として維持し、scope が子プロセスを回収する。認証にも依存の実行ファイル解決・親環境の認証トークン除外・CF_DELEGATION による委譲抑止を使う。利用者がほかの用途で使う `cf` のログインには触れない
     - plan には、資源ごとの作成・更新・変更なし、対象のアカウント、アクセスキーの書き先（決定 9）を出す。TTY では `y/N` で確認する。TTY が無く `--yes` も無いときは、plan を出して、確認が要ることを示す専用の非 0 の終了コードで止める。plan だけを見るフラグ（`--dry-run`）は置かない
     - 人間にしかできない手順は、plan の前に検出して案内する。ログインしてもアカウントが見つからないときと、R2 が購入されていないときは、ダッシュボードの URL と次の手順を出して止め、済んだら再実行してもらう。案内では「checkout を完了する」とだけ書き、支払い情報が要るとは断定しない（#650）
     - アカウントが 1 つならそれを使う。複数あれば、TTY では選ばせ、TTY が無ければ `--account <id>` を必須にする。選んだ ID は `environment.json` に記録し、再実行ではそれを使う。記録と違う `--account` は拒む（v0.1 では 1 人の利用者につき 1 アカウント。決定 8）
@@ -50,7 +50,7 @@ Instagram へ投稿するには、動画を R2 に置いて URL で渡す必要�
 - **plan の確認と `retain` で、意図しない削除を二重に止める。** Alchemy は宣言から外れた資源を消すので、スタックの定義の変更が利用者の bucket を消しうる
 - **state は秘密情報なので、複製を増やさない。** state はトークンの値を平文で持つ。`Cloudflare.state()` は plan と apply の外で利用者のアカウントに Worker・Durable Object・Secrets Store を増やし、local store はチャンネルごとに 1 つで、利用者ごとに 1 つの Cloudflare 環境と数え方が合わない。専用のバックアップは平文の複製を増やす。state を失っても、残る古いトークンの権限は 1 つの bucket の書き込みだけで、中身は 7 日で消える（決定 8）
 - **投稿の実行を、Alchemy の state の形式に依存させない。** state はトークンの値を持つので、そこから毎回キーを導けば複製は増えない。だが beta の内部の形式に投稿の実行が依存し、Alchemy の版を上げただけで Instagram へ投稿できなくなる。nyaucast が書くファイルなら、読む側の約束は nyaucast が持つ。state と同じディレクトリに置くので、漏れうる範囲も広がらない。シェルの profile は利用者のドットファイルを書き換え、下流リポの `.env` は利用者ごとに 1 つの環境をチャンネルのリポへ散らし、git とエージェントの読む範囲に平文を入れる。`op` の有無を自動で判定するのは、非エンジニアに置き場を選ばせないためで、サインアウトでの誤判定だけは止める（決定 9）
-- **エージェントが代わりに叩いても、人間の承認が plan に掛かるようにする。** エージェントはまず `--yes` なしで叩いて plan を人間に見せ、承認を得てから `--yes` で再実行する。TTY が無いときに待たずに止まるので、この流れが終了コードだけで組める。`cf` のログインを nyaucast が起こすのは、スコープを絞らないと「R2 の書き込みとトークンの作成だけ」を守れないからで、専用のプロファイルなら利用者の `cf` の状態も壊さない。コマンドの名前を `cf` にしないのは、案内に nyaucast のコマンドと `cf auth login` が並ぶからである。`status` をネットワークに出さないのは、plan のたびにデプロイ用トークンが 1 本作られるからで、見るだけの用途でトークンを増やさない（決定 10）
+- **エージェントが代わりに叩いても、人間の承認が plan に掛かるようにする。** エージェントはまず `--yes` なしで叩いて plan を人間に見せ、承認を得てから `--yes` で再実行する。TTY が無いときに待たずに止まるので、この流れが終了コードだけで組める。`cf` のログインを nyaucast が起こすのは、スコープを絞らないと「R2 の書き込みとトークンの作成だけ」を守れないからで、専用のプロファイルなら利用者の `cf` の状態も壊さない。コマンドの名前を `cf` にしないのは、案内に nyaucast のコマンドと `cf auth create nyaucast` が並ぶからである。`status` をネットワークに出さないのは、plan のたびにデプロイ用トークンが 1 本作られるからで、見るだけの用途でトークンを増やさない（決定 10）
 
 ## Considered Options
 
@@ -65,5 +65,5 @@ Instagram へ投稿するには、動画を R2 に置いて URL で渡す必要�
 
 - Alchemy の内部の Layer に依存するので、Alchemy の版を上げるたびに、アダプタの 1 ファイルが壊れうる。Alchemy v2 の stable 版で公開 API が整ったら、アダプタをそちらへ移す
 - Alchemy の state は、アクセスキーの元になるトークンの値を含むので、秘密情報として扱う（決定 8）。v0.2 で実行環境の間で引き渡すとき（#505）は、ローカルのファイルでは共有できないので、置き場を見直す（`Cloudflare.state()` が候補になる）。複数の Cloudflare アカウントが要るときは、`cloudflare/<name>/` に分け、チャンネルの設定から参照する形に広げる
-- 利用者がしなければならない手順は、Cloudflare のアカウントの作成・R2 の有効化（checkout）・`cf auth login` の同意の 3 つになる。R2 の有効化に支払い情報が要るかは、一次情報で確かめられていない（#650）
+- 利用者がしなければならない手順は、Cloudflare のアカウントの作成・R2 の有効化（checkout）・`cf auth create nyaucast` の同意の 3 つになる。R2 の有効化に支払い情報が要るかは、一次情報で確かめられていない（#650）
 - 利用者のインストールは 1.3 GB ほど重くなる

@@ -1,16 +1,16 @@
 import { Context, Effect, Layer, Redacted, Schema } from "effect";
-import { ChildProcessSpawner } from "effect/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { cfExecutablePath } from "../lib/cf-bin.ts";
 import { runCommand } from "../lib/command-output.ts";
 
 // nyaucast 専用の cf プロファイル名。利用者の既定プロファイルは使わない（order.md 決定 1 行目）。
-export const cfProfileName = "nyaucast";
+const cfProfileName = "nyaucast";
 
 // 失敗は、どの操作で起きたかだけを事実に持つ。cf 自身の標準出力・標準エラーは、認証の案内や
 // アカウント名を含みうるため事実にしない（issue #696 AC 3 行目: 秘密の値は標準出力に出さない）。
 export class CfCommandFailed extends Schema.TaggedError<CfCommandFailed>()("CfCommandFailed", {
-  operation: Schema.Literals(["accounts", "token", "whoami", "r2"]),
+  operation: Schema.Literals(["accounts", "authenticate", "token", "whoami", "r2"]),
 }) {}
 
 export class CloudflareR2CheckoutRequired extends Schema.TaggedError<CloudflareR2CheckoutRequired>()(
@@ -88,7 +88,7 @@ const makeCf = (parentEnv: Record<string, string | undefined>) =>
     };
 
     // cf の実行ファイルは nyaucast 自身の依存解決から得て、node の引数として起こす（ADR-0012 決定 7。
-    // shebang に頼ると PATH の env node が要る）。全呼び出しに専用プロファイルの指定を添える（要件 13）。
+    // shebang に頼ると PATH の env node が要る）。認証以外は --profile で専用名を指定する。
     // 子プロセス環境は `Cf` 境界が唯一組む: 親環境の継承分 → 委譲抑止 → 呼び出しごとの追加値の順で重ねる
     // （呼び出しごとの追加値が最後に重なるので、同名キーがあってもそれが勝つ）。
     const execute = (
@@ -127,6 +127,29 @@ const makeCf = (parentEnv: Record<string, string | undefined>) =>
       }
       return yield* new CfCommandFailed({ operation: "r2" });
     });
+
+    // auth create は --profile を拒否するため、専用名を位置引数で渡す。
+    const authenticate = Effect.scoped(
+      Effect.gen(function* () {
+        const handle = yield* spawner.spawn(
+          ChildProcess.make(
+            process.execPath,
+            [
+              cfExecutablePath(),
+              "auth",
+              "create",
+              cfProfileName,
+              "--scopes",
+              "workers-r2.write",
+              "account_api_tokens:create",
+            ],
+            { env: baseChildEnv, stdin: "inherit", stdout: "inherit", stderr: "inherit" },
+          ),
+        );
+        const exitCode = yield* handle.exitCode;
+        if (exitCode !== 0) return yield* new CfCommandFailed({ operation: "authenticate" });
+      }),
+    ).pipe(Effect.mapError(() => new CfCommandFailed({ operation: "authenticate" })));
 
     const whoami = invoke("whoami", ["auth", "whoami"]).pipe(
       Effect.flatMap((stdout) =>
@@ -169,7 +192,7 @@ const makeCf = (parentEnv: Record<string, string | undefined>) =>
         ),
       );
 
-    return Cf.of({ checkR2Availability, createToken, listAccounts, whoami });
+    return Cf.of({ authenticate, checkR2Availability, createToken, listAccounts, whoami });
   });
 
 /**
@@ -179,6 +202,7 @@ const makeCf = (parentEnv: Record<string, string | undefined>) =>
 export class Cf extends Context.Service<
   Cf,
   {
+    readonly authenticate: Effect.Effect<void, CfCommandFailed>;
     readonly whoami: Effect.Effect<boolean, CfCommandFailed>;
     readonly listAccounts: Effect.Effect<ReadonlyArray<CfAccount>, CfCommandFailed>;
     readonly checkR2Availability: (
