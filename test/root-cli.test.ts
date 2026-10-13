@@ -1,8 +1,10 @@
 import { NodeServices } from "@effect/platform-node";
 import { assert, describe, it } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import { Effect, Exit, Layer } from "effect";
 
-import { nyaucastCli } from "../src/cli.ts";
+import { cliTeardown, nyaucastCli } from "../src/cli.ts";
+import { CloudflareProvisioningFailed } from "../src/cloudflare/alchemy.ts";
+import { decideProvisioning } from "../src/cloudflare/provision.ts";
 import { knownCliTree } from "./codec-support.ts";
 import {
   runProgram,
@@ -58,4 +60,49 @@ describe("nyaucast root command", () => {
         assert.notMatch(stdout, /^\s+collection\s/mu);
       }),
   );
+});
+
+describe("CLI teardown", () => {
+  it.effect("exits with 2 for the confirmation-required failure", () =>
+    Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        decideProvisioning([{ action: "create", kind: "bucket", resource: "Media" }], false),
+      );
+      const codes: number[] = [];
+      cliTeardown(exit, (code: number) => {
+        codes.push(code);
+      });
+      assert.deepStrictEqual(codes, [2]);
+    }),
+  );
+
+  it.each([
+    { name: "provisioning failure", error: new CloudflareProvisioningFailed({ phase: "plan" }) },
+    {
+      name: "error mentioning the confirmation tag",
+      error: new Error("CloudflareConfirmationRequired"),
+    },
+  ])("keeps exit code 1 for $name", ({ error }) => {
+    const codes: number[] = [];
+    cliTeardown(Exit.fail(error), (code: number) => {
+      codes.push(code);
+    });
+    assert.deepStrictEqual(codes, [1]);
+  });
+
+  it("keeps exit code 0 on success", () => {
+    const codes: number[] = [];
+    cliTeardown(Exit.succeed(undefined), (code: number) => {
+      codes.push(code);
+    });
+    assert.deepStrictEqual(codes, [0]);
+  });
+
+  it("keeps the runtime interruption exit code", () => {
+    const codes: number[] = [];
+    cliTeardown(Exit.interrupt(123), (code: number) => {
+      codes.push(code);
+    });
+    assert.deepStrictEqual(codes, [130]);
+  });
 });

@@ -1,4 +1,4 @@
-import { Cause, Console, Effect, Layer, Result } from "effect";
+import { Cause, Console, Effect, Exit, Layer, Predicate, Result, Runtime } from "effect";
 import type { HttpClient } from "effect/http";
 import type { SqlClient } from "effect/sql";
 import { CliError, Command } from "effect/cli";
@@ -38,7 +38,11 @@ interface CliEnvironment<E2, R2, E3, R3, E4, R4, E5, R5, E6, R6> {
     R2
   >;
   // Cloudflare 環境を作り、状態を見る CLI（issue #692・#696）。
-  readonly cloudflare: Layer.Layer<Cf | CloudflareEnvironment | CloudflareProvisioning, E6, R6>;
+  readonly cloudflare: Layer.Layer<
+    Cf | CloudflareEnvironment | CloudflareProvisioning | StdinTerminal,
+    E6,
+    R6
+  >;
   readonly mcpServer: Layer.Layer<never, E3, R3>;
   readonly video: Layer.Layer<
     | ChannelSettings
@@ -72,12 +76,31 @@ interface CliEnvironment<E2, R2, E3, R3, E4, R4, E5, R5, E6, R6> {
 // effect/cli の引数の誤りは、cli 自身が使い方とエラーを出力済み。二重に出さない。
 const reportFailure = (cause: Cause.Cause<unknown>) => {
   const failure = Cause.findFail(cause);
-  if (Result.isSuccess(failure) && CliError.isCliError(failure.success.error)) {
+  if (Result.isFailure(failure)) {
+    return Console.error("UnexpectedFailure");
+  }
+  const error = failure.success.error;
+  if (CliError.isCliError(error)) {
     return Effect.void;
   }
   return Console.error(
-    Result.isSuccess(failure) ? describeFailure(failure.success.error) : "UnexpectedFailure",
+    Predicate.isTagged(error, "CloudflareConfirmationRequired")
+      ? `${describeFailure(error)}: 承認を得たら --yes を付けて再実行してください。`
+      : describeFailure(error),
   );
+};
+
+export const cliTeardown: Runtime.Teardown = (exit, onExit) => {
+  if (Exit.isFailure(exit)) {
+    const failure = Cause.findFail(exit.cause);
+    if (
+      Result.isSuccess(failure) &&
+      Predicate.isTagged(failure.success.error, "CloudflareConfirmationRequired")
+    ) {
+      return onExit(2);
+    }
+  }
+  Runtime.defaultTeardown(exit, onExit);
 };
 
 /** nyaucast の root Command。サブコマンドの木そのもので、実行はしない。 */
