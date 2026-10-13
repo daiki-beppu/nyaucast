@@ -66,7 +66,7 @@ describe("CLI teardown", () => {
   it.effect("exits with 2 for the confirmation-required failure", () =>
     Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        decideProvisioning([{ action: "create", kind: "bucket", resource: "Media" }], false),
+        decideProvisioning([{ action: "create", kind: "bucket", resource: "Media" }], false, false),
       );
       const codes: number[] = [];
       cliTeardown(exit, (code: number) => {
