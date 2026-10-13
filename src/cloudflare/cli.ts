@@ -47,8 +47,7 @@ const showPlan = (prepared: PreparedProvisioning) =>
     [
       `plan.account=${prepared.account.id}`,
       `plan.accountName=${prepared.account.name}`,
-      // アクセスキーの書き先は、この ticket では常に「ファイル」（order.md 決定 4 行目）。
-      `plan.accessKey=file`,
+      `plan.accessKey=${prepared.accessKeyDestination}`,
       ...prepared.rows.map(describePlanRow),
     ],
     (line) => Console.log(line),
@@ -56,9 +55,13 @@ const showPlan = (prepared: PreparedProvisioning) =>
   );
 
 // apply 後・全行変更なしの両方で出す要約。アカウント・bucket・アクセスキーの置き場。
-const showSummary = (summary: { readonly accountId: string; readonly bucket: string }) =>
+const showSummary = (summary: {
+  readonly accountId: string;
+  readonly bucket: string;
+  readonly accessKey: string;
+}) =>
   Effect.forEach(
-    [`account=${summary.accountId}`, `bucket=${summary.bucket}`, `accessKey=file`],
+    [`account=${summary.accountId}`, `bucket=${summary.bucket}`, `accessKey=${summary.accessKey}`],
     (line) => Console.log(line),
     { discard: true },
   );
@@ -66,7 +69,22 @@ const showSummary = (summary: { readonly accountId: string; readonly bucket: str
 // 変更ありの決定（"apply"）のときだけ呼ぶ: apply して、結果の要約を出す。
 const applyAndShowSummary = (prepared: PreparedProvisioning) =>
   Effect.flatMap(prepared.apply, (result) =>
-    showSummary({ accountId: result.accountId, bucket: result.bucket }),
+    showSummary({
+      accountId: result.accountId,
+      bucket: result.bucket,
+      accessKey: prepared.accessKeyDestination,
+    }),
+  );
+
+const showSavedSummary = (prepared: PreparedProvisioning) =>
+  cloudflareStatus.pipe(
+    Effect.flatMap((saved) =>
+      showSummary({
+        accountId: prepared.account.id,
+        bucket: bucketName,
+        accessKey: saved.kind === "created" ? saved.accessKey.kind : "none",
+      }),
+    ),
   );
 
 const chooseAccount = (accounts: ReadonlyArray<PreparedProvisioning["account"]>) =>
@@ -102,9 +120,7 @@ const create = (yes: boolean, accountId: Option.Option<string>) =>
         ),
       );
       if (decision === "declined") return;
-      yield* decision === "unchanged"
-        ? showSummary({ accountId: prepared.account.id, bucket: bucketName })
-        : applyAndShowSummary(prepared);
+      yield* decision === "unchanged" ? showSavedSummary(prepared) : applyAndShowSummary(prepared);
     }),
   );
 

@@ -3,6 +3,7 @@ import { ChildProcessSpawner } from "effect/process";
 
 import { decodeEnvironmentFile, environmentFilePath } from "../cloudflare/environment-file.ts";
 import { runCommand } from "../lib/command-output.ts";
+import { writePrivateFileAtomically } from "../files/private-atomic-write.ts";
 import { fileServices } from "./account-key.ts";
 
 // 失敗は、シークレットの名前だけを事実に持つ。参照（op://…）も値も持たない。
@@ -25,6 +26,32 @@ export const secretReferencesPath = (path: Path.Path, configRoot: string): strin
 
 /** secrets.json の形: シークレットの名前 → 1Password の参照（op://…）。値そのものは置かない。 */
 const SecretReferences = Schema.Record(Schema.String, Schema.String);
+
+export class SecretReferencesWriteFailed extends Schema.TaggedError<SecretReferencesWriteFailed>()(
+  "SecretReferencesWriteFailed",
+  {},
+) {}
+
+/** 読めない既存ファイルを空recordとして上書きしない。 */
+export const writeSecretReferences = Effect.fnUntraced(function* (
+  configRoot: string,
+  references: Readonly<Record<string, string>>,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const target = secretReferencesPath(path, configRoot);
+  const previous = yield* fileSystem.readFileString(target).pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(SecretReferences))),
+    Effect.catchIf(
+      (error) => error._tag === "PlatformError" && error.reason._tag === "NotFound",
+      () => Effect.succeed({}),
+    ),
+    Effect.mapError(() => new SecretReferencesWriteFailed({})),
+  );
+  yield* writePrivateFileAtomically(target, JSON.stringify({ ...previous, ...references })).pipe(
+    Effect.mapError(() => new SecretReferencesWriteFailed({})),
+  );
+});
 
 /**
  * secrets.json から、指定した名前の 1Password の参照（op://…）を読むだけの関数（`op read` による解決はしない）。

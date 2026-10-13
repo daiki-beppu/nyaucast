@@ -13,6 +13,7 @@ import type { CloudflareProvisioning } from "./cloudflare/alchemy.ts";
 import type { Cf } from "./cloudflare/cf.ts";
 import { cloudflareCommand } from "./cloudflare/cli.ts";
 import type { CloudflareEnvironment } from "./cloudflare/environment.ts";
+import type { OnePasswordR2 } from "./cloudflare/one-password.ts";
 import { describeFailure } from "./failure-report.ts";
 import type { InstagramAuth } from "./instagram/auth.ts";
 import { postCommand } from "./posts/cli.ts";
@@ -39,7 +40,7 @@ interface CliEnvironment<E2, R2, E3, R3, E4, R4, E5, R5, E6, R6> {
   >;
   // Cloudflare 環境を作り、状態を見る CLI（issue #692・#696）。
   readonly cloudflare: Layer.Layer<
-    Cf | CloudflareEnvironment | CloudflareProvisioning | StdinTerminal,
+    Cf | CloudflareEnvironment | CloudflareProvisioning | OnePasswordR2 | StdinTerminal,
     E6,
     R6
   >;
@@ -74,6 +75,9 @@ interface CliEnvironment<E2, R2, E3, R3, E4, R4, E5, R5, E6, R6> {
 }
 
 const describeCliFailure = (error: unknown): string => {
+  if (Predicate.isTagged(error, "OnePasswordSignInRequired")) {
+    return `${describeFailure(error)}: op signin で1Passwordにサインインしてから再実行してください。1Passwordを使わなくする場合はsecrets.jsonからR2の参照を削除してください。`;
+  }
   if (Predicate.isTagged(error, "CloudflareAccountRequired")) {
     return `${describeFailure(error)}: https://dash.cloudflare.com/sign-up でアカウントを作成してから nyaucast cloudflare を再実行してください。`;
   }

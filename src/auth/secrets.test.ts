@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { readFileSync, statSync, writeFileSync } from "node:fs";
 
 import { NodeServices } from "@effect/platform-node";
 import { assert, describe, it } from "@effect/vitest";
@@ -11,7 +12,7 @@ import {
   temporaryDirectory,
   writeJsonFile,
 } from "../../test/helpers.ts";
-import { StaticSecrets } from "./secrets.ts";
+import { StaticSecrets, writeSecretReferences } from "./secrets.ts";
 
 const clientSecretName = "NYAUCAST_YOUTUBE_CLIENT_SECRET";
 const clientIdName = "NYAUCAST_YOUTUBE_CLIENT_ID";
@@ -346,4 +347,46 @@ describe("StaticSecrets", () => {
       );
     });
   });
+});
+
+describe("writeSecretReferences", () => {
+  it.effect.each([false, true])(
+    "saves both references and preserves existing entries (%s)",
+    (existing) =>
+      Effect.gen(function* () {
+        const configRoot = yield* temporaryDirectory("nyaucast-secrets-write-");
+        const target = join(configRoot, "secrets.json");
+        const unrelated = { OTHER_SECRET: "op://vault/other/field" };
+        if (existing) writeJsonFile(target, unrelated);
+        const references = {
+          R2_ACCESS_KEY_ID: "op://vault/r2/id",
+          R2_SECRET_ACCESS_KEY: "op://vault/r2/key",
+        };
+        yield* writeSecretReferences(configRoot, references).pipe(
+          Effect.provide(NodeServices.layer),
+        );
+        assert.deepStrictEqual(JSON.parse(readFileSync(target, "utf8")), {
+          ...(existing ? unrelated : {}),
+          ...references,
+        });
+        assert.strictEqual(statSync(target).mode & 0o777, 0o600);
+      }),
+  );
+
+  it.effect.each(["{", '{"OTHER_SECRET":42}'])(
+    "preserves an unreadable existing file (%s)",
+    (contents) =>
+      Effect.gen(function* () {
+        const configRoot = yield* temporaryDirectory("nyaucast-secrets-write-invalid-");
+        const target = join(configRoot, "secrets.json");
+        writeFileSync(target, contents);
+        const result = yield* writeSecretReferences(configRoot, {
+          R2_ACCESS_KEY_ID: "op://vault/item/id",
+        }).pipe(Effect.provide(NodeServices.layer), Effect.result);
+        assert.strictEqual(result._tag, "Failure");
+        if (result._tag === "Failure")
+          assert.strictEqual(result.failure._tag, "SecretReferencesWriteFailed");
+        assert.strictEqual(readFileSync(target, "utf8"), contents);
+      }),
+  );
 });

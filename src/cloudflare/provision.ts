@@ -8,6 +8,8 @@ import {
   type ProvisioningResult,
 } from "./alchemy.ts";
 import { Cf, cfProfileName, type CfCommandFailed } from "./cf.ts";
+import { OnePasswordR2, type OnePasswordCommandFailed } from "./one-password.ts";
+import { type SecretReferencesWriteFailed } from "../auth/secrets.ts";
 import { type CloudflareEnvironmentWriteFailed } from "./environment-file.ts";
 import { CloudflareEnvironment, type CloudflareEnvironmentInvalid } from "./environment.ts";
 
@@ -49,14 +51,31 @@ class CloudflareConfirmationRequired extends Schema.TaggedError<CloudflareConfir
 ) {}
 
 export type PreparedProvisioning = {
+  readonly accessKeyDestination: "file" | "one_password";
   readonly account: { readonly id: string; readonly name: string };
   readonly apply: Effect.Effect<
     ProvisioningResult,
-    CloudflareProvisioningFailed | CloudflareEnvironmentWriteFailed,
+    | CloudflareProvisioningFailed
+    | CloudflareEnvironmentWriteFailed
+    | OnePasswordCommandFailed
+    | SecretReferencesWriteFailed,
     Scope.Scope
   >;
   readonly rows: ReadonlyArray<ProvisioningPlanRow>;
 };
+
+class OnePasswordSignInRequired extends Schema.TaggedError<OnePasswordSignInRequired>()(
+  "OnePasswordSignInRequired",
+  {},
+) {}
+
+const selectAccessKeyDestination = Effect.fnUntraced(function* (
+  onePassword: OnePasswordR2["Service"],
+) {
+  if (yield* onePassword.available) return "one_password" as const;
+  if (yield* onePassword.hasReferences) return yield* new OnePasswordSignInRequired({});
+  return "file" as const;
+});
 
 // デプロイ用トークンの名前。Alchemy が宣言するアクセスキーのトークン名（nyaucast-media-write）とは
 // 別の名前空間にする（同じアカウントの API トークン名を奪わないため。SCN-C-DEPLOY-TOKEN-N1）。
@@ -142,20 +161,28 @@ const createDeployToken = (cf: Cf["Service"], accountId: string) =>
 const applyAndWrite = (
   provisioning: CloudflareProvisioning["Service"],
   cloudflareEnvironment: CloudflareEnvironment["Service"],
+  onePassword: OnePasswordR2["Service"],
+  destination: PreparedProvisioning["accessKeyDestination"],
   plan: ProvisioningPlan,
 ) =>
   provisioning.apply(plan).pipe(
     Effect.flatMap((result) =>
-      cloudflareEnvironment
-        .write({
+      Effect.gen(function* () {
+        if (destination === "one_password") yield* onePassword.save(result);
+        yield* cloudflareEnvironment.write({
           accountId: result.accountId,
           bucket: result.bucket,
-          secrets: {
-            R2_ACCESS_KEY_ID: result.accessKeyId,
-            R2_SECRET_ACCESS_KEY: Redacted.value(result.secretAccessKey),
-          },
-        })
-        .pipe(Effect.as(result)),
+          ...(destination === "one_password"
+            ? {}
+            : {
+                secrets: {
+                  R2_ACCESS_KEY_ID: result.accessKeyId,
+                  R2_SECRET_ACCESS_KEY: Redacted.value(result.secretAccessKey),
+                },
+              }),
+        });
+        return result;
+      }),
     ),
   );
 
@@ -176,9 +203,10 @@ export const prepareProvisioning = Effect.fnUntraced(function* <E, R>(
   | CloudflareAccountNotFound
   | CloudflareAccountConflict
   | CloudflareEnvironmentInvalid
+  | OnePasswordSignInRequired
   | CfCommandFailed
   | CloudflareProvisioningFailed,
-  R | Cf | CloudflareEnvironment | CloudflareProvisioning | Scope.Scope
+  R | Cf | CloudflareEnvironment | CloudflareProvisioning | OnePasswordR2 | Scope.Scope
 > {
   const cf = yield* Cf;
   const authenticated = yield* cf.whoami;
@@ -192,14 +220,22 @@ export const prepareProvisioning = Effect.fnUntraced(function* <E, R>(
   yield* validateSavedAccount(savedAccountId, selection.accountId);
   const accounts = yield* cf.listAccounts;
   const account = yield* selectAccount(accounts, savedAccountId, selection);
+  const onePassword = yield* OnePasswordR2;
+  const accessKeyDestination = yield* selectAccessKeyDestination(onePassword);
   const deployToken = yield* createDeployToken(cf, account.id);
 
   const provisioning = yield* CloudflareProvisioning;
   const plan = yield* provisioning.plan({ accountId: account.id, deployToken });
 
-  const apply = applyAndWrite(provisioning, cloudflareEnvironment, plan);
+  const apply = applyAndWrite(
+    provisioning,
+    cloudflareEnvironment,
+    onePassword,
+    accessKeyDestination,
+    plan,
+  );
 
-  return { account, apply, rows: plan.rows };
+  return { account, apply, rows: plan.rows, accessKeyDestination };
 });
 
 /**

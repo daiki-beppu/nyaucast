@@ -5,7 +5,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 type CommandOutput = { readonly exitCode: number; readonly stdout: string };
 
 /**
- * `spawner` で外部コマンドを 1 回起こし、終了コードと標準出力をまとめて返す。stdin へは何も書かない。
+ * `spawner` で外部コマンドを 1 回起こし、終了コードと標準出力をまとめて返す。
  * 標準出力の収集と終了コードの待機を同時に行う（順に待つとデッドロックしうる。`src/auth/secrets.ts` の
  * 旧実装の先例）。
  */
@@ -13,7 +13,7 @@ export const runCommand = (
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
   command: string,
   args: ReadonlyArray<string>,
-  options?: { readonly env?: Record<string, string> },
+  options?: { readonly env?: Record<string, string>; readonly stdin?: string },
 ) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -21,11 +21,12 @@ export const runCommand = (
       // 組み込んでいる前提。重ねて埋め合わせない）。env を渡さないときは、子プロセスは親プロセスの
       // 環境をそのまま継承する（`src/auth/secrets.ts` の `op read` はこちら）。
       const handle = yield* spawner.spawn(
-        ChildProcess.make(
-          command,
-          args,
-          options?.env === undefined ? undefined : { env: options.env },
-        ),
+        ChildProcess.make(command, args, {
+          ...(options?.env === undefined ? {} : { env: options.env }),
+          ...(options?.stdin === undefined
+            ? {}
+            : { stdin: Stream.make(new TextEncoder().encode(options.stdin)) }),
+        }),
       );
       const [stdout, exitCode] = yield* Effect.all(
         [Stream.mkString(Stream.decodeText(handle.stdout)), handle.exitCode],

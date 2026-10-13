@@ -72,3 +72,36 @@ describe("runCommand (command-output.ts) の子プロセス環境の受け渡し
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
+
+describe("runCommand stdin", () => {
+  it.live(
+    "transfers the complete input, closes stdin, and drains stdout while the child is writing",
+    () =>
+      Effect.gen(function* () {
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const input = JSON.stringify({
+          R2_ACCESS_KEY_ID: "TEST_ID",
+          R2_SECRET_ACCESS_KEY: "x".repeat(256 * 1024),
+        });
+        const prefix = "o".repeat(256 * 1024);
+        // 子が stdin を読む前に pipe 容量以上を書き、送信と収集の直列化を検出する。
+        const script = `
+        process.stdout.write('o'.repeat(256 * 1024), () => {
+          let input = '';
+          process.stdin.setEncoding('utf8');
+          process.stdin.on('data', chunk => { input += chunk; });
+          process.stdin.on('end', () => process.stdout.write(input));
+          process.stdin.resume();
+        });
+      `;
+        const options: NonNullable<Parameters<typeof runCommand>[3]> & { stdin: string } = {
+          stdin: input,
+        };
+        const result = yield* runCommand(spawner, process.execPath, ["-e", script], options).pipe(
+          Effect.timeout("5 seconds"),
+        );
+        assert.strictEqual(result.exitCode, 0);
+        assert.strictEqual(result.stdout, prefix + input);
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
