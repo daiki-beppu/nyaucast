@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { NodeServices } from "@effect/platform-node";
 import { assert, describe, it } from "@effect/vitest";
 import {
+  Console,
   Deferred,
   Effect,
   FileSystem,
@@ -64,6 +65,10 @@ const accessKeyIdSentinel = "ACCESS_KEY_ID_SENTINEL";
 const secretAccessKeySentinel = "SECRET_ACCESS_KEY_SENTINEL";
 const deployTokenSentinel = "DEPLOY_TOKEN_SENTINEL";
 const secretValues = [accessKeyIdSentinel, secretAccessKeySentinel, deployTokenSentinel];
+const r2Environment = {
+  R2_ACCESS_KEY_ID: "EnvAccessAlpha9_EnvAccessOmega7",
+  R2_SECRET_ACCESS_KEY: "EnvSecretBeta8_EnvSecretDelta6",
+};
 const accountName = "Nyaucast";
 const secretsBlock = {
   R2_ACCESS_KEY_ID: accessKeyIdSentinel,
@@ -147,15 +152,36 @@ const runCloudflare = (
   arguments_: readonly string[],
   terminal = confirmationTerminal(false, undefined),
 ) =>
-  runProgram(
-    nyaucastCli({
+  Effect.gen(function* () {
+    const output: Array<{ channel: "stdout" | "stderr"; text: string }> = [];
+    const program = nyaucastCli({
       auth: unusedAuthLayer,
       cloudflare: forwardedCloudflare,
       mcpServer: Layer.empty,
       post: unusedPostLayer,
       video: unusedVideoLayer,
-    })(["cloudflare", ...arguments_]).pipe(Effect.provide(terminal.layer)),
-  );
+    })(["cloudflare", ...arguments_]).pipe(Effect.provide(terminal.layer));
+    const result = yield* runProgram(
+      Console.consoleWith((console) =>
+        program.pipe(
+          Effect.provideService(
+            Console.Console,
+            Object.assign(Object.create(console) as Console.Console, {
+              log: (...args: ReadonlyArray<unknown>) => {
+                output.push({ channel: "stdout", text: args.map(String).join(" ") });
+                console.log(...args);
+              },
+              error: (...args: ReadonlyArray<unknown>) => {
+                output.push({ channel: "stderr", text: args.map(String).join(" ") });
+                console.error(...args);
+              },
+            }),
+          ),
+        ),
+      ),
+    );
+    return { ...result, output };
+  });
 
 const runStatus = () => runCloudflare(["status"]);
 
@@ -419,11 +445,12 @@ describe("nyaucast cloudflare status", () => {
             // 読むのは 2 つのファイルだけ。同じ名前の環境変数は置き場の判定に入らない。
             assertNothingLeaked(
               [...logs, ...errors],
-              ["ENVIRONMENT_ACCESS_KEY_ID_SENTINEL", lookAlikeReference],
+              [...Object.values(r2Environment), lookAlikeReference],
             );
+            assert.deepStrictEqual(errors, []);
             assert.deepStrictEqual(spawned, []);
           }),
-        { R2_ACCESS_KEY_ID: "ENVIRONMENT_ACCESS_KEY_ID_SENTINEL" },
+        r2Environment,
       ),
   );
 
@@ -1060,6 +1087,7 @@ const alchemyAccessKeyTokenName = (targetAccountId: string): string =>
  * configRoot）・`CloudflareProvisioning`（偽のアダプタ）の 3 service を組み、その文脈で use を実行する。
  * `parentEnv` は `Cf.layer` に渡す親プロセスの環境（既定は空）。`Cf` 境界がここから子プロセス環境を
  * 組むので、認証トークンの変数の除外や PATH 等の継承（issue #696 ARCH-001/AI-001/SEC-001）はこれで模す。
+ * `configEnv` は CLI の ConfigProvider にだけ渡し、cf の親環境とは独立にする。
  */
 const withCreateFlow = <A, E, R>(
   prefix: string,
@@ -1068,6 +1096,7 @@ const withCreateFlow = <A, E, R>(
   use: (context: { cfCalls: ReadonlyArray<CfCall>; configRoot: string }) => Effect.Effect<A, E, R>,
   parentEnv: Record<string, string> = {},
   op = fakeR2OnePassword({ authentication: "missing" }),
+  configEnv: Record<string, string> = {},
 ) =>
   Effect.gen(function* () {
     const configRoot = yield* temporaryDirectory(prefix);
@@ -1080,9 +1109,202 @@ const withCreateFlow = <A, E, R>(
       StaticSecrets.layer({ configRoot }).pipe(Layer.provide(cf.layer)),
     ).pipe(Layer.provide(NodeServices.layer));
     return yield* use({ cfCalls: cf.calls, configRoot }).pipe(
-      Effect.provide(Layer.mergeAll(NodeServices.layer, cf.layer, cloudflare, environment({}))),
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, cf.layer, cloudflare, environment(configEnv)),
+      ),
     );
   });
+
+describe("nyaucast cloudflare R2 environment warning", () => {
+  const script = {
+    accountsList: accountsListResponse([{ id: accountId, name: accountName }]),
+    r2BucketsList: r2BucketsListSuccess,
+    tokensCreate: tokensCreateSuccess(deployTokenSentinel),
+    whoami: whoamiAuthenticated,
+  };
+  const adapterForWarning = () =>
+    fakeProvisioning({
+      accessKeyId: accessKeyIdSentinel,
+      accountId,
+      bucket,
+      secretAccessKey: secretAccessKeySentinel,
+    });
+  const assertValuesHidden = (lines: ReadonlyArray<string>) => {
+    for (const line of lines) {
+      const normalized = line.toLowerCase().replace(/[^a-z0-9]/gu, "");
+      for (const value of Object.values(r2Environment)) {
+        for (const fragment of value.split("_")) {
+          assert.notInclude(normalized, fragment.toLowerCase());
+        }
+      }
+    }
+    assertNothingLeaked(lines, secretValues);
+  };
+  const assertWarning = (
+    result: { errors: ReadonlyArray<string>; logs: ReadonlyArray<string> },
+    names: ReadonlyArray<string>,
+  ) => {
+    const warning = result.errors.join("\n");
+    assert.include(warning, "環境変数");
+    assert.include(warning, "environment.json");
+    assert.include(warning, "1Password");
+    assert.match(warning, /より優先/u);
+    for (const name of Object.keys(r2Environment)) {
+      if (names.includes(name)) assert.include(warning, name);
+      else assert.notInclude(warning, name);
+      for (const line of result.logs) assert.notInclude(line, name);
+    }
+  };
+  const assertWarningAfterSummary = (
+    output: ReadonlyArray<{ channel: "stdout" | "stderr"; text: string }>,
+  ) => {
+    for (const summary of [`account=${accountId}`, `bucket=${bucket}`, "accessKey=file"]) {
+      const summaryIndex = output.findIndex(
+        (entry) => entry.channel === "stdout" && entry.text === summary,
+      );
+      assert.isAtLeast(summaryIndex, 0);
+      const warningIndexes = output.flatMap((entry, index) =>
+        entry.channel === "stderr" && /R2_ACCESS_KEY_ID|R2_SECRET_ACCESS_KEY/u.test(entry.text)
+          ? [index]
+          : [],
+      );
+      assert.isNotEmpty(warningIndexes);
+      for (const index of warningIndexes) assert.isAbove(index, summaryIndex);
+    }
+  };
+
+  it.effect.each([
+    { name: "access key id only", env: { R2_ACCESS_KEY_ID: r2Environment.R2_ACCESS_KEY_ID } },
+    {
+      name: "secret access key only",
+      env: { R2_SECRET_ACCESS_KEY: r2Environment.R2_SECRET_ACCESS_KEY },
+    },
+    { name: "both keys", env: r2Environment },
+  ])("warns on stderr after apply for $name without failing or revealing values", ({ env }) => {
+    const adapter = adapterForWarning();
+    return withCreateFlow(
+      "nyaucast-r2-warning-",
+      script,
+      adapter,
+      () =>
+        Effect.gen(function* () {
+          const result = yield* runCloudflare(["--yes"]);
+          assert.strictEqual(result.outcome._tag, "Success");
+          assert.strictEqual(adapter.state.applyCalls, 1);
+          assertValuesHidden([...result.logs, ...result.errors]);
+          assertWarning(result, Object.keys(env));
+          assertWarningAfterSummary(result.output);
+        }),
+      {},
+      undefined,
+      env,
+    );
+  });
+
+  it.effect.each([
+    { name: "empty access key id", env: { R2_ACCESS_KEY_ID: "" } },
+    { name: "empty secret access key", env: { R2_SECRET_ACCESS_KEY: "" } },
+  ])("does not warn for $name treated as missing by ConfigProvider", ({ env }) =>
+    withCreateFlow(
+      "nyaucast-r2-empty-warning-",
+      script,
+      adapterForWarning(),
+      () =>
+        Effect.gen(function* () {
+          const result = yield* runCloudflare(["--yes"]);
+          assert.strictEqual(result.outcome._tag, "Success");
+          assert.include(result.logs, "accessKey=file");
+          assert.deepStrictEqual(result.errors, []);
+          assertValuesHidden(result.logs);
+        }),
+      {},
+      undefined,
+      env,
+    ),
+  );
+
+  it.effect(
+    "does not warn when ConfigProvider has neither key despite saved secrets and cf parent keys",
+    () => {
+      const adapter = adapterForWarning();
+      return withCreateFlow(
+        "nyaucast-r2-no-warning-",
+        script,
+        adapter,
+        ({ configRoot }) =>
+          Effect.gen(function* () {
+            writeEnvironment(configRoot, { ...createdEnvironment, secrets: secretsBlock });
+            writeSecrets(configRoot, { R2_ACCESS_KEY_ID: onePasswordReference });
+            const result = yield* runCloudflare(["--yes"]);
+            assert.strictEqual(result.outcome._tag, "Success");
+            assert.include(result.logs, "accessKey=one_password");
+            assert.deepStrictEqual(result.errors, []);
+            assertValuesHidden(result.logs);
+          }),
+        r2Environment,
+        fakeR2OnePassword({ authentication: "authenticated" }),
+        { LEGACY_R2_ACCESS_KEY_ID: r2Environment.R2_ACCESS_KEY_ID },
+      );
+    },
+  );
+
+  it.effect(
+    "repeats the same warning after the unchanged summary without prompting or applying again",
+    () => {
+      const adapter = adapterForWarning();
+      return withCreateFlow(
+        "nyaucast-r2-warning-rerun-",
+        script,
+        adapter,
+        ({ configRoot }) =>
+          Effect.gen(function* () {
+            const first = yield* runCloudflare(["--yes"]);
+            assert.strictEqual(first.outcome._tag, "Success");
+            const before = readFileSync(environmentPathOf(configRoot), "utf8");
+            const terminal = confirmationTerminal(true, undefined);
+            const second = yield* runCloudflare([], terminal);
+            assert.strictEqual(second.outcome._tag, "Success");
+            assert.strictEqual(terminal.state.prompts, 0);
+            assert.strictEqual(adapter.state.applyCalls, 1);
+            assert.include(second.logs, "plan.accountApiToken=unchanged");
+            assert.strictEqual(readFileSync(environmentPathOf(configRoot), "utf8"), before);
+            for (const result of [first, second]) {
+              assertValuesHidden([...result.logs, ...result.errors]);
+              assertWarning(result, Object.keys(r2Environment));
+              assertWarningAfterSummary(result.output);
+            }
+            assert.deepStrictEqual(second.errors, first.errors);
+          }),
+        {},
+        undefined,
+        r2Environment,
+      );
+    },
+  );
+
+  it.effect("does not warn when apply approval is declined even with both environment keys", () => {
+    const adapter = adapterForWarning();
+    return withCreateFlow(
+      "nyaucast-r2-warning-declined-",
+      script,
+      adapter,
+      ({ configRoot }) =>
+        Effect.gen(function* () {
+          const terminal = confirmationTerminal(true, "N");
+          const result = yield* runCloudflare([], terminal);
+          assert.strictEqual(result.outcome._tag, "Success");
+          assert.strictEqual(terminal.state.prompts, 1);
+          assert.strictEqual(adapter.state.applyCalls, 0);
+          assert.isFalse(existsSync(environmentPathOf(configRoot)));
+          assert.deepStrictEqual(result.errors, []);
+          assertValuesHidden([...result.logs, ...terminal.state.display]);
+        }),
+      {},
+      undefined,
+      r2Environment,
+    );
+  });
+});
 
 describe("nyaucast cloudflare R2 availability", () => {
   const accounts = [
@@ -1638,7 +1860,14 @@ describe("nyaucast cloudflare --yes (create)", () => {
             // environment.json は書かれない（apply が成功して初めて write を呼ぶ契約）。
             assert.deepStrictEqual(readdirSync(configRoot, { recursive: true }), []);
             assertNothingLeaked(errors, secretValues);
+            for (const line of errors) {
+              for (const name of Object.keys(r2Environment)) assert.notInclude(line, name);
+              for (const value of Object.values(r2Environment)) assert.notInclude(line, value);
+            }
           }),
+        {},
+        undefined,
+        r2Environment,
       );
     },
   );

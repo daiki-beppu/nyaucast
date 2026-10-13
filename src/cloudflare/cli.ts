@@ -1,4 +1,4 @@
-import { Console, Effect, Option } from "effect";
+import { Config, Console, Effect, Option } from "effect";
 import { Command, Flag, Prompt } from "effect/cli";
 
 import { StdinTerminal } from "../videos/stdin-terminal.ts";
@@ -87,6 +87,20 @@ const showSavedSummary = (prepared: PreparedProvisioning) =>
     ),
   );
 
+const warnEnvironmentOverrides = Effect.gen(function* () {
+  const names = yield* Effect.forEach(["R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"], (name) =>
+    Config.option(Config.String(name)).pipe(
+      Effect.orDie,
+      Effect.map((value) => (Option.isSome(value) ? [name] : [])),
+    ),
+  );
+  const configuredNames = names.flat();
+  if (configuredNames.length === 0) return;
+  yield* Console.error(
+    `警告: 環境変数 ${configuredNames.join(", ")} は environment.json / 1Password より優先されます。`,
+  );
+});
+
 const chooseAccount = (accounts: ReadonlyArray<PreparedProvisioning["account"]>) =>
   Prompt.run(
     Prompt.Select({
@@ -121,6 +135,7 @@ const create = (yes: boolean, accountId: Option.Option<string>) =>
       );
       if (decision === "declined") return;
       yield* decision === "unchanged" ? showSavedSummary(prepared) : applyAndShowSummary(prepared);
+      yield* warnEnvironmentOverrides;
     }),
   );
 
