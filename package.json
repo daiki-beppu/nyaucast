@@ -33,7 +33,6 @@
     "vp:check": "vp check",
     "actions:check": "github-actionlint",
     "fallow": "fallow --no-cache --fail-on-issues",
-    "mutation": "pnpm exec stryker run",
     "prepack": "tsc --project tsconfig.build.json",
     "prepare": "vp hooks enable",
     "effect:check": "effect-tsgo diagnostics --project tsconfig.json",
@@ -59,8 +58,6 @@
   "devDependencies": {
     "@effect/tsgo": "0.47.2",
     "@effect/vitest": "4.0.0",
-    "@stryker-mutator/core": "10.0.0",
-    "@stryker-mutator/vitest-runner": "10.0.0",
     "@types/node": "24.13.3",
     "@types/twitter-text": "3.1.10",
     "fallow": "3.18.0",
