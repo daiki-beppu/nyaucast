@@ -4,7 +4,7 @@
 
 ## Status
 
-accepted (2026-07-08) / 改訂 2026-08-27（#387。tracer 実装でディレクトリ・local store・channel registry schema の規約を確定）/ 改訂 2026-10-01（#463。決定 8 に解説動画のゲート事実の表を追加）/ 改訂 2026-10-02（#475。コードを全面 Effect 4.0 で書く — 決定 1・3・5 を改訂し、決定 9 を追加。2026-08-23 の「schema は zod を続ける」決定を覆す）
+accepted (2026-07-08) / 改訂 2026-08-27（#387。tracer 実装でディレクトリ・local store・channel registry schema の規約を確定）/ 改訂 2026-10-01（#463。決定 8 に解説動画のゲート事実の表を追加）/ 改訂 2026-10-02（#475。コードを全面 Effect 4.0 で書く — 決定 1・3・5 を改訂し、決定 9 を追加。2026-08-23 の「schema は zod を続ける」決定を覆す） / 改訂 2026-10-14（#816。決定 3 に defect と型付きの失敗の分け方（ADR-0013）、決定 9 に構造の検査の置き場所（ADR-0014）への参照を追加）
 
 ## Context
 
@@ -14,7 +14,7 @@ accepted (2026-07-08) / 改訂 2026-08-27（#387。tracer 実装でディレク�
 
 1. **1 MCP tool = 実装 1 ファイル + テスト 1 ファイル**。tool 定義ファイルに入出力 schema・description・handler を同居させる。schema / service / index を別ファイルに分割しない
 2. **registry を置かない**。tool 一覧は entry point でのフラットな import 配列のみ。「登録」という工程を存在させない。配列はチャンネルの種類ごとに 1 本ずつ持ち、起動したチャンネルの種類の配列だけを公開する（改訂 2026-10-04 / #487。ADR-0009 決定 7）
-3. **エラーは型付きの失敗として持ち、境界で変換する**（改訂 2026-10-02 / #475。旧: 内部 throw）。失敗は `Schema.TaggedError` で定義し、Effect の失敗のチャネルに載せる。MCP adapter が MCP のツールエラー（宣言した失敗）とパラメータ不正（-32602）へ、CLI adapter が exit code へ変換する。`Result` 型・`createService` フレーム・`toServiceError` を手で書くセレモニーは引き続き導入しない（失敗の型は Effect が持つ）。他の ADR や reference で「throw する」と書いた箇所は、「tool が型付きの失敗で終わる」と読む
+3. **エラーは型付きの失敗として持ち、境界で変換する**（改訂 2026-10-02 / #475。旧: 内部 throw）。失敗は `Schema.TaggedError` で定義し、Effect の失敗のチャネルに載せる。MCP adapter が MCP のツールエラー（宣言した失敗）とパラメータ不正（-32602）へ、CLI adapter が exit code へ変換する。`Result` 型・`createService` フレーム・`toServiceError` を手で書くセレモニーは引き続き導入しない（失敗の型は Effect が持つ）。他の ADR や reference で「throw する」と書いた箇所は、「tool が型付きの失敗で終わる」と読む。defect と型付きの失敗の分け方は ADR-0013（改訂 2026-10-14 / #816）
 4. **adapter は MCP primary + CLI thin の 2 本**（GLOSSARY.md「adapter」）。adapter に業務ロジックを書かない
 5. **runtime は Node、コードは Effect 4.0、schema は Effect Schema、DB は libSQL + `@effect/sql-libsql`**（runtime は 2026-08-26 / #368 で改訂 — 配布・開発の実行モデルは ADR-0003。Effect・schema・DB は 2026-10-02 / #475 で改訂 — 旧: zod / Drizzle。マイグレーションは ADR-0004）
 6. **旧リポから引き継ぐ決定**（本リポで再議論しない）: npm 配布（旧 ADR-0006）/ `nyaucast` ブランド（旧 ADR-0007）/ JSON-only config（旧 ADR-0009）/ libSQL local store（旧 ADR-0017）/ CONTEXT.md の全用語
@@ -30,7 +30,7 @@ accepted (2026-07-08) / 改訂 2026-08-27（#387。tracer 実装でディレク�
    - tool 名は MCP に出る名前で書く（`plan_init` の形。Claude API の tool 名はドットを許さない）。入力は strict にして、未知のキーを拒否する
    - `effect` と `@effect/*` は exact pin にする。unstable と表示されたモジュール（ai / cli / http / sql）の破壊的変更は、pin を上げる差分の中で受け止める
    - テストは `@effect/vitest` で書く（vite-plus 1.0 が同梱する vitest 5 で動く）。現在時刻は `Clock` から取り、テストでは `TestClock` で進める
-   - Effect の診断（`@effect/tsgo`。v3 の API を見つける `outdatedApi` を含む）を検査ゲートに入れる。unstable API を使ったことへの警告は対象外とする
+   - Effect の診断（`@effect/tsgo`。v3 の API を見つける `outdatedApi` を含む）を検査ゲートに入れる。unstable API を使ったことへの警告は対象外とする。構造の検査の置き場所は ADR-0014（改訂 2026-10-14 / #816）
 
 ## Why
 

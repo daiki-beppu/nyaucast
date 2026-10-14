@@ -111,10 +111,6 @@ describe("full migration to Effect 4.0", () => {
   describe("under src/", () => {
     const sources = sourceFiles("src");
 
-    it("has no throw statement (comments, descriptions and test fakes included)", () => {
-      assert.deepStrictEqual(filesMatching(sources, /\bthrow\b/u), []);
-    });
-
     it("imports no zod", () => {
       assert.deepStrictEqual(filesMatching(sources, /zod/u), []);
     });
