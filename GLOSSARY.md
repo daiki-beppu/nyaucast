@@ -99,11 +99,7 @@ _Avoid_: キャッシュ (③ と混同する)、SSOT (read model は読み口�
 
 **改変拒否契約テスト**:
 リポジトリ設定・workflow 定義・配布契約・CLI の外形などの改変を検知して拒否する契約テスト層で、`test/` に置く（contract project）。配布物の起動は node を子プロセスとして検証し、CLI は `src` を import して in-process で実行してよい（#561 以降）。過去の `docs/audits/` 文書ではこれを「mutation test」と呼んでいたが、今後この意味では使わない（過去文書は書き換えない）。
-_Avoid_: mutation test (Stryker の mutation testing と衝突する旧称)
-
-**mutation testing**:
-Stryker による変異テスト。実装コードへ機械的に変異 (mutant) を注入し、テストが検知 (kill) できるかで「テストの穴」を発見する。CI ゲートではなく、人が読んで issue 化する監査として運用する（運用の正書は `docs/agents/mutation-audit.md`）。対象は unit テスト層のみで、改変拒否契約テストは対象外。
-_Avoid_: 改変拒否契約テストをこの語で呼ぶこと
+_Avoid_: mutation test (一般的な mutation testing（変異テスト）と紛らわしい旧称)
 
 ## コンテンツ制作
 
