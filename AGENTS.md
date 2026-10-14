@@ -4,7 +4,7 @@ YouTube チャンネル運営を自動化するツールキット。skill に蓄
 
 **旧リポ (00-automation) の Python 版の移植ではない。** Python 実装との差分を根拠にした設計・レビューをしない（経緯: 旧リポ ADR-0021）。
 
-正書はそれぞれ別にある — 用語は `GLOSSARY.md`、決定は `docs/adr/`、agent 運用は `docs/agents/`。このファイルには**それらを読む前に踏み抜く落とし穴**だけを置く。agent 向けの指示はこの `AGENTS.md` 1 本だけで管理し、`CLAUDE.md` は置かない（Claude Code は `CLAUDE.md` が無いとき `AGENTS.md` を読み、Codex も同じファイルを読む）。
+正書はそれぞれ別にある — 用語は `GLOSSARY.md`、決定は `docs/adr/`、agent 運用は `docs/agents/`、コードの書き方の判断は `CODING_STANDARDS.md`。このファイルには**それらを読む前に踏み抜く落とし穴**だけを置く。agent 向けの指示はこの `AGENTS.md` 1 本だけで管理し、`CLAUDE.md` は置かない（Claude Code は `CLAUDE.md` が無いとき `AGENTS.md` を読み、Codex も同じファイルを読む）。
 
 ## 環境
 
