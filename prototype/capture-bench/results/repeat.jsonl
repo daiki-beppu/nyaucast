@@ -1,0 +1,16 @@
+{"flags":"none","processes":1,"tabs":1,"format":"png","frames":360,"perFrameMs":80.09,"captureCores":0.3,"nodeCores":0.01,"idleCores":0,"meanBytes":66959,"tenMinuteVideoMinutes":24.03}
+{"flags":"none","processes":1,"tabs":1,"format":"pngFast","frames":360,"perFrameMs":51.99,"captureCores":0.31,"nodeCores":0.02,"idleCores":0,"meanBytes":102565,"tenMinuteVideoMinutes":15.6}
+{"flags":"dfrl","processes":1,"tabs":1,"format":"png","frames":360,"perFrameMs":52.91,"captureCores":0.56,"nodeCores":0.02,"idleCores":0,"meanBytes":66959,"tenMinuteVideoMinutes":15.87}
+{"flags":"dfrl","processes":1,"tabs":1,"format":"pngFast","frames":360,"perFrameMs":35.81,"captureCores":0.94,"nodeCores":0.03,"idleCores":0,"meanBytes":102565,"tenMinuteVideoMinutes":10.74}
+{"flags":"none","processes":8,"tabs":1,"format":"png","frames":360,"perFrameMs":10.41,"captureCores":2.48,"nodeCores":0.1,"idleCores":0,"meanBytes":66959,"tenMinuteVideoMinutes":3.12}
+{"flags":"none","processes":8,"tabs":1,"format":"pngFast","frames":360,"perFrameMs":6.44,"captureCores":2.57,"nodeCores":0.17,"idleCores":0,"meanBytes":102565,"tenMinuteVideoMinutes":1.93}
+{"flags":"dfrl","processes":8,"tabs":1,"format":"png","frames":360,"perFrameMs":8.19,"captureCores":4.48,"nodeCores":0.15,"idleCores":0,"meanBytes":66959,"tenMinuteVideoMinutes":2.46}
+{"flags":"dfrl","processes":8,"tabs":1,"format":"pngFast","frames":360,"perFrameMs":8.86,"captureCores":5.58,"nodeCores":0.17,"idleCores":0,"meanBytes":102565,"tenMinuteVideoMinutes":2.66}
+{"flags":"none","processes":1,"tabs":1,"format":"png","frames":360,"perFrameMs":83.21,"captureCores":0.32,"nodeCores":0.01,"idleCores":0,"meanBytes":66959,"tenMinuteVideoMinutes":24.96}
+{"flags":"none","processes":1,"tabs":1,"format":"pngFast","frames":360,"perFrameMs":56.85,"captureCores":0.32,"nodeCores":0.02,"idleCores":0,"meanBytes":102565,"tenMinuteVideoMinutes":17.06}
+{"flags":"dfrl","processes":1,"tabs":1,"format":"png","frames":360,"perFrameMs":53.7,"captureCores":0.55,"nodeCores":0.01,"idleCores":0.01,"meanBytes":66959,"tenMinuteVideoMinutes":16.11}
+{"flags":"dfrl","processes":1,"tabs":1,"format":"pngFast","frames":360,"perFrameMs":35.84,"captureCores":0.92,"nodeCores":0.03,"idleCores":0,"meanBytes":102565,"tenMinuteVideoMinutes":10.75}
+{"flags":"none","processes":8,"tabs":1,"format":"png","frames":360,"perFrameMs":10.41,"captureCores":2.44,"nodeCores":0.08,"idleCores":0.01,"meanBytes":66959,"tenMinuteVideoMinutes":3.12}
+{"flags":"none","processes":8,"tabs":1,"format":"pngFast","frames":360,"perFrameMs":6.99,"captureCores":2.6,"nodeCores":0.17,"idleCores":0,"meanBytes":102565,"tenMinuteVideoMinutes":2.1}
+{"flags":"dfrl","processes":8,"tabs":1,"format":"png","frames":360,"perFrameMs":8.03,"captureCores":4.37,"nodeCores":0.15,"idleCores":0.01,"meanBytes":66959,"tenMinuteVideoMinutes":2.41}
+{"flags":"dfrl","processes":8,"tabs":1,"format":"pngFast","frames":360,"perFrameMs":9.53,"captureCores":5.49,"nodeCores":0.16,"idleCores":0,"meanBytes":102565,"tenMinuteVideoMinutes":2.86}
