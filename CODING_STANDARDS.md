@@ -19,7 +19,7 @@ Rules that follow from the split:
 
 Whether an I/O failure is typed or a defect depends on who owns the file, i.e. who can fix it — not on the kind of error.
 
-- **Outside files** — a config the user edits (`config/channel/video.json`, the bgm pool), material the user placed (song files), a path taken as an argument (`selectHumanImage` in `src/videos/thumbnail-selection.ts`): OS I/O failures such as `EACCES` or `EISDIR` are typed failures. Add one per file next to its existing failures, as `*Unreadable { path, reason }` (precedent: `BgmSongUnreadable`), so the MCP response and the CLI line show the path and the reason.
+- **Outside files** — a config the user edits (`config/channel/video.json`, the bgm pool), material the user placed (song files), a path taken as an argument (`selectHumanImage` in `src/videos/thumbnail-selection.ts`): OS I/O failures such as `EACCES` or `EISDIR` are typed failures. Add one per file next to its existing failures, as `*Unreadable { path, reason }` (e.g. `ChannelConfigUnreadable`; precedent for a failure named after its file: `BgmSongUnreadable`), so the MCP response and the CLI line show the path and the reason.
 - **Files nyaucast manages** — `local.db`, outputs written under the channel root (`src/videos/video-files.ts`, `src/thumbnails/thumbnail-files.ts`), staging, backups, creating the data directory: I/O failures are defects.
 - Don't create a shared `FileUnreadable`, and don't put `PlatformError` in the failure channel; the tool's `failure` schema should name which file could not be read.
 - Detect a missing file in one step, by catching the `NotFound` reason of `PlatformError` (`Effect.catchReason`). Don't check `exists` and then read: the `exists` call adds a third failure path of its own.

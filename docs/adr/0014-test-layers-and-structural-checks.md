@@ -16,7 +16,7 @@ accepted (2026-10-14 / #816。決定は map #775 の #779・#780・#782・#806�
 
 ## Decision
 
-1. **層は unit（`src/**/*.test.ts`）と contract（`test/**`）の 2 つにする（#779・#807）。** unit は一時ディレクトリの読み書き・SQLite（一時ファイル・`:memory:`）・localhost の fake サーバーを使ってよい。contract は CLI・MCP・パッケージを外から確かめる層で、ディレクトリで分ける。`.it` の層も、`.heavy` の層（接尾辞・所要時間のしきい値・それを照合する検査）も作らない。`pnpm run check` と CI はすべての層を走らせる
+1. **層は unit（`src/**/*.test.ts`。検査器のテストを置いたら `scripts/**/*.test.ts` も含める。決定 5）と contract（`test/**`）の 2 つにする（#779・#807）。** unit は一時ディレクトリの読み書き・SQLite（一時ファイル・`:memory:`）・localhost の fake サーバーを使ってよい。contract は CLI・MCP・パッケージを外から確かめる層で、ディレクトリで分ける。`.it` の層も、`.heavy` の層（接尾辞・所要時間のしきい値・それを照合する検査）も作らない。`pnpm run check` と CI はすべての層を走らせる
 2. **unit が本物の資源を import していないかの検査は持ち込まない（#779）。**
 3. **構造の検査は lint → スクリプトの 2 段で持ち、vitest のテストには置かない（#780）。** lint で書けるもの（`no-restricted-imports` / `no-restricted-properties` / `no-restricted-globals` と、ファイルごとの override）は lint に置く。lint で書けないものだけを `scripts/check-*.ts` に置き、check のゲートに加える。依存の置き場所と import の境界は fallow がすでに持っているので、重ねて検査しない。テストは振る舞いの契約だけを持つ
 4. **`test/effect-migration.test.ts` を解体して削除する（#780）。** 検査は lint・スクリプトに移すか、別の検査がすでに覆っているものは捨てる。`throw` の禁止は、`CODING_STANDARDS.md` を置くのと同じ差分で外す（ADR-0013 決定 1）。移し替えと削除は、後続のゲートの issue で行う
@@ -48,7 +48,7 @@ accepted (2026-10-14 / #816。決定は map #775 の #779・#780・#782・#806�
 - v0.2 の Workers 案（#476・#505）が tool を Workers で動かすと決めたら、この ADR（とくに決定 1・2 の層の分け方）を問い直す
 - 手元で遅いテストを除いて走らせたくなったら、heavy の層を作らないこと（決定 1）を問い直す
 - `effect-migration.test.ts` の検査は、後続のゲートの issue（lint への移し替え、スクリプトへの移し替えと解体）が移すまで残る。lint のメッセージとスクリプトのエラー文は、この ADR を出典として指す
-- `CODING_STANDARDS.md` の Tests の節が、テストを足すときの判断の規則を持つ。この ADR は理由だけを持つ
+- `CODING_STANDARDS.md` の Tests の節が、テストを足すときの判断の規則を持つ。この ADR は決定とその理由を持つ
 
 ## Related
 
