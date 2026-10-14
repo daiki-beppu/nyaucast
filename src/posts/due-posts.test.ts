@@ -1,5 +1,7 @@
+import { setImmediate } from "node:timers/promises";
+
 import { assert, describe, it } from "@effect/vitest";
-import { Deferred, Effect, Fiber, Latch, Layer } from "effect";
+import { Deferred, Effect, Fiber, Latch, Layer, type Duration } from "effect";
 import { Command } from "effect/cli";
 import { SqlClient } from "effect/sql";
 import { TestClock } from "effect/testing";
@@ -2066,8 +2068,8 @@ describe("runDuePosts: C6/AC3 - a permanent container status is recorded as a pe
   );
 });
 
-// コンテナの polling の sleep（10 秒ごと）は 1 回ずつ登録されるので、1 回の TestClock.adjust では
-// まとめて解放できない。fiber が終わるまで 10 秒ずつ進める。
+// polling の sleep は 1 回ずつ登録されるので、1 回の TestClock.adjust では
+// まとめて解放できない。fiber が終わるまで指定した間隔（既定は 10 秒）ずつ進める。
 // 時計は polling が始まってから進める。fiber が polling の前の本物の I/O（ファイル・SQLite）を待つ間に進めると、
 // due の判定より前に時計が進んで予定時刻を過ぎたと判定される。進める回数に上限を置いて抑えると、
 // 負荷の高い CI では空振りで上限を使い切り、残りの sleep が解放されずに timeout する（#734）。
@@ -2075,16 +2077,19 @@ describe("runDuePosts: C6/AC3 - a permanent container status is recorded as a pe
 const pollingSleepInterval = "10 seconds";
 
 /** polling が始まるまで待ち、polling の sleep をすべて解放してから、fiber の結果を受け取る。 */
-const joinAfterPolling = <A, E>(fiber: Fiber.Fiber<A, E>, pollingStarted: () => boolean) =>
-  Effect.gen(function* () {
-    while (!pollingStarted() && fiber.pollUnsafe() === undefined) {
-      yield* Effect.yieldNow;
-    }
-    while (fiber.pollUnsafe() === undefined) {
-      yield* TestClock.adjust(pollingSleepInterval);
-    }
-    return yield* Fiber.join(fiber);
-  });
+const joinAfterPolling = Effect.fnUntraced(function* <A, E>(
+  fiber: Fiber.Fiber<A, E>,
+  pollingStarted: () => boolean,
+  interval: Duration.Input = pollingSleepInterval,
+) {
+  while (!pollingStarted() && fiber.pollUnsafe() === undefined) {
+    yield* Effect.yieldNow;
+  }
+  while (fiber.pollUnsafe() === undefined) {
+    yield* TestClock.adjust(interval);
+  }
+  return yield* Fiber.join(fiber);
+});
 
 // D5「polling の上限超過は一時的な失敗」の、分類と保存の側（上の C6/AC3 の兄弟条件）。アダプタが
 // InstagramContainerNotReady で止まること（src/instagram/post-adapter.test.ts）だけでは、その失敗が
@@ -2338,21 +2343,26 @@ describe(
                   yield* Deferred.succeed(finalized, undefined);
                   return xMediaFinalizeResponse(x.mediaId, { checkAfterSecs: 1, state: "pending" });
                 }),
-              [x.routes.mediaStatus]: () => {
-                statusCalls += 1;
-                return statusCalls === 1
-                  ? xMediaStatusResponse(x.mediaId, "in_progress", 1)
-                  : xMediaStatusResponse(x.mediaId, "failed");
-              },
+              [x.routes.mediaStatus]: () =>
+                Effect.gen(function* () {
+                  // 外部応答が複数のイベントループをまたいでも、次の sleep を解放できることを確かめる。
+                  yield* Effect.promise(async () => {
+                    await setImmediate();
+                    await setImmediate();
+                  });
+                  statusCalls += 1;
+                  return statusCalls === 1
+                    ? xMediaStatusResponse(x.mediaId, "in_progress", 1)
+                    : xMediaStatusResponse(x.mediaId, "failed");
+                }),
               [x.routes.tweets]: () => xTweetResponse("must-not-be-called", "unused"),
             });
 
             const outcomes = yield* Effect.gen(function* () {
               const fiber = yield* Effect.forkChild(runDuePosts(60));
               yield* Deferred.await(finalized);
-              // STATUS の待機（check_after_secs = 1 秒）を 2 回越える。許容時間（60 分）の中に収める。
-              yield* TestClock.adjust("1 minute");
-              return yield* Fiber.join(fiber);
+              // finalize の門を越えたので、STATUS の sleep が後から登録されても解放し続ける。
+              return yield* joinAfterPolling(fiber, () => true, "1 second");
             }).pipe(
               Effect.provide(xClientLayer(fixture.layer)),
               Effect.provide(unusedYouTubeClientLayer),
@@ -2429,20 +2439,23 @@ describe(
                   });
                 }),
               // 処理は終わらない想定: STATUS は常に in_progress を返し、待機の上限で切り上がる。
-              [x.routes.mediaStatus]: () => {
-                statusCalls += 1;
-                return xMediaStatusResponse(x.mediaId, "in_progress", 60);
-              },
+              [x.routes.mediaStatus]: () =>
+                Effect.gen(function* () {
+                  yield* Effect.promise(async () => {
+                    await setImmediate();
+                    await setImmediate();
+                  });
+                  statusCalls += 1;
+                  return xMediaStatusResponse(x.mediaId, "in_progress", 60);
+                }),
               [x.routes.tweets]: () => xTweetResponse("must-not-be-called", "unused"),
             });
 
             const outcomes = yield* Effect.gen(function* () {
               const fiber = yield* Effect.forkChild(runDuePosts(60));
               yield* Deferred.await(finalized);
-              // 待機の予算(10 分)を越えるまで進める。待機は獲得・予定時刻の再確認より後なので、
-              // runDuePosts(60) の門には影響しない。
-              yield* TestClock.adjust("15 minutes");
-              return yield* Fiber.join(fiber);
+              // finalize の門を越えてから、待機の予算（10 分）で fiber が終わるまで進める。
+              return yield* joinAfterPolling(fiber, () => true, "1 minute");
             }).pipe(
               Effect.provide(xClientLayer(fixture.layer)),
               Effect.provide(unusedYouTubeClientLayer),
