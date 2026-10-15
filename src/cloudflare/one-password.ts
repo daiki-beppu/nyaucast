@@ -10,7 +10,7 @@ import { runCommand } from "../lib/command-output.ts";
 
 export class OnePasswordCommandFailed extends Schema.TaggedError<OnePasswordCommandFailed>()(
   "OnePasswordCommandFailed",
-  { operation: Schema.Literals(["preview", "list", "get", "create", "edit"]) },
+  { operation: Schema.Literals(["preview", "list", "get", "create", "edit", "read"]) },
 ) {}
 
 const itemTitle = "nyaucast R2";
@@ -95,11 +95,36 @@ const makeOnePassword = Effect.fnUntraced(function* (configRoot: string) {
     // 不在と未認証は、参照の有無と合わせてprepareが扱う（ADR-0012 決定9）。
     Effect.orElseSucceed(() => false),
   );
-  const hasReferences = Effect.gen(function* () {
-    const references = yield* Effect.forEach(fieldNames, (name) =>
-      readSecretReference(fileSystem, path, configRoot, name),
+  const referenceFor = (name: (typeof fieldNames)[number]) =>
+    readSecretReference(fileSystem, path, configRoot, name);
+  const hasReferences = Effect.map(Effect.forEach(fieldNames, referenceFor), (found) =>
+    found.some(Option.isSome),
+  );
+
+  // 0 以外で終わった出力や空の値は、保存済みの値として扱わない。
+  const readReference = (reference: string) =>
+    runCommand(spawner, "op", ["read", reference]).pipe(
+      Effect.mapError(() => new OnePasswordCommandFailed({ operation: "read" })),
+      Effect.flatMap(({ exitCode, stdout }) => {
+        const value = stdout.replace(/\r?\n$/u, "");
+        return exitCode === 0 && value.length > 0
+          ? Effect.succeed(value)
+          : Effect.fail(new OnePasswordCommandFailed({ operation: "read" }));
+      }),
     );
-    return references.some(Option.isSome);
+
+  // secrets.json の 2 つの参照が揃っているときだけ `op read` で読み戻す（#851: アクセスキーの
+  // トークンの plan が、保存済みの R2_ACCESS_KEY_ID と Cloudflare のトークンの ID を照らし合わせる）。
+  const savedKeys = Effect.gen(function* () {
+    const accessKeyId = yield* referenceFor("R2_ACCESS_KEY_ID");
+    const secretAccessKey = yield* referenceFor("R2_SECRET_ACCESS_KEY");
+    if (Option.isNone(accessKeyId) || Option.isNone(secretAccessKey)) {
+      return Option.none<R2Keys>();
+    }
+    return Option.some<R2Keys>({
+      accessKeyId: yield* readReference(accessKeyId.value),
+      secretAccessKey: Redacted.make(yield* readReference(secretAccessKey.value)),
+    });
   });
 
   const invoke = (
@@ -167,10 +192,10 @@ const makeOnePassword = Effect.fnUntraced(function* (configRoot: string) {
       Effect.provideService(Path.Path, path),
     );
   });
-  return OnePasswordR2.of({ available, hasReferences, save });
+  return OnePasswordR2.of({ available, hasReferences, save, savedKeys });
 });
 
-/** R2 itemの保存と参照の記録。構築時には外部コマンドを起動しない。 */
+/** R2 itemの保存・読み戻しと参照の記録。構築時には外部コマンドを起動しない。 */
 export class OnePasswordR2 extends Context.Service<
   OnePasswordR2,
   {
@@ -179,6 +204,8 @@ export class OnePasswordR2 extends Context.Service<
     readonly save: (
       keys: R2Keys,
     ) => Effect.Effect<void, OnePasswordCommandFailed | SecretReferencesWriteFailed>;
+    /** secrets.json の参照が指す保存済みのキー。参照が揃っていなければ Option.none。 */
+    readonly savedKeys: Effect.Effect<Option.Option<R2Keys>, OnePasswordCommandFailed>;
   }
 >()("nyaucast/OnePasswordR2") {
   static layer(options: { readonly configRoot: string }) {

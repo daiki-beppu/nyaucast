@@ -10,7 +10,7 @@ const cfProfileName = "nyaucast";
 // 失敗は、どの操作で起きたかだけを事実に持つ。cf 自身の標準出力・標準エラーは、認証の案内や
 // アカウント名を含みうるため事実にしない（issue #696 AC 3 行目: 秘密の値は標準出力に出さない）。
 export class CfCommandFailed extends Schema.TaggedError<CfCommandFailed>()("CfCommandFailed", {
-  operation: Schema.Literals(["accounts", "authenticate", "token", "whoami", "r2"]),
+  operation: Schema.Literals(["accounts", "authenticate", "token", "token-list", "whoami", "r2"]),
 }) {}
 
 export class CloudflareR2CheckoutRequired extends Schema.TaggedError<CloudflareR2CheckoutRequired>()(
@@ -21,7 +21,7 @@ export class CloudflareR2CheckoutRequired extends Schema.TaggedError<CloudflareR
 // このモジュールの外は `Cf` の呼び出し元として構造的に合わせるだけで、型名を import しない。
 type CfAccount = { readonly id: string; readonly name: string };
 
-/** デプロイ用トークンに与える 1 つの policy。`--policies` の JSON へはこのモジュールが変換する。 */
+/** 作るトークンに与える 1 つの policy。`--policies` の JSON へはこのモジュールが変換する。 */
 type CfTokenPolicy = {
   readonly effect: "allow";
   readonly permissionGroupIds: ReadonlyArray<string>;
@@ -30,12 +30,16 @@ type CfTokenPolicy = {
 
 type CfCreateTokenInput = {
   readonly accountId: string;
-  readonly expiresOn: string;
+  /** 無ければ `--expires-on` を付けず、期限の無いトークンを作る（アクセスキーのトークン。#851）。 */
+  readonly expiresOn?: string;
   readonly name: string;
   readonly policies: ReadonlyArray<CfTokenPolicy>;
 };
 
-type CfOperation = "accounts" | "token" | "whoami" | "r2";
+/** 作ったトークン。値は作成の応答でしか得られないので、`Redacted` のまま運ぶ。 */
+type CfCreatedToken = { readonly id: string; readonly value: Redacted.Redacted<string> };
+
+type CfOperation = "accounts" | "token" | "token-list" | "whoami" | "r2";
 
 const WhoamiResponseSchema = Schema.Struct({ authenticated: Schema.Boolean });
 const decodeWhoami = Schema.decodeUnknownEffect(Schema.fromJsonString(WhoamiResponseSchema));
@@ -45,10 +49,16 @@ const decodeAccounts = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Array(CfAccountSchema)),
 );
 
-const TokenCreateResponseSchema = Schema.Struct({ value: Schema.String });
+const TokenCreateResponseSchema = Schema.Struct({ id: Schema.String, value: Schema.String });
 const decodeTokenCreate = Schema.decodeUnknownEffect(
   Schema.fromJsonString(TokenCreateResponseSchema),
 );
+
+// `cf accounts tokens list` は API の result（トークンの配列）をそのまま JSON で出す。
+const CfTokenSchema = Schema.Struct({ id: Schema.String, name: Schema.String });
+/** 一覧の 1 件。値は一覧に含まれない。 */
+type CfToken = typeof CfTokenSchema.Type;
+const decodeTokens = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Array(CfTokenSchema)));
 
 // cf の `--policies` が期待する、Cloudflare API そのままの wire 形（snake_case）へ変換する。
 const toWirePolicy = (policy: CfTokenPolicy) => ({
@@ -128,7 +138,9 @@ const makeCf = (parentEnv: Record<string, string | undefined>) =>
       return yield* new CfCommandFailed({ operation: "r2" });
     });
 
-    // auth create は --profile を拒否するため、専用名を位置引数で渡す。
+    // auth create は --profile を拒否するため、専用名を位置引数で渡す。スコープは、デプロイ用トークン
+    // （Workers R2 Storage Write）とアクセスキーのトークン（Workers R2 Storage Bucket Item Write）を
+    // 作るのに要るものだけ（ADR-0012 決定 2・10、#851）。
     const authenticate = Effect.scoped(
       Effect.gen(function* () {
         const handle = yield* spawner.spawn(
@@ -141,6 +153,7 @@ const makeCf = (parentEnv: Record<string, string | undefined>) =>
               cfProfileName,
               "--scopes",
               "workers-r2.write",
+              "workers-r2-bucket-item.write",
               "account_api_tokens:create",
             ],
             { env: baseChildEnv, stdin: "inherit", stdout: "inherit", stderr: "inherit" },
@@ -177,8 +190,7 @@ const makeCf = (parentEnv: Record<string, string | undefined>) =>
           "create",
           "--name",
           input.name,
-          "--expires-on",
-          input.expiresOn,
+          ...(input.expiresOn === undefined ? [] : ["--expires-on", input.expiresOn]),
           "--policies",
           JSON.stringify(input.policies.map(toWirePolicy)),
         ],
@@ -186,13 +198,31 @@ const makeCf = (parentEnv: Record<string, string | undefined>) =>
       ).pipe(
         Effect.flatMap((stdout) =>
           decodeTokenCreate(stdout).pipe(
-            Effect.map((response) => Redacted.make(response.value)),
+            Effect.map((response) => ({ id: response.id, value: Redacted.make(response.value) })),
             Effect.mapError(() => new CfCommandFailed({ operation: "token" })),
           ),
         ),
       );
 
-    return Cf.of({ authenticate, checkR2Availability, createToken, listAccounts, whoami });
+    const listTokens = (accountId: string) =>
+      invoke("token-list", ["accounts", "tokens", "list"], {
+        CLOUDFLARE_ACCOUNT_ID: accountId,
+      }).pipe(
+        Effect.flatMap((stdout) =>
+          decodeTokens(stdout).pipe(
+            Effect.mapError(() => new CfCommandFailed({ operation: "token-list" })),
+          ),
+        ),
+      );
+
+    return Cf.of({
+      authenticate,
+      checkR2Availability,
+      createToken,
+      listAccounts,
+      listTokens,
+      whoami,
+    });
   });
 
 /**
@@ -210,7 +240,10 @@ export class Cf extends Context.Service<
     ) => Effect.Effect<void, CfCommandFailed | CloudflareR2CheckoutRequired>;
     readonly createToken: (
       input: CfCreateTokenInput,
-    ) => Effect.Effect<Redacted.Redacted<string>, CfCommandFailed>;
+    ) => Effect.Effect<CfCreatedToken, CfCommandFailed>;
+    readonly listTokens: (
+      accountId: string,
+    ) => Effect.Effect<ReadonlyArray<CfToken>, CfCommandFailed>;
   }
 >()("nyaucast/Cf") {
   // `parentEnv` は呼び出し元が境界で1回だけ解決したプロセスの環境（`src/index.ts` では

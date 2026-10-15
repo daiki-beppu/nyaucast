@@ -30,7 +30,7 @@ Instagram へ動画を渡すための R2 環境を、自分の Cloudflare アカ
 
 1. Cloudflare アカウントがなければ、[アカウント作成ページ](https://dash.cloudflare.com/sign-up)で作成します。
 2. Cloudflare ダッシュボードで対象のアカウントの R2 を開き、checkout を完了します。未完了のままコマンドを実行すると、そのアカウントの checkout URL を表示して止まります。案内されたページで完了してから再実行してください。支払い情報が必要かどうかは、この文書では断定しません。
-3. `nyaucast cloudflare` を実行します。未認証の場合は、nyaucast が内部で `cf auth create nyaucast --scopes workers-r2.write account_api_tokens:create` を起動します。表示された URL をブラウザで開き、表示されたコードに従って同意してください。認証が成功すると、同じコマンドの実行で plan に進みます。専用プロファイルの初回作成と再認証は、この同じ手順を使います。cf は nyaucast の依存に含まれるため、別途インストールする必要はありません。
+3. `nyaucast cloudflare` を実行します。未認証の場合は、nyaucast が内部で `cf auth create nyaucast --scopes workers-r2.write workers-r2-bucket-item.write account_api_tokens:create` を起動します。表示された URL をブラウザで開き、表示されたコードに従って同意してください。認証が成功すると、同じコマンドの実行で plan に進みます。専用プロファイルの初回作成と再認証は、この同じ手順を使います。cf は nyaucast の依存に含まれるため、別途インストールする必要はありません。
 
 ### コマンドの使い方
 
@@ -77,9 +77,9 @@ nyaucast cloudflare --account <id> --yes
 
 変更もキー移行もない場合は終了コード0で終わり、承認のための再実行は不要です。この文書と自動テストの確認は、ブラウザ同意や Cloudflare・1Password の実連携の確認を代替しません。実機確認は [#706](https://github.com/daiki-beppu/nyaucast/issues/706) に残します。
 
-### state を失ったとき
+### 保存済みのアクセスキーを失ったとき
 
-Alchemy の state は `~/.config/nyaucast/cloudflare/` に保存されます。state を失った後に `nyaucast cloudflare` を再実行すると、plan にトークンの作成が出て、承認・適用後に新しい Account API Token とアクセスキーが発行されます。古いトークンは自動で失効せず、有効なまま残ります。
+R2 アクセスキーの元になる `nyaucast-media-write` トークンの値は、作成時にしか取り出せません。保存済みのアクセスキー（1Password か `environment.json`）を失ったとき、または Cloudflare 上の同名のトークンと一致しなくなったときに `nyaucast cloudflare` を再実行すると、plan に `plan.accountApiToken=create` が出て、承認・適用後に新しいトークンとアクセスキーが発行されます。古いトークンは自動で失効せず、有効なまま残ります。
 
 1. 再実行の plan で対象アカウントとトークンの作成を確認し、承認して適用します。
 2. Cloudflare ダッシュボードで、その対象アカウントの **Account API Tokens** を開きます。

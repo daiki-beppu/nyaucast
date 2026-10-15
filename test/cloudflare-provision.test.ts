@@ -23,7 +23,7 @@ const row = (
 ): ProvisioningPlanRow => ({
   action,
   kind,
-  resource: kind === "bucket" ? "Media" : "MediaWriter",
+  resource: kind === "bucket" ? "Media" : "nyaucast-media-write",
 });
 
 describe("prepareProvisioning account selection", () => {
@@ -69,8 +69,9 @@ describe("prepareProvisioning account selection", () => {
         createToken: (input: Parameters<Cf["Service"]["createToken"]>[0]) =>
           Effect.sync(() => {
             tokenTargets.push(input.accountId);
-            return Redacted.make("test-deploy-token");
+            return { id: "test-deploy-token-id", value: Redacted.make("test-deploy-token") };
           }),
+        listTokens: () => Effect.succeed([]),
       };
       const layer = Layer.mergeAll(
         Layer.succeed(
@@ -79,6 +80,7 @@ describe("prepareProvisioning account selection", () => {
             available: Effect.succeed(false),
             hasReferences: Effect.succeed(false),
             save: () => Effect.die("preparation does not save an item"),
+            savedKeys: Effect.succeed(Option.none()),
           }),
         ),
         Layer.succeed(Cf, Cf.of(cfService)),
