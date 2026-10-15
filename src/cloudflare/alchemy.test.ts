@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
@@ -7,15 +6,15 @@ import { assert, describe, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Redacted } from "effect";
 
 import { environment, failureFacts, temporaryDirectory } from "../../test/helpers.ts";
-import { fakeHttp, type RecordedRequest, type Routes } from "../../test/sns-api.ts";
+import { fakeHttp, type Routes } from "../../test/sns-api.ts";
 import { CloudflareProvisioning, declaredResources, type ProvisioningPlan } from "./alchemy.ts";
 
 // 契約（issue #695 の plan、完了契約 C1〜C21）:
 //   このアダプタは `alchemy` を import する唯一のモジュール（契約は test/cloudflare-dependencies.test.ts
 //   の別の describe が確認する）。公開する service の操作は2つだけ: `plan`（入力: アカウント ID と
 //   デプロイ用トークン。出力: 資源ごとの作成・更新・変更なしの一覧）と `apply`（plan が返す不透明な
-//   ハンドルだけを受け、差分を取り直さない。出力: アカウント ID・bucket 名・Access Key ID・
-//   Secret Access Key）。宣言するすべての資源（bucket と AccountApiToken）に `retain` が付き、destroy
+//   ハンドルだけを受け、差分を取り直さない。出力: アカウント ID・bucket 名）。宣言する資源は bucket
+//   1 つだけで（#851: アクセスキーのトークンは `cf` で作る。`src/cloudflare/provision.ts`）、`retain` が付き、destroy
 //   の操作は無い。state は呼び出し側が渡した configRoot の `cloudflare/` 配下に置き、ディレクトリは
 //   0700・ファイルは 0600。認証は呼び出し側が渡したデプロイ用トークンだけを使い、`~/.alchemy` も
 //   `CLOUDFLARE_API_TOKEN` も読まない。
@@ -27,50 +26,18 @@ import { CloudflareProvisioning, declaredResources, type ProvisioningPlan } from
 //   `Effect.die("unexpected request: …")` で即座に失敗として見える（計画の未確認事項 U5 の discovery
 //   を自動テストでも再現する）。state に行が無い資源について、Alchemy は plan 中に 1 度だけ
 //   `provider.read` で実物を見に行く（adoption probe。`alchemy/Plan.ts` が prior state の無い行で
-//   常に実行する）。`Cloudflare.R2.Bucket` は read を実装しているので GET が 1 件出るが、
-//   `AccountApiToken.read` は output が無ければ即 undefined を返すのでトークン側は出ない。
+//   常に実行する）。`Cloudflare.R2.Bucket` は read を実装しているので GET が 1 件出る。
 
 const apiOrigin = "https://api.cloudflare.com";
 const apiBase = `${apiOrigin}/client/v4`;
 const accountId = "0123456789abcdef0123456789abcdef";
 const bucketName = "nyaucast-media";
 const deployTokenValue = "DEPLOY_TOKEN_SENTINEL";
-const tokenId = "TOKEN_ID_SENTINEL";
-const tokenValue = "TOKEN_VALUE_SENTINEL";
-const sha256Hex = (value: string) => createHash("sha256").update(value).digest("hex");
-
 /**
- * アダプタが宣言するトークンの名前。`declaredResources` はネットワークにもファイルにも触れない
- * 純粋な観測なので、同期に読んで fixture に使える。これと衝突する既存トークンを置くのが SCN-C13-N1
- * の負の対照（アダプタはトークン一覧を見に行かない）。
+ * アクセスキーのトークンの名前（#851 で nyaucast が `cf` で直接作る）。これと同名の既存トークンを
+ * 置くのが SCN-C13-N1 の負の対照（アダプタはトークン一覧を見に行かず、トークンも作らない）。
  */
-const tokenName = Effect.runSync(
-  Effect.map(declaredResources(accountId), (resources) => {
-    const token = resources.find(
-      (resource) => resource.type === "Cloudflare.ApiToken.AccountApiToken",
-    );
-    return String((token?.props as { name?: unknown } | undefined)?.name);
-  }),
-);
-
-/**
- * 論理 ID（plan の行の `resource`）→ 期待する `kind` の対応表。`declaredResources` から動的に作る
- * ので、宣言した資源の論理 ID を変えても追従する。これはアダプタの `kindOfResourceType`（非公開）
- * とは別に、resourceType の文字列だけを根拠に独立して導出し、アダプタの resourceType → kind の
- * 変換が取り違えていないかを確かめる（issue #696: plan の行から bucket と AccountApiToken を区別する）。
- */
-const expectedKindOf = Effect.runSync(
-  Effect.map(
-    declaredResources(accountId),
-    (resources) =>
-      new Map(
-        resources.map((resource) => [
-          resource.id,
-          resource.type === "Cloudflare.R2.Bucket" ? "bucket" : "account-api-token",
-        ]),
-      ),
-  ),
-);
+const accessKeyTokenName = "nyaucast-media-write";
 
 const envelope = (result: unknown) =>
   Response.json({ success: true, errors: [], messages: [], result });
@@ -86,19 +53,15 @@ const bucketProbeRoute = `GET ${apiBase}/accounts/${accountId}/r2/buckets/${buck
 /** トークン一覧。アダプタが自前の冪等性のために使っていないことを確かめる負の対照（SCN-C13-N1）。 */
 const tokenListRoute = `GET ${apiBase}/accounts/${accountId}/tokens`;
 
-/** 作成したトークンの名前は Cloudflare が要求どおりに返す。要求の本文から読み取って同じ名前を返す。 */
-const createdTokenName = (request: RecordedRequest): string => {
-  const body = request.bodyBytes === undefined ? "" : new TextDecoder().decode(request.bodyBytes);
-  const parsed: unknown = JSON.parse(body);
-  return String((parsed as { name?: unknown }).name);
-};
-
-/** 新規の bucket・token（state 無し）を apply する一式の route。GET bucket は 404（NoSuchBucket）で始まる。 */
+/**
+ * 新規の bucket（state 無し）を apply する一式の route。GET bucket は 404（NoSuchBucket）で始まる。
+ * トークンを作る route は置かない: アダプタがトークンを作れば、未知の route として即座に失敗する。
+ */
 const freshDeploymentRoutes = (): Routes => ({
   [bucketProbeRoute]: () => typedError(404, 10_006, "The specified bucket does not exist."),
-  // アダプタが使う名前と衝突する既存トークンを答えられる。呼ばれないことが契約（SCN-C13-N1）。
+  // アクセスキーのトークンと同名の既存トークンを答えられる。呼ばれないことが契約（SCN-C13-N1）。
   [tokenListRoute]: () =>
-    envelope([{ id: "COLLIDING_TOKEN_ID", name: tokenName, status: "active" }]),
+    envelope([{ id: "COLLIDING_TOKEN_ID", name: accessKeyTokenName, status: "active" }]),
   [`POST ${apiBase}/accounts/${accountId}/r2/buckets`]: () =>
     envelope({ name: bucketName, storage_class: "Standard", jurisdiction: "default" }),
   [`GET ${apiBase}/accounts/${accountId}/r2/buckets/${bucketName}/domains/custom`]: () =>
@@ -111,13 +74,6 @@ const freshDeploymentRoutes = (): Routes => ({
     envelope({ rules: [] }),
   [`PUT ${apiBase}/accounts/${accountId}/r2/buckets/${bucketName}/lifecycle`]: () =>
     envelope({ rules: [] }),
-  [`POST ${apiBase}/accounts/${accountId}/tokens`]: (request) =>
-    envelope({
-      id: tokenId,
-      name: createdTokenName(request),
-      status: "active",
-      value: tokenValue,
-    }),
 });
 
 /**
@@ -157,15 +113,16 @@ const assertStatePermissions = (configRoot: string): void => {
   }
 };
 
-describe("declaredResources: C3/C4/C5 - 宣言したすべての資源に retain が付き、bucket と token の props が要件のとおり", () => {
-  it.effect("宣言は bucket と AccountApiToken の2件で、どちらも retain", () =>
+describe("declaredResources: C3/C4 - 宣言は retain の付いた bucket だけで、props が要件のとおり", () => {
+  // #851: アクセスキーのトークン（AccountApiToken）は宣言から外し、nyaucast が cf で直接作る。
+  it.effect("宣言は Cloudflare.R2.Bucket の1件だけで、retain", () =>
     Effect.gen(function* () {
       const resources = yield* declaredResources(accountId);
 
-      assert.lengthOf(resources, 2);
-      for (const resource of resources) {
-        assert.strictEqual(resource.removalPolicy, "retain", resource.id);
-      }
+      assert.deepStrictEqual(
+        resources.map((resource) => [resource.type, resource.removalPolicy]),
+        [["Cloudflare.R2.Bucket", "retain"]],
+      );
     }),
   );
 
@@ -189,48 +146,6 @@ describe("declaredResources: C3/C4/C5 - 宣言したすべての資源に retain
       assert.strictEqual(rules[0]?.deleteObjectsTransition?.condition?.type, "Age");
       assert.strictEqual(rules[0]?.deleteObjectsTransition?.condition?.maxAge, 604_800);
     }),
-  );
-
-  // SCN-C5-P1 / SCN-C5-N1
-  it.effect(
-    "token の宣言: policy は bucket 1つに絞った Workers R2 Storage Bucket Item Write だけ",
-    () =>
-      Effect.gen(function* () {
-        const resources = yield* declaredResources(accountId);
-        const token = resources.find(
-          (resource) => resource.type === "Cloudflare.ApiToken.AccountApiToken",
-        );
-        assert.exists(token, "AccountApiToken の宣言が見つからない");
-        const props = token!.props as {
-          policies: ReadonlyArray<{
-            effect: string;
-            permissionGroups: ReadonlyArray<unknown>;
-            resources: Record<string, unknown>;
-          }>;
-        };
-
-        assert.lengthOf(props.policies, 1);
-        const policy = props.policies[0]!;
-
-        // SCN-C5-P1: allow、権限グループは1件だけ、対象は「入力のアカウント ID の nyaucast-media
-        // bucket」1つを指すキー1件だけ。キーの形式は Cloudflare の R2 の文書が定める
-        // `com.cloudflare.edge.r2.bucket.<ACCOUNT_ID>_<JURISDICTION>_<BUCKET_NAME>`
-        // （https://developers.cloudflare.com/r2/api/tokens/ ）。bucket の宣言は jurisdiction を
-        // 指定しないので、接尾辞は Cloudflare の既定の `default`。件数だけでは別アカウント・別
-        // bucket・壊れたキーも通ってしまうため、キーと値を完全一致で固定する。
-        assert.strictEqual(policy.effect, "allow");
-        assert.deepStrictEqual(policy.permissionGroups, ["Workers R2 Storage Bucket Item Write"]);
-        assert.deepStrictEqual(policy.resources, {
-          [`com.cloudflare.edge.r2.bucket.${accountId}_default_${bucketName}`]: "*",
-        });
-
-        // SCN-C5-N1: アカウント全体スコープの R2 権限・対象が現れない。
-        assert.notInclude(policy.permissionGroups, "Workers R2 Storage Write");
-        assert.notInclude(policy.permissionGroups, "Workers R2 Storage Read");
-        const resourceKeys = Object.keys(policy.resources);
-        assert.notInclude(resourceKeys, `com.cloudflare.api.account.${accountId}`);
-        assert.notInclude(resourceKeys, "com.cloudflare.edge.r2.bucket.*");
-      }),
   );
 });
 
@@ -268,11 +183,7 @@ describe("CloudflareProvisioning.plan/apply", () => {
         return yield* service.plan({ accountId, deployToken: Redacted.make(deployTokenValue) });
       }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(provisioning, environment({}))));
 
-      assert.lengthOf(plan.rows, 2);
-      for (const row of plan.rows) {
-        assert.strictEqual(row.action, "create", row.resource);
-        assert.strictEqual(row.kind, expectedKindOf.get(row.resource), row.resource);
-      }
+      assert.deepStrictEqual(plan.rows, [{ action: "create", kind: "bucket", resource: "Media" }]);
 
       // 許可側: plan が出す要求は、state が無い資源の adoption probe（bucket の GET）だけ。
       assert.deepStrictEqual(
@@ -327,11 +238,9 @@ describe("CloudflareProvisioning.plan/apply", () => {
         });
 
         // C1: plan は資源ごとに create/update/unchanged のいずれか1つを持つ一覧。新規なので全件 create。
-        assert.lengthOf(plan.rows, 2);
-        for (const row of plan.rows) {
-          assert.strictEqual(row.action, "create", row.resource);
-          assert.strictEqual(row.kind, expectedKindOf.get(row.resource), row.resource);
-        }
+        assert.deepStrictEqual(plan.rows, [
+          { action: "create", kind: "bucket", resource: "Media" },
+        ]);
         // SCN-C21-N1: ハンドルの公開面に Alchemy の型（accountId・deployToken 等）が現れない。
         assert.deepStrictEqual(Object.keys(plan), ["rows"]);
         // 確認の時点では、まだ資源を変える要求が1件も出ていない。
@@ -343,13 +252,8 @@ describe("CloudflareProvisioning.plan/apply", () => {
         return yield* service.apply(plan);
       }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(provisioning, environment({}))));
 
-      // C1/C6: apply は4値を返す。Access Key ID はトークンの ID、Secret Access Key はトークンの値の
-      // SHA-256（16進）で、トークンの値そのものはどこにも現れない。
-      assert.strictEqual(result.accountId, accountId);
-      assert.strictEqual(result.bucket, bucketName);
-      assert.strictEqual(result.accessKeyId, tokenId);
-      assert.strictEqual(Redacted.value(result.secretAccessKey), sha256Hex(tokenValue));
-      assert.notInclude(JSON.stringify(result), tokenValue);
+      // C1: apply はアカウント ID と bucket 名を返す（アクセスキーは #851 で provision.ts が作る）。
+      assert.deepStrictEqual(result, { accountId, bucket: bucketName });
 
       // C10: Cloudflare への要求の認証は、渡したデプロイ用トークンを示す。
       assert.include(
@@ -435,9 +339,8 @@ describe("CloudflareProvisioning.plan/apply", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  // SCN-C13-P1: state が残っている2回目の plan はトークンを作り直さない。bucket と token の diff は
-  // どちらも state との純粋な比較で、ネットワークへ出ない（bucket も token も、state に行があれば
-  // plan 中の adoption probe を行わない）。
+  // SCN-C13-P1: state が残っている2回目の plan は、bucket の diff を state との純粋な比較で出し、
+  // ネットワークへ出ない（state に行があれば plan 中の adoption probe を行わない）。
   it.effect(
     "C13(P1) - state が残っている2回目の plan は unchanged を返し、ネットワークに出ない",
     () =>
@@ -468,11 +371,9 @@ describe("CloudflareProvisioning.plan/apply", () => {
           return yield* service.plan({ accountId, deployToken: Redacted.make(deployTokenValue) });
         }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(secondLayer, environment({}))));
 
-        assert.lengthOf(secondPlan.rows, 2);
-        for (const row of secondPlan.rows) {
-          assert.strictEqual(row.action, "unchanged", row.resource);
-          assert.strictEqual(row.kind, expectedKindOf.get(row.resource), row.resource);
-        }
+        assert.deepStrictEqual(secondPlan.rows, [
+          { action: "unchanged", kind: "bucket", resource: "Media" },
+        ]);
         assert.deepStrictEqual(secondRun.requests, []);
       }),
   );

@@ -1,6 +1,9 @@
+import { createHash } from "node:crypto";
+
 import { Clock, Effect, Option, Redacted, Schema, type Scope } from "effect";
 
 import {
+  bucketName,
   CloudflareProvisioning,
   type CloudflareProvisioningFailed,
   type ProvisioningPlan,
@@ -10,7 +13,10 @@ import {
 import { Cf, type CfCommandFailed, type CloudflareR2CheckoutRequired } from "./cf.ts";
 import { OnePasswordR2, type OnePasswordCommandFailed } from "./one-password.ts";
 import { type SecretReferencesWriteFailed } from "../auth/secrets.ts";
-import { type CloudflareEnvironmentWriteFailed } from "./environment-file.ts";
+import {
+  type CloudflareEnvironmentFile,
+  type CloudflareEnvironmentWriteFailed,
+} from "./environment-file.ts";
 import { CloudflareEnvironment, type CloudflareEnvironmentInvalid } from "./environment.ts";
 
 class CloudflareAccountRequired extends Schema.TaggedError<CloudflareAccountRequired>()(
@@ -42,12 +48,19 @@ class CloudflareConfirmationRequired extends Schema.TaggedError<CloudflareConfir
   {},
 ) {}
 
+/** R2 の S3 互換 API のアクセスキー。アクセスキーのトークンから導く（ID = トークンの ID）。 */
+type AccessKey = {
+  readonly accessKeyId: string;
+  readonly secretAccessKey: Redacted.Redacted<string>;
+};
+
 export type PreparedProvisioning = {
   readonly accessKeyDestination: "file" | "one_password";
   readonly migrateSecrets: boolean;
   readonly account: { readonly id: string; readonly name: string };
   readonly apply: Effect.Effect<
-    ProvisioningResult,
+    ProvisioningResult & AccessKey,
+    | CfCommandFailed
     | CloudflareProvisioningFailed
     | CloudflareEnvironmentWriteFailed
     | OnePasswordCommandFailed
@@ -70,14 +83,28 @@ const selectAccessKeyDestination = Effect.fnUntraced(function* (
   return "file" as const;
 });
 
-// デプロイ用トークンの名前。Alchemy が宣言するアクセスキーのトークン名（nyaucast-media-write）とは
-// 別の名前空間にする（同じアカウントの API トークン名を奪わないため。SCN-C-DEPLOY-TOKEN-N1）。
+// デプロイ用トークンの名前。アクセスキーのトークン名（nyaucast-media-write）とは別の名前空間に
+// する（同じアカウントの API トークン名を奪わないため。SCN-C-DEPLOY-TOKEN-N1）。
 const deployTokenName = "nyaucast-cloudflare-deploy";
+// アクセスキーの元になるトークンの名前。plan はこの名前で既存のトークンを探す（#851）。
+const accessKeyTokenName = "nyaucast-media-write";
 
 // Cloudflare の API トークン権限グループの ID。アカウントをまたいでグローバルに安定した値
 // （https://developers.cloudflare.com/fundamentals/api/reference/permissions/ ）。
 const workersR2StorageWritePermissionGroupId = "bf7481a1826f439697cb59a20b22293e"; // "Workers R2 Storage Write"
-const accountApiTokensWritePermissionGroupId = "5bc3f8b21c554832afc660159ab75fa4"; // "Account API Tokens Write"
+const workersR2StorageBucketItemWritePermissionGroupId = "2efd5506f9c8494dacb1fa10a3e7d5b6"; // "Workers R2 Storage Bucket Item Write"
+
+/** bucket の宣言は jurisdiction を指定しないので、Cloudflare の既定が入る。 */
+const bucketJurisdiction = "default";
+
+/**
+ * policy を bucket 1 つに絞る resource キー。Cloudflare の R2 の文書が
+ * `com.cloudflare.edge.r2.bucket.<ACCOUNT_ID>_<JURISDICTION>_<BUCKET_NAME>` と定めている
+ * （https://developers.cloudflare.com/r2/api/tokens/ ）。アカウント全体を指す
+ * `com.cloudflare.api.account.<id>` や `com.cloudflare.edge.r2.bucket.*` は使わない。
+ */
+const bucketResourceKey = (accountId: string) =>
+  `com.cloudflare.edge.r2.bucket.${accountId}_${bucketJurisdiction}_${bucketName}`;
 
 const oneHourMillis = 60 * 60 * 1000;
 
@@ -130,6 +157,8 @@ const validateSavedAccount = (savedAccountId: string | undefined, accountId: str
     ? new CloudflareAccountConflict({ accountId, savedAccountId })
     : Effect.void;
 
+// デプロイ用トークンは Alchemy が bucket を作るためだけに使う。権限は Workers R2 Storage Write だけ
+// （#851: cf の OAuth のセッションは Account API Tokens Write を含むトークンを作れない）。
 const createDeployToken = (cf: Cf["Service"], accountId: string) =>
   deployTokenExpiresOn.pipe(
     Effect.flatMap((expiresOn) =>
@@ -140,27 +169,101 @@ const createDeployToken = (cf: Cf["Service"], accountId: string) =>
         policies: [
           {
             effect: "allow",
-            permissionGroupIds: [
-              workersR2StorageWritePermissionGroupId,
-              accountApiTokensWritePermissionGroupId,
-            ],
+            permissionGroupIds: [workersR2StorageWritePermissionGroupId],
             resources: { [`com.cloudflare.api.account.${accountId}`]: "*" },
           },
         ],
       }),
     ),
+    Effect.map((token) => token.value),
   );
 
+/**
+ * アクセスキーのトークンを作り、アクセスキーを導く。期限は付けない。secret はトークンの値の
+ * SHA-256（16 進）で、値そのものは `Redacted` から出さない（https://developers.cloudflare.com/r2/api/tokens/ ）。
+ */
+const createAccessKey = (cf: Cf["Service"], accountId: string) =>
+  cf
+    .createToken({
+      accountId,
+      name: accessKeyTokenName,
+      policies: [
+        {
+          effect: "allow",
+          permissionGroupIds: [workersR2StorageBucketItemWritePermissionGroupId],
+          resources: { [bucketResourceKey(accountId)]: "*" },
+        },
+      ],
+    })
+    .pipe(
+      Effect.map((token): AccessKey => ({
+        accessKeyId: token.id,
+        secretAccessKey: Redacted.make(
+          createHash("sha256").update(Redacted.value(token.value)).digest("hex"),
+        ),
+      })),
+    );
+
+/** 保存済みのアクセスキー。1Password の参照があればそちらを、無ければ environment.json の秘密のブロックを読む。 */
+const readSavedAccessKey = Effect.fnUntraced(function* (
+  onePassword: OnePasswordR2["Service"],
+  saved: Option.Option<CloudflareEnvironmentFile>,
+) {
+  if (yield* onePassword.hasReferences) return yield* onePassword.savedKeys;
+  return Option.flatMap(saved, (environment) =>
+    environment.secrets === undefined
+      ? Option.none<AccessKey>()
+      : Option.some<AccessKey>({
+          accessKeyId: environment.secrets.R2_ACCESS_KEY_ID,
+          secretAccessKey: Redacted.make(environment.secrets.R2_SECRET_ACCESS_KEY),
+        }),
+  );
+});
+
+/**
+ * アクセスキーのトークンの plan。同名のトークンの ID が保存済みの R2_ACCESS_KEY_ID と一致すれば、
+ * 保存済みのキーを使い続ける（Option.some = unchanged）。それ以外は作り直す（Option.none = create）:
+ * トークンの値は後から取り出せないため。古いトークンは消さない（ADR-0012 決定 5・6）。
+ */
+const planAccessKey = Effect.fnUntraced(function* (
+  cf: Cf["Service"],
+  onePassword: OnePasswordR2["Service"],
+  accountId: string,
+  saved: Option.Option<CloudflareEnvironmentFile>,
+) {
+  const tokens = yield* cf.listTokens(accountId);
+  const savedKey = yield* readSavedAccessKey(onePassword, saved);
+  return Option.filter(savedKey, (key) =>
+    tokens.some((token) => token.name === accessKeyTokenName && token.id === key.accessKeyId),
+  );
+});
+
+const accessKeyRowOf = (reusedAccessKey: Option.Option<AccessKey>): ProvisioningPlanRow => ({
+  action: Option.isSome(reusedAccessKey) ? "unchanged" : "create",
+  kind: "account-api-token",
+  resource: accessKeyTokenName,
+});
+
+const ensureAuthenticated = (cf: Cf["Service"]) =>
+  Effect.flatMap(cf.whoami, (authenticated) => (authenticated ? Effect.void : cf.authenticate));
+
 const applyAndWrite = (
+  cf: Cf["Service"],
   provisioning: CloudflareProvisioning["Service"],
   cloudflareEnvironment: CloudflareEnvironment["Service"],
   onePassword: OnePasswordR2["Service"],
   destination: PreparedProvisioning["accessKeyDestination"],
   plan: ProvisioningPlan,
+  reusedAccessKey: Option.Option<AccessKey>,
 ) =>
   provisioning.apply(plan).pipe(
-    Effect.flatMap((result) =>
+    Effect.flatMap((applied) =>
       Effect.gen(function* () {
+        // トークンは確認の後、apply の中でだけ作る（plan の段階では作らない。#851）。
+        const accessKey = Option.isSome(reusedAccessKey)
+          ? reusedAccessKey.value
+          : yield* createAccessKey(cf, applied.accountId);
+        const result = { ...applied, ...accessKey };
         if (destination === "one_password") yield* onePassword.save(result);
         yield* cloudflareEnvironment.write({
           accountId: result.accountId,
@@ -180,8 +283,9 @@ const applyAndWrite = (
   );
 
 /**
- * ログイン確認 → アカウント選択 → R2 利用可否確認 → デプロイ用トークン作成 → plan、の一連の準備。`apply` は plan が
- * 返したハンドルを閉じ込めた継続で、呼び出せば adapter.apply → environment.json への書き込みまで行う
+ * ログイン確認 → アカウント選択 → R2 利用可否確認 → アクセスキーのトークンの plan → デプロイ用トークン作成 →
+ * bucket の plan、の一連の準備。`apply` は plan が返したハンドルを閉じ込めた継続で、呼び出せば adapter.apply →
+ * （必要なら）アクセスキーのトークンの作成 → environment.json への書き込みまで行う
  * （plan を取り直さない。要件 23）。呼び出し側は `Effect.scoped` を 1 つにして prepare と apply を
  * 同じ scope の中に収める。
  */
@@ -196,16 +300,14 @@ export const prepareProvisioning = Effect.fnUntraced(function* <E, R>(
   | CloudflareAccountConflict
   | CloudflareEnvironmentInvalid
   | OnePasswordSignInRequired
+  | OnePasswordCommandFailed
   | CfCommandFailed
   | CloudflareR2CheckoutRequired
   | CloudflareProvisioningFailed,
   R | Cf | CloudflareEnvironment | CloudflareProvisioning | OnePasswordR2 | Scope.Scope
 > {
   const cf = yield* Cf;
-  const authenticated = yield* cf.whoami;
-  if (!authenticated) {
-    yield* cf.authenticate;
-  }
+  yield* ensureAuthenticated(cf);
 
   const cloudflareEnvironment = yield* CloudflareEnvironment;
   const saved = yield* cloudflareEnvironment.read;
@@ -219,20 +321,29 @@ export const prepareProvisioning = Effect.fnUntraced(function* <E, R>(
   const migrateSecrets =
     accessKeyDestination === "one_password" &&
     Option.exists(saved, (environment) => environment.secrets !== undefined);
+  const reusedAccessKey = yield* planAccessKey(cf, onePassword, account.id, saved);
   const deployToken = yield* createDeployToken(cf, account.id);
 
   const provisioning = yield* CloudflareProvisioning;
   const plan = yield* provisioning.plan({ accountId: account.id, deployToken });
 
   const apply = applyAndWrite(
+    cf,
     provisioning,
     cloudflareEnvironment,
     onePassword,
     accessKeyDestination,
     plan,
+    reusedAccessKey,
   );
 
-  return { account, apply, rows: plan.rows, accessKeyDestination, migrateSecrets };
+  return {
+    account,
+    apply,
+    rows: [...plan.rows, accessKeyRowOf(reusedAccessKey)],
+    accessKeyDestination,
+    migrateSecrets,
+  };
 });
 
 /**

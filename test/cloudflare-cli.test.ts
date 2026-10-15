@@ -28,7 +28,6 @@ import { nyaucastCli } from "../src/cli.ts";
 import {
   CloudflareProvisioning,
   CloudflareProvisioningFailed,
-  declaredResources,
   type ProvisioningPlan,
 } from "../src/cloudflare/alchemy.ts";
 import { Cf } from "../src/cloudflare/cf.ts";
@@ -53,7 +52,6 @@ import {
 // https://developers.cloudflare.com/fundamentals/api/reference/permissions/ ）。実装側の定数を
 // import せず、ここで独立に固定することで、実装が別の権限を取り違えても検出できるようにする。
 const workersR2StorageWritePermissionGroupId = "bf7481a1826f439697cb59a20b22293e";
-const accountApiTokensWritePermissionGroupId = "5bc3f8b21c554832afc660159ab75fa4";
 
 const accountId = "accountid0123456789";
 const bucket = "nyaucast-media";
@@ -63,10 +61,19 @@ const nextCommand = "nyaucast cloudflare";
 
 // 表示されてはいけない値。出力のどこかに現れたら漏洩として検出する（issue #692 決定 4 行目・AC 2 行目、
 // issue #696 の AC 3 行目: デプロイ用トークンも同じ観測単位で検査する）。
+// アクセスキーは nyaucast が cf で作るトークンから導く（#851）: ID = トークンの ID、secret = トークンの
+// 値の SHA-256（16 進）。secret の期待値は、値の SHA-256 を `shasum -a 256` で別に計算した literal。
 const accessKeyIdSentinel = "ACCESS_KEY_ID_SENTINEL";
-const secretAccessKeySentinel = "SECRET_ACCESS_KEY_SENTINEL";
+const mediaTokenValueSentinel = "MEDIA_TOKEN_VALUE_SENTINEL";
+const secretAccessKeySentinel = "41d0bd70fb411fae7a21d583ee011b2caa234bd07242970bc2b081ad3cad6e38";
 const deployTokenSentinel = "DEPLOY_TOKEN_SENTINEL";
-const secretValues = [accessKeyIdSentinel, secretAccessKeySentinel, deployTokenSentinel];
+const secretValues = [
+  accessKeyIdSentinel,
+  mediaTokenValueSentinel,
+  secretAccessKeySentinel,
+  deployTokenSentinel,
+];
+const mediaTokenName = "nyaucast-media-write";
 const r2Environment = {
   R2_ACCESS_KEY_ID: "EnvAccessAlpha9_EnvAccessOmega7",
   R2_SECRET_ACCESS_KEY: "EnvSecretBeta8_EnvSecretDelta6",
@@ -717,20 +724,41 @@ type CfScript = {
   readonly authCreate?: AuthenticationScript;
   readonly accountsList?: CfResponse;
   readonly r2BucketsList?: CfResponse | (() => CfResponse);
+  /** デプロイ用トークンの作成（`--name nyaucast-cloudflare-deploy`）への応答。 */
   readonly tokensCreate?: CfResponse;
+  /**
+   * アクセスキーのトークンの作成（`--name nyaucast-media-write`）への応答。省略すると、ID
+   * `accessKeyIdSentinel`・値 `mediaTokenValueSentinel` のトークンを作り、以後の一覧に載せる。
+   */
+  readonly mediaTokenCreate?: CfResponse;
+  /** `cf accounts tokens list` が最初から返すトークン（省略すると空）。作成したものは後ろに足される。 */
+  readonly tokens?: ReadonlyArray<{ readonly id: string; readonly name: string }>;
+  /** `cf accounts tokens list` への応答を固定する（失敗の検査用）。 */
+  readonly tokensList?: CfResponse;
   readonly whoami: CfResponse;
 };
 
 /** `cf` の呼び出しの種類を、位置引数に含まれるサブコマンド名だけで分類する（フラグの並びに依存しない）。 */
 const classifyCfCall = (
   args: ReadonlyArray<string>,
-): "accounts-list" | "auth-create" | "r2-buckets-list" | "tokens-create" | "unknown" | "whoami" => {
+):
+  | "accounts-list"
+  | "auth-create"
+  | "media-token-create"
+  | "r2-buckets-list"
+  | "tokens-create"
+  | "tokens-list"
+  | "unknown"
+  | "whoami" => {
   if (args.includes("r2") && args.includes("buckets") && args.includes("list")) {
     return "r2-buckets-list";
   }
   if (args.includes("whoami")) return "whoami";
   if (args[1] === "auth" && args[2] === "create") return "auth-create";
-  if (args.includes("tokens") && args.includes("create")) return "tokens-create";
+  if (args.includes("tokens") && args.includes("create")) {
+    return flagValue(args, "--name") === mediaTokenName ? "media-token-create" : "tokens-create";
+  }
+  if (args.includes("tokens") && args.includes("list")) return "tokens-list";
   if (args.includes("accounts") && args.includes("list")) return "accounts-list";
   return "unknown";
 };
@@ -935,6 +963,12 @@ const fakeR2OnePassword = (options: {
  */
 const fakeCf = (script: CfScript, op: ReturnType<typeof fakeR2OnePassword>) => {
   const calls: Array<CfCall> = [];
+  const tokens = [...(script.tokens ?? [])];
+  const mediaTokenCreate = (): CfResponse => {
+    if (script.mediaTokenCreate !== undefined) return script.mediaTokenCreate;
+    tokens.push({ id: accessKeyIdSentinel, name: mediaTokenName });
+    return tokensCreateSuccess(mediaTokenValueSentinel, accessKeyIdSentinel);
+  };
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.gen(function* () {
       if (command._tag !== "StandardCommand") {
@@ -989,7 +1023,11 @@ const fakeCf = (script: CfScript, op: ReturnType<typeof fakeR2OnePassword>) => {
               ? script.accountsList
               : kind === "tokens-create"
                 ? script.tokensCreate
-                : undefined;
+                : kind === "media-token-create"
+                  ? mediaTokenCreate()
+                  : kind === "tokens-list"
+                    ? (script.tokensList ?? { exitCode: 0, stdout: `${JSON.stringify(tokens)}\n` })
+                    : undefined;
       if (response === undefined) {
         return yield* Effect.die(`fakeCf に一致する規則がありません: ${command.args.join(" ")}`);
       }
@@ -1030,30 +1068,26 @@ const accountsListResponse = (
 });
 const r2BucketsListSuccess: CfResponse = { exitCode: 0, stdout: '{"buckets":[]}\n' };
 
-const tokensCreateSuccess = (value: string): CfResponse => ({
+const tokensCreateSuccess = (value: string, id = "DEPLOY_TOKEN_ID"): CfResponse => ({
   exitCode: 0,
-  stdout: `${JSON.stringify({ id: "TOKEN_ID_SENTINEL", name: "DEPLOY_TOKEN_NAME_SENTINEL", status: "active", value })}\n`,
+  stdout: `${JSON.stringify({ id, name: "TOKEN_NAME_SENTINEL", status: "active", value })}\n`,
 });
 
 /**
  * Alchemy のアダプタ（`CloudflareProvisioning`）の偽物。`plan` への入力と `apply` の呼び出し回数を
- * 記録し、一度 `apply` が呼ばれた後は次の `plan` が全行 `unchanged` を返す（C21: 同一 instance で
- * 2 回続けて実行したときの「変更前 → apply → 変更後」を一続きに観測するため）。
+ * 記録し、一度 `apply` が呼ばれた後は次の `plan` が `unchanged` を返す（C21: 同一 instance で
+ * 2 回続けて実行したときの「変更前 → apply → 変更後」を一続きに観測するため）。アダプタが持つのは
+ * bucket の 1 行だけ（#851: アクセスキーのトークンは cf の偽物の一覧と作成で模す）。
  */
-const fakeProvisioning = (result: {
-  accessKeyId: string;
-  accountId: string;
-  bucket: string;
-  secretAccessKey: string;
-}) => {
+const fakeProvisioning = (result: { accountId: string; bucket: string }) => {
   const state = { applied: false, applyCalls: 0 };
   const planInputs: Array<{ accountId: string; deployToken: Redacted.Redacted<string> }> = [];
   const planOutputs: ProvisioningPlan[] = [];
   const applyInputs: ProvisioningPlan[] = [];
-  const planRow = (kind: "account-api-token" | "bucket") => ({
+  const bucketRow = () => ({
     action: state.applied ? "unchanged" : "create",
-    kind,
-    resource: kind === "bucket" ? "Media" : "MediaWriter",
+    kind: "bucket",
+    resource: "Media",
   });
   const service = CloudflareProvisioning.of({
     apply: (plan) =>
@@ -1061,18 +1095,13 @@ const fakeProvisioning = (result: {
         applyInputs.push(plan);
         state.applied = true;
         state.applyCalls += 1;
-        return {
-          accessKeyId: result.accessKeyId,
-          accountId: result.accountId,
-          bucket: result.bucket,
-          secretAccessKey: Redacted.make(result.secretAccessKey),
-        };
+        return { accountId: result.accountId, bucket: result.bucket };
       }),
     plan: (input) =>
       Effect.sync(() => {
         planInputs.push(input);
         const plan = {
-          rows: [planRow("bucket"), planRow("account-api-token")],
+          rows: [bucketRow()],
         } as unknown as ProvisioningPlan;
         planOutputs.push(plan);
         return plan;
@@ -1113,6 +1142,8 @@ const assertProfileOnEveryCall = (calls: ReadonlyArray<CfCall>): void => {
         "nyaucast",
         "--scopes",
         "workers-r2.write",
+        // #851: アクセスキーのトークン（Workers R2 Storage Bucket Item Write）を作るためのスコープ。
+        "workers-r2-bucket-item.write",
         "account_api_tokens:create",
       ]);
     } else {
@@ -1124,17 +1155,6 @@ const assertProfileOnEveryCall = (calls: ReadonlyArray<CfCall>): void => {
     }
   }
 };
-
-/** 宣言済みの Alchemy のアクセスキーのトークン名（declaredResources は純粋な読み取りで同期に解決できる）。 */
-const alchemyAccessKeyTokenName = (targetAccountId: string): string =>
-  Effect.runSync(
-    Effect.map(declaredResources(targetAccountId), (resources) => {
-      const token = resources.find(
-        (resource) => resource.type === "Cloudflare.ApiToken.AccountApiToken",
-      );
-      return String((token?.props as { name?: unknown } | undefined)?.name);
-    }),
-  );
 
 /**
  * 一時ディレクトリを configRoot として、`Cf`（偽の cf 呼び出し）・`CloudflareEnvironment`（実物、同じ
@@ -1172,10 +1192,8 @@ const withCreateFlow = <A, E, R>(
 describe("nyaucast cloudflare authentication", () => {
   const adapterForAuthentication = () =>
     fakeProvisioning({
-      accessKeyId: accessKeyIdSentinel,
       accountId,
       bucket,
-      secretAccessKey: secretAccessKeySentinel,
     });
   const authenticatedScript = {
     accountsList: accountsListResponse([{ id: accountId, name: accountName }]),
@@ -1232,7 +1250,14 @@ describe("nyaucast cloudflare authentication", () => {
               });
               assert.deepStrictEqual(
                 cfCalls.map((call) => classifyCfCall(call.args)),
-                ["whoami", "auth-create", "accounts-list", "r2-buckets-list", "tokens-create"],
+                [
+                  "whoami",
+                  "auth-create",
+                  "accounts-list",
+                  "r2-buckets-list",
+                  "tokens-list",
+                  "tokens-create",
+                ],
               );
               assertProfileOnEveryCall(cfCalls);
               assert.deepStrictEqual(
@@ -1292,7 +1317,15 @@ describe("nyaucast cloudflare authentication", () => {
             }
             assert.deepStrictEqual(
               cfCalls.map((call) => classifyCfCall(call.args)),
-              ["whoami", "auth-create", "accounts-list", "r2-buckets-list", "tokens-create"],
+              [
+                "whoami",
+                "auth-create",
+                "accounts-list",
+                "r2-buckets-list",
+                "tokens-list",
+                "tokens-create",
+                "media-token-create",
+              ],
             );
           }),
         {
@@ -1414,7 +1447,14 @@ describe("nyaucast cloudflare authentication", () => {
           assert.strictEqual(outcome._tag, "Success");
           assert.deepStrictEqual(
             cfCalls.map((call) => classifyCfCall(call.args)),
-            ["whoami", "accounts-list", "r2-buckets-list", "tokens-create"],
+            [
+              "whoami",
+              "accounts-list",
+              "r2-buckets-list",
+              "tokens-list",
+              "tokens-create",
+              "media-token-create",
+            ],
           );
           assert.lengthOf(adapter.planInputs, 1);
         }),
@@ -1459,7 +1499,9 @@ describe("nyaucast cloudflare authentication", () => {
               "auth-create",
               "accounts-list",
               "r2-buckets-list",
+              "tokens-list",
               "tokens-create",
+              "media-token-create",
             ],
           );
           assertProfileOnEveryCall(cfCalls);
@@ -1509,10 +1551,8 @@ describe("nyaucast cloudflare R2 environment warning", () => {
   };
   const adapterForWarning = () =>
     fakeProvisioning({
-      accessKeyId: accessKeyIdSentinel,
       accountId,
       bucket,
-      secretAccessKey: secretAccessKeySentinel,
     });
   const assertValuesHidden = (lines: ReadonlyArray<string>) => {
     for (const line of lines) {
@@ -1714,10 +1754,8 @@ describe("nyaucast cloudflare R2 availability", () => {
   });
   const adapterForR2 = () =>
     fakeProvisioning({
-      accessKeyId: accessKeyIdSentinel,
       accountId: targetAccount,
       bucket,
-      secretAccessKey: secretAccessKeySentinel,
     });
   const assertStoppedBeforePlan = (
     cfCalls: ReadonlyArray<CfCall>,
@@ -1816,7 +1854,14 @@ describe("nyaucast cloudflare R2 availability", () => {
             assert.strictEqual(outcome._tag, "Success");
             assert.deepStrictEqual(
               cfCalls.map((call) => classifyCfCall(call.args)),
-              ["whoami", "accounts-list", "r2-buckets-list", "tokens-create"],
+              [
+                "whoami",
+                "accounts-list",
+                "r2-buckets-list",
+                "tokens-list",
+                "tokens-create",
+                "media-token-create",
+              ],
             );
             const r2Call = cfCalls[2]!;
             assert.strictEqual(r2Call.env?.["CLOUDFLARE_ACCOUNT_ID"], targetAccount);
@@ -1877,10 +1922,8 @@ describe("nyaucast cloudflare R2 availability", () => {
 describe("nyaucast cloudflare confirmation", () => {
   const adapterForConfirmation = () =>
     fakeProvisioning({
-      accessKeyId: accessKeyIdSentinel,
       accountId,
       bucket,
-      secretAccessKey: secretAccessKeySentinel,
     });
   const authenticated = {
     accountsList: accountsListResponse([{ id: accountId, name: accountName }]),
@@ -2044,10 +2087,8 @@ describe("nyaucast cloudflare --yes (create)", () => {
     "creates the environment, shows the plan, and writes environment.json that status and StaticSecrets can read back",
     () => {
       const adapter = fakeProvisioning({
-        accessKeyId: accessKeyIdSentinel,
         accountId,
         bucket,
-        secretAccessKey: secretAccessKeySentinel,
       });
       const now = "2026-02-01T00:00:00.000Z";
       const expectedExpiresOn = "2026-02-01T01:00:00.000Z";
@@ -2096,22 +2137,30 @@ describe("nyaucast cloudflare --yes (create)", () => {
               deployTokenSentinel,
             );
 
-            // C7/C18: cf への4回の呼び出し（whoami・アカウント一覧・R2 確認・トークン作成）すべてに専用プロファイル。
-            assert.strictEqual(cfCalls.length, 4);
+            // C7/C18: cf への6回の呼び出し（whoami・アカウント一覧・R2 確認・トークン一覧・デプロイ用
+            // トークン作成・アクセスキーのトークン作成）すべてに専用プロファイル。
+            assert.strictEqual(cfCalls.length, 6);
             assertProfileOnEveryCall(cfCalls);
             assert.deepStrictEqual(
               cfCalls.map((call) => classifyCfCall(call.args)),
-              ["whoami", "accounts-list", "r2-buckets-list", "tokens-create"],
+              [
+                "whoami",
+                "accounts-list",
+                "r2-buckets-list",
+                "tokens-list",
+                "tokens-create",
+                "media-token-create",
+              ],
             );
 
             // C5: expires_on は固定した現在時刻 + 1時間。削除の呼び出しは無い。
             const tokenCall = requireTokensCreateCall(cfCalls);
             assert.strictEqual(flagValue(tokenCall.args, "--expires-on"), expectedExpiresOn);
             assert.isUndefined(cfCalls.find((call) => call.args.includes("delete")));
-            // SCN-C5-N1: デプロイ用トークンの名前は、Alchemy が宣言するアクセスキーのトークン名と衝突しない。
-            assert.notInclude(tokenCall.args, alchemyAccessKeyTokenName(accountId));
-            // R4: --policies の権限は Workers R2 Storage Write と Account API Tokens Write の
-            // 2 つだけ（それ以外の権限を足さない・減らさない）。
+            // SCN-C5-N1: デプロイ用トークンの名前は、アクセスキーのトークン名と衝突しない。
+            assert.notInclude(tokenCall.args, mediaTokenName);
+            // R4（#851）: --policies の権限は Workers R2 Storage Write の 1 つだけ。cf の OAuth の
+            // セッションでは Account API Tokens Write を含むトークンを作れないので、足さない。
             const policies = JSON.parse(flagValue(tokenCall.args, "--policies")!) as ReadonlyArray<{
               effect: string;
               permission_groups: ReadonlyArray<{ id: string }>;
@@ -2119,9 +2168,9 @@ describe("nyaucast cloudflare --yes (create)", () => {
             }>;
             assert.lengthOf(policies, 1);
             assert.strictEqual(policies[0]!.effect, "allow");
-            assert.sameMembers(
+            assert.deepStrictEqual(
               policies[0]!.permission_groups.map((group) => group.id),
-              [workersR2StorageWritePermissionGroupId, accountApiTokensWritePermissionGroupId],
+              [workersR2StorageWritePermissionGroupId],
             );
             assert.deepStrictEqual(policies[0]!.resources, {
               [`com.cloudflare.api.account.${accountId}`]: "*",
@@ -2133,6 +2182,29 @@ describe("nyaucast cloudflare --yes (create)", () => {
             for (const call of cfCalls) {
               assert.strictEqual(call.env?.["CF_DELEGATION"], "1", `${call.args.join(" ")}`);
             }
+
+            // #851: アクセスキーのトークンは、apply の後に nyaucast が cf で直接作る。policy は
+            // Workers R2 Storage Bucket Item Write（2efd5506…）を、bucket 1 つの resource キー
+            // （https://developers.cloudflare.com/r2/api/tokens/ の
+            // `com.cloudflare.edge.r2.bucket.<ACCOUNT_ID>_<JURISDICTION>_<BUCKET_NAME>`）に絞ったもの
+            // だけで、期限は付けない。一覧は同じアカウントに対して引く。
+            const listCall = cfCalls.find((call) => classifyCfCall(call.args) === "tokens-list");
+            assert.strictEqual(listCall?.env?.["CLOUDFLARE_ACCOUNT_ID"], accountId);
+            const mediaCall = cfCalls.find(
+              (call) => classifyCfCall(call.args) === "media-token-create",
+            );
+            assert.exists(mediaCall, "アクセスキーのトークンの作成が記録されていない");
+            assert.strictEqual(mediaCall!.env?.["CLOUDFLARE_ACCOUNT_ID"], accountId);
+            assert.notInclude(mediaCall!.args, "--expires-on");
+            assert.deepStrictEqual(JSON.parse(flagValue(mediaCall!.args, "--policies")!), [
+              {
+                effect: "allow",
+                permission_groups: [{ id: "2efd5506f9c8494dacb1fa10a3e7d5b6" }],
+                resources: {
+                  [`com.cloudflare.edge.r2.bucket.${accountId}_default_${bucket}`]: "*",
+                },
+              },
+            ]);
 
             // C12: environment.json はアカウント ID・bucket・秘密のブロック(2キー)だけを持ち、0600。
             const environmentPath = environmentPathOf(configRoot);
@@ -2201,10 +2273,7 @@ describe("nyaucast cloudflare --yes (create)", () => {
             },
             plan: () =>
               Effect.succeed({
-                rows: [
-                  { action: "create", kind: "bucket", resource: "Media" },
-                  { action: "create", kind: "account-api-token", resource: "MediaWriter" },
-                ],
+                rows: [{ action: "create", kind: "bucket", resource: "Media" }],
               } as unknown as ProvisioningPlan),
           }),
         ),
@@ -2267,10 +2336,8 @@ describe("nyaucast cloudflare --yes (create)", () => {
     "does not call apply again, and keeps environment.json unchanged, on a second run $name in the same process once applied",
     ({ secondArguments }) => {
       const adapter = fakeProvisioning({
-        accessKeyId: accessKeyIdSentinel,
         accountId,
         bucket,
-        secretAccessKey: secretAccessKeySentinel,
       });
       return withCreateFlow(
         "nyaucast-cloudflare-cli-unchanged-",
@@ -2309,8 +2376,13 @@ describe("nyaucast cloudflare --yes (create)", () => {
               readFileSync(environmentPathOf(configRoot), "utf8"),
               writtenAfterFirst,
             );
-            // デプロイ用トークンは消さない運用（R4）なので、2回目も改めて作る: cf は実行ごとに4回。
-            assert.strictEqual(cfCalls.length, 8);
+            // デプロイ用トークンは消さない運用（R4）なので、2回目も改めて作る。#851: 2回目の一覧には
+            // 1回目に作ったアクセスキーのトークンがあり、保存済みの R2_ACCESS_KEY_ID と一致するので、
+            // アクセスキーのトークンは作らない。
+            assert.deepStrictEqual(
+              cfCalls.slice(6).map((call) => classifyCfCall(call.args)),
+              ["whoami", "accounts-list", "r2-buckets-list", "tokens-list", "tokens-create"],
+            );
           }),
       );
     },
@@ -2320,10 +2392,8 @@ describe("nyaucast cloudflare --yes (create)", () => {
     "shows the plan but stops with CloudflareConfirmationRequired, without applying or writing, when --yes is omitted and the plan has changes",
     () => {
       const adapter = fakeProvisioning({
-        accessKeyId: accessKeyIdSentinel,
         accountId,
         bucket,
-        secretAccessKey: secretAccessKeySentinel,
       });
       return withCreateFlow(
         "nyaucast-cloudflare-cli-confirmation-required-",
@@ -2373,10 +2443,8 @@ describe("nyaucast cloudflare --yes (create)", () => {
           whoami: whoamiAuthenticated,
         },
         fakeProvisioning({
-          accessKeyId: accessKeyIdSentinel,
           accountId,
           bucket,
-          secretAccessKey: secretAccessKeySentinel,
         }),
         ({ cfCalls }) =>
           Effect.gen(function* () {
@@ -2389,7 +2457,7 @@ describe("nyaucast cloudflare --yes (create)", () => {
             assert.deepStrictEqual(logs, []);
             assertNothingLeaked(errors, ["CF_TOKEN_STDOUT_SENTINEL", "CF_TOKEN_STDERR_SENTINEL"]);
             for (const line of errors) assert.notMatch(line, /checkout|dash\.cloudflare\.com/iu);
-            assert.strictEqual(cfCalls.length, 4);
+            assert.strictEqual(cfCalls.length, 5);
           }),
       ),
   );
@@ -2404,10 +2472,8 @@ describe("nyaucast cloudflare --yes (create)", () => {
           whoami: whoamiAuthenticated,
         },
         fakeProvisioning({
-          accessKeyId: accessKeyIdSentinel,
           accountId,
           bucket,
-          secretAccessKey: secretAccessKeySentinel,
         }),
         ({ cfCalls }) =>
           Effect.gen(function* () {
@@ -2429,6 +2495,249 @@ describe("nyaucast cloudflare --yes (create)", () => {
 // issue #696 ARCH-001/AI-001/SEC-001: 親プロセスの環境が `cf` の認証元・実行対象を乗っ取れないこと
 // （`Cf` が子プロセス環境を1つ組む: 認証トークンの変数を除外し、委譲抑止を全呼び出しに添える）。
 // ============================================================================
+// ============================================================================
+// #851: アクセスキーのトークン（nyaucast-media-write）は、Alchemy ではなく nyaucast が cf の OAuth の
+// セッションで直接作る。plan は `cf accounts tokens list` の同名のトークンの ID と、保存済みの
+// R2_ACCESS_KEY_ID（1Password かファイル）を照らし合わせて unchanged / create を決め、トークンは
+// 確認の後の apply の中でだけ作る。
+// ============================================================================
+describe("nyaucast cloudflare access key token", () => {
+  const savedFileKeys = {
+    R2_ACCESS_KEY_ID: "SAVED_ACCESS_KEY_ID",
+    R2_SECRET_ACCESS_KEY: "SAVED_SECRET_ACCESS_KEY",
+  };
+  const scriptWithTokens = (tokens: ReadonlyArray<{ id: string; name: string }>): CfScript => ({
+    accountsList: accountsListResponse([{ id: accountId, name: accountName }]),
+    r2BucketsList: r2BucketsListSuccess,
+    tokens,
+    tokensCreate: tokensCreateSuccess(deployTokenSentinel),
+    whoami: whoamiAuthenticated,
+  });
+  const callKinds = (calls: ReadonlyArray<CfCall>) =>
+    calls.map((call) => classifyCfCall(call.args));
+  // bucket は作成済み（adapter の plan が unchanged）で、変わりうるのはアクセスキーのトークンだけにする。
+  const appliedAdapter = () => {
+    const adapter = fakeProvisioning({ accountId, bucket });
+    adapter.state.applied = true;
+    return adapter;
+  };
+
+  it.effect(
+    "keeps the saved file key as unchanged without creating a token when the listed token id matches it",
+    () => {
+      const adapter = appliedAdapter();
+      return withCreateFlow(
+        "nyaucast-access-key-token-unchanged-file-",
+        scriptWithTokens([
+          { id: "OTHER_TOKEN_ID", name: "unrelated" },
+          { id: savedFileKeys.R2_ACCESS_KEY_ID, name: mediaTokenName },
+        ]),
+        adapter,
+        ({ cfCalls, configRoot }) =>
+          Effect.gen(function* () {
+            writeEnvironment(configRoot, { ...createdEnvironment, secrets: savedFileKeys });
+            const before = readFileSync(environmentPathOf(configRoot), "utf8");
+
+            // --yes も TTY も無い: 全行が unchanged なら、確認なしで終わる。
+            const { logs, outcome } = yield* runCloudflare([]);
+
+            assert.strictEqual(outcome._tag, "Success");
+            assert.include(logs, "plan.accountApiToken=unchanged");
+            assert.notInclude(callKinds(cfCalls), "media-token-create");
+            assert.strictEqual(adapter.state.applyCalls, 0);
+            assert.strictEqual(readFileSync(environmentPathOf(configRoot), "utf8"), before);
+          }),
+      );
+    },
+  );
+
+  it.effect(
+    "keeps the saved 1Password key as unchanged without creating a token when the listed token id matches it",
+    () => {
+      const adapter = appliedAdapter();
+      const op = fakeR2OnePassword({
+        authentication: "authenticated",
+        existing: {
+          ...opItem("existing-r2"),
+          fields: [
+            {
+              id: "id-field",
+              label: "R2_ACCESS_KEY_ID",
+              type: "STRING",
+              value: "OP_ACCESS_KEY_ID",
+            },
+            {
+              id: "secret-field",
+              label: "R2_SECRET_ACCESS_KEY",
+              type: "CONCEALED",
+              value: "OP_SECRET",
+            },
+          ],
+        },
+      });
+      return withCreateFlow(
+        "nyaucast-access-key-token-unchanged-op-",
+        scriptWithTokens([{ id: "OP_ACCESS_KEY_ID", name: mediaTokenName }]),
+        adapter,
+        ({ cfCalls, configRoot }) =>
+          Effect.gen(function* () {
+            writeEnvironment(configRoot, createdEnvironment);
+            writeSecrets(configRoot, {
+              R2_ACCESS_KEY_ID: `op://${defaultVault.id}/existing-r2/id-field`,
+              R2_SECRET_ACCESS_KEY: `op://${defaultVault.id}/existing-r2/secret-field`,
+            });
+
+            const { logs, outcome } = yield* runCloudflare([]);
+
+            assert.strictEqual(outcome._tag, "Success");
+            assert.include(logs, "plan.accessKey=one_password");
+            assert.include(logs, "plan.accountApiToken=unchanged");
+            assert.notInclude(callKinds(cfCalls), "media-token-create");
+            assert.strictEqual(adapter.state.applyCalls, 0);
+          }),
+        {},
+        op,
+      );
+    },
+  );
+
+  it.effect.each([
+    { name: "no token with the name exists", tokens: [] },
+    {
+      name: "the token with the name does not match the saved key",
+      tokens: [{ id: "ANOTHER_TOKEN_ID", name: mediaTokenName }],
+    },
+    {
+      name: "only a differently named token has the saved id",
+      tokens: [{ id: "SAVED_ACCESS_KEY_ID", name: "nyaucast-cloudflare-deploy" }],
+    },
+  ])(
+    "plans create but does not create the token when confirmation is declined ($name)",
+    ({ tokens }) => {
+      const adapter = appliedAdapter();
+      return withCreateFlow(
+        "nyaucast-access-key-token-declined-",
+        scriptWithTokens(tokens),
+        adapter,
+        ({ cfCalls, configRoot }) =>
+          Effect.gen(function* () {
+            writeEnvironment(configRoot, { ...createdEnvironment, secrets: savedFileKeys });
+            const before = readFileSync(environmentPathOf(configRoot), "utf8");
+            const terminal = confirmationTerminal(true, "N");
+
+            const { logs, outcome } = yield* runCloudflare([], terminal);
+
+            assert.strictEqual(outcome._tag, "Success");
+            assert.include(logs, "plan.accountApiToken=create");
+            assert.strictEqual(terminal.state.prompts, 1);
+            // plan の段階でも、確認を拒んだ後でも、トークンは作らない。
+            assert.notInclude(callKinds(cfCalls), "media-token-create");
+            assert.strictEqual(adapter.state.applyCalls, 0);
+            assert.strictEqual(readFileSync(environmentPathOf(configRoot), "utf8"), before);
+          }),
+      );
+    },
+  );
+
+  it.effect(
+    "creates the token only in apply and replaces the saved file key with the key derived from it",
+    () => {
+      const adapter = appliedAdapter();
+      return withCreateFlow(
+        "nyaucast-access-key-token-recreate-",
+        scriptWithTokens([{ id: "ANOTHER_TOKEN_ID", name: mediaTokenName }]),
+        adapter,
+        ({ cfCalls, configRoot }) =>
+          Effect.gen(function* () {
+            writeEnvironment(configRoot, { ...createdEnvironment, secrets: savedFileKeys });
+
+            // 承認が要る失敗（非 TTY・--yes 無し）では作らず、--yes の再実行で作る。
+            const first = yield* runCloudflare([]);
+            assert.deepStrictEqual(failureFacts(failureOf(first.outcome)), {
+              _tag: "CloudflareConfirmationRequired",
+            });
+            assert.include(first.logs, "plan.accountApiToken=create");
+            assert.notInclude(callKinds(cfCalls), "media-token-create");
+
+            const second = yield* runCloudflare(["--yes"]);
+            assert.strictEqual(second.outcome._tag, "Success");
+            assert.deepStrictEqual(
+              callKinds(cfCalls).filter((kind) => kind === "media-token-create"),
+              ["media-token-create"],
+            );
+            assert.strictEqual(adapter.state.applyCalls, 1);
+            // ID = トークンの ID、secret = 値の SHA-256。古いトークンは消さない。
+            assert.deepStrictEqual(
+              JSON.parse(readFileSync(environmentPathOf(configRoot), "utf8")),
+              {
+                ...createdEnvironment,
+                secrets: secretsBlock,
+              },
+            );
+            assert.isUndefined(cfCalls.find((call) => call.args.includes("delete")));
+            assertNothingLeaked([...second.logs, ...second.errors], secretValues);
+          }),
+      );
+    },
+  );
+
+  it.effect(
+    "fails with CfCommandFailed carrying only the operation when cf accounts tokens list exits non-zero, before creating any token",
+    () => {
+      const adapter = fakeProvisioning({ accountId, bucket });
+      return withCreateFlow(
+        "nyaucast-access-key-token-list-failed-",
+        {
+          ...scriptWithTokens([]),
+          tokensList: { exitCode: 1, stdout: "CF_TOKEN_LIST_SENTINEL\n" },
+        },
+        adapter,
+        ({ cfCalls, configRoot }) =>
+          Effect.gen(function* () {
+            const { errors, outcome } = yield* runCloudflare(["--yes"]);
+
+            assert.deepStrictEqual(failureFacts(failureOf(outcome)), {
+              _tag: "CfCommandFailed",
+              operation: "token-list",
+            });
+            assertNothingLeaked(errors, ["CF_TOKEN_LIST_SENTINEL"]);
+            assert.notInclude(callKinds(cfCalls), "tokens-create");
+            assert.notInclude(callKinds(cfCalls), "media-token-create");
+            assert.deepStrictEqual(adapter.planInputs, []);
+            assert.deepStrictEqual(readdirSync(configRoot, { recursive: true }), []);
+          }),
+      );
+    },
+  );
+
+  it.effect(
+    "does not write environment.json when creating the access key token fails in apply",
+    () => {
+      const adapter = fakeProvisioning({ accountId, bucket });
+      return withCreateFlow(
+        "nyaucast-access-key-token-create-failed-",
+        {
+          ...scriptWithTokens([]),
+          mediaTokenCreate: { exitCode: 1, stdout: "CF_MEDIA_TOKEN_SENTINEL\n" },
+        },
+        adapter,
+        ({ configRoot, cfCalls }) =>
+          Effect.gen(function* () {
+            const { errors, outcome } = yield* runCloudflare(["--yes"]);
+
+            assert.deepStrictEqual(failureFacts(failureOf(outcome)), {
+              _tag: "CfCommandFailed",
+              operation: "token",
+            });
+            assert.include(callKinds(cfCalls), "media-token-create");
+            assertNothingLeaked(errors, ["CF_MEDIA_TOKEN_SENTINEL"]);
+            assert.isFalse(existsSync(environmentPathOf(configRoot)));
+          }),
+      );
+    },
+  );
+});
+
 describe("nyaucast cloudflare parent environment handling", () => {
   /** env に key が無いこと（値が undefined になっているだけの場合も区別して検出する）。 */
   const assertEnvKeyAbsent = (env: Record<string, string | undefined> | undefined, key: string) =>
@@ -2444,10 +2753,8 @@ describe("nyaucast cloudflare parent environment handling", () => {
           authCreate: { exitCode: Effect.succeed(1), released: { count: 0 } },
         },
         fakeProvisioning({
-          accessKeyId: accessKeyIdSentinel,
           accountId,
           bucket,
-          secretAccessKey: secretAccessKeySentinel,
         }),
         ({ cfCalls, configRoot }) =>
           Effect.gen(function* () {
@@ -2490,10 +2797,8 @@ describe("nyaucast cloudflare parent environment handling", () => {
         authCreate: { exitCode: Effect.succeed(1), released: { count: 0 } },
       },
       fakeProvisioning({
-        accessKeyId: accessKeyIdSentinel,
         accountId,
         bucket,
-        secretAccessKey: secretAccessKeySentinel,
       }),
       ({ cfCalls }) =>
         Effect.gen(function* () {
@@ -2517,10 +2822,8 @@ describe("nyaucast cloudflare parent environment handling", () => {
 
   it.effect("forwards look-alike parent environment entries to every cf call unchanged", () => {
     const adapter = fakeProvisioning({
-      accessKeyId: accessKeyIdSentinel,
       accountId,
       bucket,
-      secretAccessKey: secretAccessKeySentinel,
     });
     return withCreateFlow(
       "nyaucast-cloudflare-cli-parent-lookalike-",
@@ -2537,7 +2840,7 @@ describe("nyaucast cloudflare parent environment handling", () => {
           const { outcome } = yield* runCloudflare(["--yes"]);
 
           assert.strictEqual(outcome._tag, "Success");
-          assert.strictEqual(cfCalls.length, 4);
+          assert.strictEqual(cfCalls.length, 6);
           for (const call of cfCalls) {
             assert.strictEqual(call.env?.["CLOUDFLARE_API_TOKEN_FILE"], "/fake/token.txt");
             assert.strictEqual(call.env?.["MY_CF_API_TOKEN"], "OTHER");
@@ -2551,10 +2854,8 @@ describe("nyaucast cloudflare parent environment handling", () => {
     "lets the resolved account id win over a parent CLOUDFLARE_ACCOUNT_ID when creating the deploy token",
     () => {
       const adapter = fakeProvisioning({
-        accessKeyId: accessKeyIdSentinel,
         accountId,
         bucket,
-        secretAccessKey: secretAccessKeySentinel,
       });
       return withCreateFlow(
         "nyaucast-cloudflare-cli-parent-account-id-",
@@ -2583,10 +2884,8 @@ describe("nyaucast cloudflare parent environment handling", () => {
     "overrides an empty parent CF_DELEGATION so local-install delegation stays suppressed",
     () => {
       const adapter = fakeProvisioning({
-        accessKeyId: accessKeyIdSentinel,
         accountId,
         bucket,
-        secretAccessKey: secretAccessKeySentinel,
       });
       return withCreateFlow(
         "nyaucast-cloudflare-cli-parent-delegation-",
@@ -2603,7 +2902,7 @@ describe("nyaucast cloudflare parent environment handling", () => {
             const { outcome } = yield* runCloudflare(["--yes"]);
 
             assert.strictEqual(outcome._tag, "Success");
-            assert.strictEqual(cfCalls.length, 4);
+            assert.strictEqual(cfCalls.length, 6);
             for (const call of cfCalls) {
               assert.strictEqual(call.env?.["CF_DELEGATION"], "1");
             }
@@ -2653,10 +2952,8 @@ describe("nyaucast cloudflare account selection", () => {
   };
   const adapterForSelection = () =>
     fakeProvisioning({
-      accessKeyId: accessKeyIdSentinel,
       accountId: accounts[1]!.id,
       bucket,
-      secretAccessKey: secretAccessKeySentinel,
     });
   const assertCandidates = (output: string) => {
     for (const account of accounts) {
@@ -2985,18 +3282,19 @@ describe("nyaucast cloudflare account selection", () => {
 });
 
 describe("nyaucast cloudflare R2 access key storage", () => {
+  // Cloudflare には、保存済みのキー（secretsBlock・1Password の item）の元になったアクセスキーの
+  // トークンがすでにある。保存済みのキーが無い実行では、plan はそれでもトークンを作る（#851）。
   const script = {
     r2BucketsList: r2BucketsListSuccess,
     accountsList: accountsListResponse([{ id: accountId, name: accountName }]),
+    tokens: [{ id: accessKeyIdSentinel, name: mediaTokenName }],
     tokensCreate: tokensCreateSuccess(deployTokenSentinel),
     whoami: whoamiAuthenticated,
   };
   const adapterForStorage = () =>
     fakeProvisioning({
-      accessKeyId: accessKeyIdSentinel,
       accountId,
       bucket,
-      secretAccessKey: secretAccessKeySentinel,
     });
   const unrelated = { NYAUCAST_YOUTUBE_CLIENT_SECRET: "op://Other/YouTube/client_secret" };
   const referencesOf = (configRoot: string) =>

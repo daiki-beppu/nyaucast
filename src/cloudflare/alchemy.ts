@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import * as Alchemy from "alchemy";
 import { ArtifactStore, createArtifactStore } from "alchemy/Artifacts";
 import { CredentialsStoreLive, ProfileStoreLive } from "alchemy/Auth";
@@ -19,19 +17,20 @@ export class CloudflareProvisioningFailed extends Schema.TaggedError<CloudflareP
   { phase: Schema.Literals(["apply", "plan"]) },
 ) {}
 
-/** plan の 1 行。資源ごとに、作成・更新・変更なしのいずれか 1 つを持つ。 */
+/**
+ * plan の 1 行。資源ごとに、作成・更新・変更なしのいずれか 1 つを持つ。このアダプタが作るのは
+ * `bucket` の行だけで、`account-api-token` の行は `provision.ts` が `cf` の一覧から作る（#851）。
+ */
 export type ProvisioningPlanRow = {
   readonly action: "create" | "unchanged" | "update";
   readonly kind: "account-api-token" | "bucket";
   readonly resource: string;
 };
 
-/** apply の結果。R2 の S3 互換 API を使うのに必要な 4 値。 */
+/** apply の結果。アクセスキーは含まない（#851: `provision.ts` が `cf` で作る）。 */
 export type ProvisioningResult = {
-  readonly accessKeyId: string;
   readonly accountId: string;
   readonly bucket: string;
-  readonly secretAccessKey: Redacted.Redacted<string>;
 };
 
 /** 資源の宣言そのもの。Alchemy の型を外に出さず、宣言だけを観測するための形。 */
@@ -57,19 +56,11 @@ type ProvisioningPlatform =
   | HttpClient.HttpClient
   | Path.Path;
 
-/** 宣言が解決されたあとに Alchemy が返す値。 */
-type ResolvedDeclaration = {
-  readonly accessKeyId: string;
-  readonly accountId: string;
-  readonly bucket: string;
-  readonly tokenValue: Redacted.Redacted<string>;
-};
-
 /**
  * ハンドルが抱えるもの。plan の時点で文脈を与え終えた「この plan を適用する Effect」そのもので、
  * 実行に足りないものは残っていない。apply が差分や認証をやり直せる余地を型から消す。
  */
-type PreparedPlan = Effect.Effect<ResolvedDeclaration, CloudflareProvisioningFailed>;
+type PreparedPlan = Effect.Effect<ProvisioningResult, CloudflareProvisioningFailed>;
 
 // ハンドルの中身はこの symbol の下にだけ置く。symbol を export しないので、モジュールの外からは
 // 構成も読み取りもできない（plan が返したものだけが apply に渡せる）。
@@ -84,16 +75,15 @@ export type ProvisioningPlan = {
   readonly rows: ReadonlyArray<ProvisioningPlanRow>;
 };
 
-/** bucket 名。plan の表示（issue #696）が、宣言とずれずに同じ値を出すために export する。 */
+/**
+ * bucket 名。plan の表示（issue #696）と、アクセスキーのトークンの policy（#851）が、宣言とずれずに
+ * 同じ値を使うために export する。
+ */
 export const bucketName = "nyaucast-media";
-const tokenName = "nyaucast-media-write";
 const lifecycleRuleId = "nyaucast-delete-objects-after-7-days";
 /** 7 日。ADR-0012 と issue #695 の決定。plan の表示（issue #696）と秒の定数の両方がここから導出する。 */
 export const bucketRetentionDays = 7;
 const objectMaxAgeSeconds = bucketRetentionDays * 24 * 60 * 60;
-/** bucket の宣言は jurisdiction を指定しないので、Cloudflare の既定が入る。 */
-const bucketJurisdiction = "default";
-const permissionGroup = "Workers R2 Storage Bucket Item Write";
 const stackName = "nyaucast";
 const stageName = "default";
 /** state の置き場は configRoot のこのディレクトリの下（ADR-0012 決定 8）。 */
@@ -102,17 +92,10 @@ const stateDirectoryMode = 0o700;
 const stateFileMode = 0o600;
 
 /**
- * policy を bucket 1 つに絞る resource キー。Cloudflare の R2 の文書が
- * `com.cloudflare.edge.r2.bucket.<ACCOUNT_ID>_<JURISDICTION>_<BUCKET_NAME>` と定めている
- * （https://developers.cloudflare.com/r2/api/tokens/ ）。アカウント全体を指す
- * `com.cloudflare.api.account.<id>` や `com.cloudflare.edge.r2.bucket.*` は使わない。
- */
-const bucketResourceKey = (accountId: string) =>
-  `com.cloudflare.edge.r2.bucket.${accountId}_${bucketJurisdiction}_${bucketName}`;
-
-/**
- * 利用者の Cloudflare 環境の宣言。bucket と `AccountApiToken` の 2 本だけで、どちらも `retain`
- * （destroy の操作は作らない。ADR-0012 決定 5）。plan / apply と観測の口はこの 1 つの宣言を通る。
+ * 利用者の Cloudflare 環境のうち、Alchemy が持つものの宣言。bucket（とライフサイクルルール）の
+ * 1 本だけで、`retain` を付ける（destroy の操作は作らない。ADR-0012 決定 5）。アクセスキーの元の
+ * トークンは、OAuth のセッションから作れる `cf` の側で作る（ADR-0012 決定 1・6、#851）。plan /
+ * apply と観測の口はこの 1 つの宣言を通る。
  */
 const declareEnvironment = (accountId: string) =>
   Effect.gen(function* () {
@@ -128,24 +111,7 @@ const declareEnvironment = (accountId: string) =>
       name: bucketName,
     }).pipe(Alchemy.RemovalPolicy.retain());
 
-    const token = yield* Cloudflare.ApiToken.AccountApiToken("MediaWriter", {
-      accountId,
-      name: tokenName,
-      policies: [
-        {
-          effect: "allow",
-          permissionGroups: [permissionGroup],
-          resources: { [bucketResourceKey(accountId)]: "*" },
-        },
-      ],
-    }).pipe(Alchemy.RemovalPolicy.retain());
-
-    return {
-      accessKeyId: token.tokenId,
-      accountId: token.accountId,
-      bucket: bucket.bucketName,
-      tokenValue: token.value,
-    };
+    return { accountId, bucket: bucket.bucketName };
   });
 
 const toDeclaredResource = (resource: Alchemy.ResourceLike): DeclaredResource => ({
@@ -194,9 +160,8 @@ const foldedActions: Record<
 };
 
 // 資源の種別は Alchemy の resourceType（宣言した Resource 関数の第一引数）から決める。論理 ID
-// （"Media" / "MediaWriter"）の照合表は使わない。宣言を変えたときに表示が黙って壊れるため。
+// （"Media"）の照合表は使わない。宣言を変えたときに表示が黙って壊れるため。
 const kindOfResourceType: Record<string, ProvisioningPlanRow["kind"] | undefined> = {
-  "Cloudflare.ApiToken.AccountApiToken": "account-api-token",
   "Cloudflare.R2.Bucket": "bucket",
 };
 
@@ -281,9 +246,6 @@ const deployCredentials = (input: ProvisioningInput) =>
     },
   });
 
-const secretAccessKeyOf = (tokenValue: Redacted.Redacted<string>) =>
-  Redacted.make(createHash("sha256").update(Redacted.value(tokenValue)).digest("hex"));
-
 /**
  * 空文字の `accountId` / `deployToken` を Alchemy へ渡す前に落とす。Alchemy は環境値を空文字＝
  * 未設定として扱い（`alchemy/src/Auth/AuthProvider.ts` の `presentEnvironment`）、必須値が無いと
@@ -360,13 +322,7 @@ const makeCloudflareProvisioning = (configRoot: string) =>
         return { [prepared]: ready.applied, rows };
       }).pipe(Effect.mapError(() => new CloudflareProvisioningFailed({ phase: "plan" })));
 
-    const apply = (handle: ProvisioningPlan) =>
-      Effect.map(handle[prepared], (resolved) => ({
-        accessKeyId: resolved.accessKeyId,
-        accountId: resolved.accountId,
-        bucket: resolved.bucket,
-        secretAccessKey: secretAccessKeyOf(resolved.tokenValue),
-      }));
+    const apply = (handle: ProvisioningPlan) => handle[prepared];
 
     return CloudflareProvisioning.of({ apply, plan });
   });
