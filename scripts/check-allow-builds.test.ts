@@ -5,13 +5,13 @@ import { findUnlistedBuilds } from "./check-allow-builds.ts";
 const workspace = (keys: readonly string[]) =>
   `allowBuilds:\n${keys.map((key) => `  ${key}: true`).join("\n")}\npmOnFail: ignore\n`;
 
-const readme = (keys: readonly string[]) =>
+const readme = (keys: readonly string[], allowed = false) =>
   [
     "## チャンネルリポへの導入",
     "",
     "```yaml",
     "allowBuilds:",
-    ...keys.map((key) => `  ${key}: false`),
+    ...keys.map((key) => `  ${key}: ${allowed}`),
     "```",
     "",
   ].join("\n");
@@ -42,5 +42,14 @@ describe("findUnlistedBuilds", () => {
       .join("\n");
 
     expect(findUnlistedBuilds(workspace(["core-js", "node-av", "workerd"]), steps)).toEqual([]);
+  });
+
+  test("does not count a key the README allows as denied", () => {
+    expect(
+      findUnlistedBuilds(
+        workspace(["core-js", "node-av", "workerd"]),
+        readme(["core-js", "node-av", "workerd"], true),
+      ),
+    ).toEqual(["core-js", "node-av", "workerd"]);
   });
 });
