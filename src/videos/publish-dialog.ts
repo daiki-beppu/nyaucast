@@ -1,6 +1,7 @@
 import { Console, Effect } from "effect";
 import { Prompt } from "effect/cli";
 
+import { authStatusLine, authStatusRow } from "../auth/status.ts";
 import { ChannelSettings } from "../channel/channel-settings.ts";
 import { shortCutNames } from "../db/explainer-cuts.ts";
 import type { PostDraft } from "../db/explainer-post-drafts.ts";
@@ -27,10 +28,10 @@ const draftLine = (draft: PostDraft) => {
 const cutLine = (cut: PublishPreparation["cuts"][number]) =>
   `  ${cut.cut} 書き出し: ${cut.exportKey ?? "なし"} / プレビュー: ${cut.previewDirectory ?? "なし"}`;
 
-// auth status と同じ並び（チャンネル・SNS・handle・不変の ID・認証の状態）。
+// auth status と同じ行（authStatusLine）。
 const accountLine = (view: AccountView) =>
   "account" in view
-    ? `  ${[view.account.channel, view.platform, view.account.handle, view.account.id, view.state].join(" ")}`
+    ? `  ${authStatusLine(authStatusRow(view.account, view.credential, view.state))}`
     : `  ${view.platform} 宣言なし`;
 
 // 表示するのは事実だけ。ファイルは開かない。

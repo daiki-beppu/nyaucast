@@ -3,7 +3,7 @@ import { Argument, Command } from "effect/cli";
 
 import { platforms } from "./account-key.ts";
 import { authenticateAccount } from "./authenticate.ts";
-import { authStatus } from "./status.ts";
+import { authStatus, authStatusLine } from "./status.ts";
 
 const description = [
   "SNS のアカウントを認証する。`nyaucast auth <channel> <platform>` でブラウザの認可を行い、`nyaucast auth status [<channel>]` で状態を見る。",
@@ -21,11 +21,7 @@ const status = Command.make(
   { channel: Argument.String("channel").pipe(Argument.optional) },
   ({ channel }) =>
     authStatus(Option.getOrUndefined(channel)).pipe(
-      Effect.flatMap((rows) =>
-        Effect.forEach(rows, (row) =>
-          Console.log([row.channel, row.platform, row.handle, row.id, row.state].join(" ")),
-        ),
-      ),
+      Effect.flatMap((rows) => Effect.forEach(rows, (row) => Console.log(authStatusLine(row)))),
     ),
 );
 

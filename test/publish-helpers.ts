@@ -221,12 +221,18 @@ export const storeAllTokens = (channelRoot: string) =>
 export const credentialStoreLayer = (credentialRoot: string) =>
   CredentialStore.layer({ credentialRoot }).pipe(Layer.provide(NodeServices.layer));
 
-/** `nyaucast auth status` が 1 アカウントについて出す行と同じ形。 */
-export const authStatusLine = (
+/** `nyaucast auth status` が 1 アカウントについて出す行と同じ形。expiry は期限の ISO 8601 の UTC か -。 */
+export const expectedAuthStatusLine = (
   channelRoot: string,
   platform: "instagram" | "x" | "youtube",
   state: "expiring" | "refresh_failed" | "unauthenticated" | "valid",
+  expiry: string,
 ) =>
-  [channelNameOf(channelRoot), platform, `@nyaucast-${platform}`, `${platform}-id`, state].join(
-    " ",
-  );
+  [
+    channelNameOf(channelRoot),
+    platform,
+    `@nyaucast-${platform}`,
+    `${platform}-id`,
+    state,
+    expiry,
+  ].join(" ");
