@@ -244,8 +244,9 @@ const accessKeyRowOf = (reusedAccessKey: Option.Option<AccessKey>): Provisioning
   resource: accessKeyTokenName,
 });
 
+// 未ログインか、必要なスコープが欠けていれば再認証する（ADR-0012 決定 10、#854）。
 const ensureAuthenticated = (cf: Cf["Service"]) =>
-  Effect.flatMap(cf.whoami, (authenticated) => (authenticated ? Effect.void : cf.authenticate));
+  Effect.flatMap(cf.whoami, (ready) => (ready ? Effect.void : cf.authenticate));
 
 const applyAndWrite = (
   cf: Cf["Service"],

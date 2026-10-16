@@ -1051,11 +1051,21 @@ const fakeCf = (script: CfScript, op: ReturnType<typeof fakeR2OnePassword>) => {
 };
 
 // 実物の `cf auth whoami`（cf@1.0.0-beta.12、vp install 後の node_modules で直接実行して確認）は、
-// ログインの有無にかかわらず終了コード 0 で、JSON の `authenticated` が状態を表す。
-const whoamiAuthenticated: CfResponse = {
+// ログインの有無にかかわらず終了コード 0 で、JSON の `authenticated` が状態を表す。OAuth のログインでは
+// `scopes` に持っているスコープの配列が入る（#854 のトリアージで確認。`offline_access` は cf が足す）。
+const whoamiWith = (fields: Record<string, unknown>): CfResponse => ({
   exitCode: 0,
-  stdout: `${JSON.stringify({ accounts: [], authSource: "test fixture", authenticated: true, tokenValid: true })}\n`,
-};
+  stdout: `${JSON.stringify({ accounts: [], authSource: "test fixture", tokenValid: true, ...fields })}\n`,
+});
+const whoamiAuthenticated = whoamiWith({
+  authenticated: true,
+  scopes: [
+    "offline_access",
+    "workers-r2.write",
+    "workers-r2-bucket-item.write",
+    "account_api_tokens:create",
+  ],
+});
 const whoamiNotAuthenticated: CfResponse = {
   exitCode: 0,
   stdout: `${JSON.stringify({ authenticated: false, error: "Not logged in" })}\n`,
@@ -1278,6 +1288,55 @@ describe("nyaucast cloudflare authentication", () => {
       }),
   );
 
+  // #851 より前に作った専用プロファイルは、ログイン済みでも `workers-r2-bucket-item.write` を持たない。
+  // 確認の後の apply でアクセスキーのトークン作成が失敗しないよう、plan の前に再認証する（#854）。
+  it.effect.each([
+    {
+      name: "a profile created before #851 lacks workers-r2-bucket-item.write",
+      whoami: whoamiWith({
+        authenticated: true,
+        scopes: ["offline_access", "workers-r2.write", "account_api_tokens:create"],
+      }),
+    },
+    {
+      name: "whoami reports no scopes",
+      whoami: whoamiWith({ authenticated: true }),
+    },
+  ])("re-authenticates once before plan when $name", ({ whoami }) => {
+    const adapter = adapterForAuthentication();
+    return withCreateFlow(
+      "nyaucast-authentication-scopes-",
+      {
+        ...authenticatedScript,
+        whoami,
+        authCreate: { exitCode: Effect.succeed(0), released: { count: 0 } },
+      },
+      adapter,
+      ({ cfCalls }) =>
+        Effect.gen(function* () {
+          const { outcome } = yield* runCloudflare([]);
+          assert.deepStrictEqual(failureFacts(failureOf(outcome)), {
+            _tag: "CloudflareConfirmationRequired",
+          });
+          assert.deepStrictEqual(
+            cfCalls.map((call) => classifyCfCall(call.args)),
+            [
+              "whoami",
+              "auth-create",
+              "accounts-list",
+              "r2-buckets-list",
+              "tokens-list",
+              "tokens-create",
+            ],
+          );
+          assert.deepStrictEqual(
+            adapter.planInputs.map((input) => input.accountId),
+            [accountId],
+          );
+        }),
+    );
+  });
+
   it.effect(
     "inherits all three authentication streams and excludes parent tokens without activating a profile",
     () => {
@@ -1435,31 +1494,35 @@ describe("nyaucast cloudflare authentication", () => {
       }),
   );
 
-  it.effect("does not start authentication for an already authenticated profile", () => {
-    const adapter = adapterForAuthentication();
-    return withCreateFlow(
-      "nyaucast-authentication-already-",
-      authenticatedScript,
-      adapter,
-      ({ cfCalls }) =>
-        Effect.gen(function* () {
-          const { outcome } = yield* runCloudflare(["--yes"]);
-          assert.strictEqual(outcome._tag, "Success");
-          assert.deepStrictEqual(
-            cfCalls.map((call) => classifyCfCall(call.args)),
-            [
-              "whoami",
-              "accounts-list",
-              "r2-buckets-list",
-              "tokens-list",
-              "tokens-create",
-              "media-token-create",
-            ],
-          );
-          assert.lengthOf(adapter.planInputs, 1);
-        }),
-    );
-  });
+  // `whoamiAuthenticated` は必要な 3 つのスコープに cf が足す `offline_access` を加えた出力（#854）。
+  it.effect(
+    "does not start authentication for an authenticated profile that has every required scope",
+    () => {
+      const adapter = adapterForAuthentication();
+      return withCreateFlow(
+        "nyaucast-authentication-already-",
+        authenticatedScript,
+        adapter,
+        ({ cfCalls }) =>
+          Effect.gen(function* () {
+            const { outcome } = yield* runCloudflare(["--yes"]);
+            assert.strictEqual(outcome._tag, "Success");
+            assert.deepStrictEqual(
+              cfCalls.map((call) => classifyCfCall(call.args)),
+              [
+                "whoami",
+                "accounts-list",
+                "r2-buckets-list",
+                "tokens-list",
+                "tokens-create",
+                "media-token-create",
+              ],
+            );
+            assert.lengthOf(adapter.planInputs, 1);
+          }),
+      );
+    },
+  );
 
   it.effect("can authenticate on rerun after a failed attempt with the same services", () => {
     const adapter = adapterForAuthentication();
