@@ -22,6 +22,27 @@ lockfile と `package.json` の乖離は check の最初のゲートが検出す
 
 全ゲートの入口は `pnpm run check`。ゲートの構成は `package.json` の `check` script だけが定義する。
 
+## チャンネルリポへの導入
+
+チャンネルのリポには、nyaucast を版を固定した devDependency として入れます（ADR-0010 決定 2）。pnpm v12 は、承認されていない build script を持つ依存があると `pnpm add` を失敗させるので、先に拒否を明示します。
+
+1. チャンネルのリポの `pnpm-workspace.yaml` に次を書きます。
+
+   ```yaml
+   allowBuilds:
+     core-js: false
+     node-av: false
+     workerd: false
+   ```
+
+2. 版を指定して入れます。
+
+   ```sh
+   pnpm add -D --save-exact nyaucast@<版>
+   ```
+
+3 つの build script は、nyaucast の実行に要りません。node-av の postinstall は ffmpeg の CLI を落とすだけで（nyaucast は binding だけを使う）、core-js は案内を表示するだけ、workerd は Workers をローカルで動かすときの実行時です。
+
 ## Cloudflare 環境を作る
 
 Instagram へ動画を渡すための R2 環境を、自分の Cloudflare アカウントに作ります。環境は全チャンネルで共有するので、コマンドにチャンネル名は指定しません。
