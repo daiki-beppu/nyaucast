@@ -30,7 +30,7 @@ import {
 import {
   addShort,
   approve,
-  authStatusLine,
+  expectedAuthStatusLine,
   channelNameOf,
   credentialStoreLayer,
   exportCut,
@@ -428,10 +428,11 @@ describe("nyaucast video publish <id> on an explainer channel: what it shows", (
           ]) {
             assert.isAbove(shown(fragment).length, 0, `the draft ${fragment}`);
           }
+          const lines = logs.map((line) => line.trim());
           for (const platform of ["youtube", "instagram", "x"] as const) {
-            assert.isAbove(
-              shown(authStatusLine(channelRoot, platform, "valid")).length,
-              0,
+            assert.include(
+              lines,
+              expectedAuthStatusLine(channelRoot, platform, "valid", "2030-01-01T00:00:00.000Z"),
               `the account of ${platform}`,
             );
           }
@@ -448,9 +449,9 @@ describe("nyaucast video publish <id> on an explainer channel: what it shows", (
         const { logs, outcome } = yield* runPublish({ script: everyScriptedChoice });
 
         assert.strictEqual(outcome._tag, "Success");
-        assert.isAbove(
-          logs.filter((line) => line.includes(authStatusLine(channelRoot, "x", "expiring"))).length,
-          0,
+        assert.include(
+          logs.map((line) => line.trim()),
+          expectedAuthStatusLine(channelRoot, "x", "expiring", "2026-10-04T15:01:00.000Z"),
         );
         assert.strictEqual((yield* createdPosts).length, standardPosts.length);
       }),

@@ -89,13 +89,16 @@ function runAuth(
   paths: Workspace,
   arguments_: string[],
   options: {
+    credentials?: Record<string, unknown>;
     env?: Record<string, string>;
     identity?: string;
     instagramId?: string;
     xId?: string;
   } = {},
 ) {
-  const authorize = vi.fn(() => Effect.succeed({ credentials: authorizedToken }));
+  const authorize = vi.fn(() =>
+    Effect.succeed({ credentials: options.credentials ?? authorizedToken }),
+  );
   const spawner = fakeSpawner({ exitCode: 1, stdout: "" });
   const store = CredentialStore.layer({ credentialRoot: paths.credentialRoot }).pipe(
     Layer.provide(NodeServices.layer),
@@ -412,7 +415,7 @@ describe("nyaucast auth <channel> <platform>", () => {
         const { logs } = yield* runAuth(paths, ["status"]);
 
         assert.deepStrictEqual(statusLines(logs), [
-          [channel, "youtube", "@deepfocus365", "UC_A", "unauthenticated"],
+          [channel, "youtube", "@deepfocus365", "UC_A", "unauthenticated", "-"],
         ]);
       }),
     );
@@ -460,6 +463,26 @@ describe("nyaucast auth <channel> <platform>", () => {
 });
 
 describe("nyaucast auth status", () => {
+  // 寿命 7 日の refresh token（同意画面が「テスト」の Google のアプリ）は、認証した直後から expiring になる。
+  it.effect(
+    "shows a just-authenticated 7-day YouTube token as expiring, with its expiry in UTC",
+    () =>
+      Effect.gen(function* () {
+        const root = yield* temporaryDirectory("nyaucast-auth-cli-status-seven-days-");
+        const paths = workspace(root, { [channel]: { handle: "@deepfocus365", id: "UC_A" } });
+        yield* TestClock.setTime(Date.parse("2029-06-01T00:00:00.000Z"));
+
+        yield* runAuth(paths, [channel, "youtube"], {
+          credentials: { ...authorizedToken, refresh_token_expires_in: 604_799 },
+        });
+        const { logs } = yield* runAuth(paths, ["status"]);
+
+        assert.deepStrictEqual(statusLines(logs), [
+          [channel, "youtube", "@deepfocus365", "UC_A", "expiring", "2029-06-07T23:59:59.000Z"],
+        ]);
+      }),
+  );
+
   it.effect(
     "shows each of the four states for one declared account as time and the credential change",
     () =>
@@ -470,7 +493,9 @@ describe("nyaucast auth status", () => {
         yield* TestClock.setTime(now);
         const stateNow = () =>
           runAuth(paths, ["status"]).pipe(Effect.map(({ logs }) => statusLines(logs)));
-        const line = (state: string) => [[channel, "youtube", "@deepfocus365", "UC_A", state]];
+        const line = (state: string, expiry = "2029-06-09T00:00:00.000Z") => [
+          [channel, "youtube", "@deepfocus365", "UC_A", state, expiry],
+        ];
 
         const unauthenticated = yield* stateNow();
         seedCredential(paths, channel, credentialEnvelope({ expiresAt: now + 8 * day }));
@@ -484,11 +509,40 @@ describe("nyaucast auth status", () => {
         );
         const refreshFailed = yield* stateNow();
 
-        assert.deepStrictEqual(unauthenticated, line("unauthenticated"));
+        assert.deepStrictEqual(unauthenticated, line("unauthenticated", "-"));
         assert.deepStrictEqual(valid, line("valid"));
         assert.deepStrictEqual(expiring, line("expiring"));
         assert.deepStrictEqual(refreshFailed, line("refresh_failed"));
       }),
+  );
+
+  it.effect.each([
+    {
+      name: "a token without an expiry",
+      credential: credentialEnvelope(),
+      state: "valid",
+    },
+    {
+      name: "a token of another account than the declared one, even with an expiry",
+      credential: credentialEnvelope({
+        accountId: "UC_B",
+        expiresAt: Date.parse("2029-06-03T00:00:00.000Z"),
+      }),
+      state: "unauthenticated",
+    },
+  ])("shows - as the expiry of $name", ({ credential, state }) =>
+    Effect.gen(function* () {
+      const root = yield* temporaryDirectory("nyaucast-auth-cli-status-no-expiry-");
+      const paths = workspace(root, { [channel]: { handle: "@deepfocus365", id: "UC_A" } });
+      yield* TestClock.setTime(Date.parse("2029-06-01T00:00:00.000Z"));
+      seedCredential(paths, channel, credential);
+
+      const { logs } = yield* runAuth(paths, ["status"]);
+
+      assert.deepStrictEqual(statusLines(logs), [
+        [channel, "youtube", "@deepfocus365", "UC_A", state, "-"],
+      ]);
+    }),
   );
 
   it.effect(
@@ -532,9 +586,16 @@ describe("nyaucast auth status", () => {
         const { logs } = yield* runAuth(paths, ["status"]);
 
         assert.deepStrictEqual(statusLines(logs), [
-          [channel, "youtube", "@deepfocus365", "UC_A", "unauthenticated"],
-          [channel, "instagram", "deepfocus_ig", instagram.accountId, "valid"],
-          [channel, "x", "@deepfocus_x", x.accountId, "refresh_failed"],
+          [channel, "youtube", "@deepfocus365", "UC_A", "unauthenticated", "-"],
+          [
+            channel,
+            "instagram",
+            "deepfocus_ig",
+            instagram.accountId,
+            "valid",
+            "2029-07-01T00:00:00.000Z",
+          ],
+          [channel, "x", "@deepfocus_x", x.accountId, "refresh_failed", "-"],
         ]);
       }),
   );
@@ -553,8 +614,8 @@ describe("nyaucast auth status", () => {
         const { logs } = yield* runAuth(paths, ["status"]);
 
         assert.deepStrictEqual(statusLines(logs), [
-          ["deepfocus365", "youtube", "@deepfocus365", "UC_A", "unauthenticated"],
-          ["sleepmusic", "youtube", "@sleepmusic", "UC_B", "unauthenticated"],
+          ["deepfocus365", "youtube", "@deepfocus365", "UC_A", "unauthenticated", "-"],
+          ["sleepmusic", "youtube", "@sleepmusic", "UC_B", "unauthenticated", "-"],
         ]);
       }),
     );
@@ -567,7 +628,7 @@ describe("nyaucast auth status", () => {
         const { logs } = yield* runAuth(paths, ["status", "sleepmusic"]);
 
         assert.deepStrictEqual(statusLines(logs), [
-          ["sleepmusic", "youtube", "@sleepmusic", "UC_B", "unauthenticated"],
+          ["sleepmusic", "youtube", "@sleepmusic", "UC_B", "unauthenticated", "-"],
         ]);
       }),
     );
