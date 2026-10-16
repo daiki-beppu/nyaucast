@@ -94,7 +94,7 @@ export const ExplainerVideoRenderCutTool = Tool.make("video_render_cut", {
 // ---- エンコードの設定（tool の定数。設定には出さない） ----
 
 /** 処理の版。書き出しの手順を変えたら上げる（render の鍵に入る）。 */
-const processVersion = 1;
+const processVersion = 2;
 const encoding = {
   audioBitrate: 192_000,
   audioCodec: "aac",
@@ -151,6 +151,7 @@ const renderMp4 = (videoId: string, composition: Uint8Array, key: string, track:
         audioBitrate: encoding.audioBitrate,
         audioSource: track,
         fps: encoding.fps,
+        frameCount: capture.count,
         frames: capture.frames,
         outputPath,
         videoBitrate: encoding.videoBitrate,
