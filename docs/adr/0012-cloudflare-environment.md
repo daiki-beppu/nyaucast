@@ -2,7 +2,7 @@
 
 ## Status
 
-accepted (2026-10-05 / #652。map #648) / 改訂 2026-10-06（#653。Alchemy の state の置き場と単位を決め、決定 8 を追加。Consequences の「置き場は #653 で決める」を改める） / 改訂 2026-10-06（#654。apply が書くものと、1Password を使わない利用者へのアクセスキーの渡し方を決め、決定 9 を追加。決定 3 の「永続させる場所は #654 で決める」を改める） / 改訂 2026-10-06（#667。Cloudflare 環境を作るコマンドの形を決め、決定 10 を追加する） / 改訂 2026-10-14（#700。決定 2・10 の専用プロファイル認証を固定版 cf の auth create と配列スコープに合わせる） / 改訂 2026-10-15（#851。`cf` の OAuth のセッションは「Account API Tokens Write」を含むトークンを作れないので、アクセスキーのトークンを Alchemy の宣言から外して nyaucast が `cf` で作る。決定 1・2・6・8・9・10 と Why・Considered Options・Consequences を改める）
+accepted (2026-10-05 / #652。map #648) / 改訂 2026-10-06（#653。Alchemy の state の置き場と単位を決め、決定 8 を追加。Consequences の「置き場は #653 で決める」を改める） / 改訂 2026-10-06（#654。apply が書くものと、1Password を使わない利用者へのアクセスキーの渡し方を決め、決定 9 を追加。決定 3 の「永続させる場所は #654 で決める」を改める） / 改訂 2026-10-06（#667。Cloudflare 環境を作るコマンドの形を決め、決定 10 を追加する） / 改訂 2026-10-14（#700。決定 2・10 の専用プロファイル認証を固定版 cf の auth create と配列スコープに合わせる） / 改訂 2026-10-15（#851。`cf` の OAuth のセッションは「Account API Tokens Write」を含むトークンを作れないので、アクセスキーのトークンを Alchemy の宣言から外して nyaucast が `cf` で作る。決定 1・2・6・8・9・10 と Why・Considered Options・Consequences を改める） / 改訂 2026-10-16（#854。専用プロファイルが必要なスコープを欠くときも再認証する。決定 10 と Consequences を改める）
 
 ## Context
 
@@ -38,7 +38,7 @@ Instagram へ投稿するには、動画を R2 に置いて URL で渡す必要�
    - 置き場は常に 1 つに保つ。ファイルで運用していた利用者が `op` を入れると、次の apply で 1Password に移し、ファイルの秘密のブロックを消す。`secrets.json` に R2 の参照があるのに `op whoami` が失敗したときは、ファイルへ移さずにエラーで止め、サインインを促す。1Password をやめる利用者は、`secrets.json` から R2 の参照を消す（案内に書く）
 10. **Cloudflare 環境は `nyaucast cloudflare` で作る。**（改訂 2026-10-06 / #667）
     - `nyaucast cloudflare` は、plan・確認・apply を 1 回で行う。チャンネルを引数に取らない（決定 8）。`nyaucast cloudflare status` は、`environment.json` と `secrets.json` だけを読み、作成済みかと、アカウント・bucket・アクセスキーの置き場を表示する。ネットワークに出ない
-    - `cf` のログインは nyaucast が起こす。nyaucast 専用の `cf` のプロファイルで `cf auth whoami` を確かめ、未ログインなら、`cf auth create nyaucast --scopes workers-r2.write workers-r2-bucket-item.write account_api_tokens:create` を子プロセスで起こす。専用名は位置引数、3 つのスコープは独立した引数として渡し、認証には `--profile` を付けず、`auth activate` も呼ばない。標準入力・標準出力・標準エラーを引き継ぐので、device flow の URL とコードがそのまま表示される。認証成功を待ち、同じ CLI 実行で plan に進む。起動失敗・非 0 終了では型付きの失敗で止め、親 Effect の中断は構造化された中断として維持し、scope が子プロセスを回収する。認証にも依存の実行ファイル解決・親環境の認証トークン除外・CF_DELEGATION による委譲抑止を使う。利用者がほかの用途で使う `cf` のログインには触れない
+    - `cf` のログインは nyaucast が起こす。nyaucast 専用の `cf` のプロファイルで `cf auth whoami` を確かめ、未ログインか、`whoami` の `scopes` に 3 つのスコープのどれかが欠けていれば（`scopes` が無い出力は 1 つも持たないとみなす）、`cf auth create nyaucast --scopes workers-r2.write workers-r2-bucket-item.write account_api_tokens:create` を子プロセスで起こす。専用名は位置引数、3 つのスコープは独立した引数として渡し、認証には `--profile` を付けず、`auth activate` も呼ばない。標準入力・標準出力・標準エラーを引き継ぐので、device flow の URL とコードがそのまま表示される。認証成功を待ち、同じ CLI 実行で plan に進む。起動失敗・非 0 終了では型付きの失敗で止め、親 Effect の中断は構造化された中断として維持し、scope が子プロセスを回収する。認証にも依存の実行ファイル解決・親環境の認証トークン除外・CF_DELEGATION による委譲抑止を使う。利用者がほかの用途で使う `cf` のログインには触れない
     - plan には、資源ごとの作成・更新・変更なし、対象のアカウント、アクセスキーの書き先（決定 9）を出す。TTY では `y/N` で確認する。TTY が無く `--yes` も無いときは、plan を出して、確認が要ることを示す専用の非 0 の終了コードで止める。plan だけを見るフラグ（`--dry-run`）は置かない
     - 人間にしかできない手順は、plan の前に検出して案内する。ログインしてもアカウントが見つからないときと、R2 が購入されていないときは、ダッシュボードの URL と次の手順を出して止め、済んだら再実行してもらう。案内では「checkout を完了する」とだけ書き、支払い情報が要るとは断定しない（#650）
     - アカウントが 1 つならそれを使う。複数あれば、TTY では選ばせ、TTY が無ければ `--account <id>` を必須にする。選んだ ID は `environment.json` に記録し、再実行ではそれを使う。記録と違う `--account` は拒む（v0.1 では 1 人の利用者につき 1 アカウント。決定 8）
@@ -70,6 +70,6 @@ Instagram へ投稿するには、動画を R2 に置いて URL で渡す必要�
 
 - Alchemy の内部の Layer に依存するので、Alchemy の版を上げるたびに、アダプタの 1 ファイルが壊れうる。Alchemy v2 の stable 版で公開 API が整ったら、アダプタをそちらへ移す
 - Alchemy の state は bucket だけを持ち、アクセスキーの元になるトークンの値を含まない（#851）。state の権限は引き続き決定 8 のとおりに守る。v0.2 で実行環境の間で引き渡すとき（#505）は、ローカルのファイルでは共有できないので、置き場を見直す（`Cloudflare.state()` が候補になる）。複数の Cloudflare アカウントが要るときは、`cloudflare/<name>/` に分け、チャンネルの設定から参照する形に広げる
-- アクセスキーのトークンの plan と作成は、Alchemy の外の nyaucast のコードが持つ（決定 6）。v0.2 で資源が増えても、Alchemy で作れない資源にだけ同じ形を使う。#851 より前の版で作った専用プロファイルは `workers-r2-bucket-item.write` を持たないので、`cf auth create nyaucast` で作り直す
+- アクセスキーのトークンの plan と作成は、Alchemy の外の nyaucast のコードが持つ（決定 6）。v0.2 で資源が増えても、Alchemy で作れない資源にだけ同じ形を使う。#851 より前の版で作った専用プロファイルは `workers-r2-bucket-item.write` を持たないが、plan の前の確認でスコープの欠けを見つけて同じ `cf auth create nyaucast` を起こすので、利用者が手で作り直す必要はない（#854）。`auth create` に渡すスコープと確認に使うスコープは、`Cf` の同じ定義から来る
 - 利用者がしなければならない手順は、Cloudflare のアカウントの作成・R2 の有効化（checkout）・`cf auth create nyaucast` の同意の 3 つになる。R2 の有効化に支払い情報が要るかは、一次情報で確かめられていない（#650）
 - 利用者のインストールは 1.3 GB ほど重くなる

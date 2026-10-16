@@ -7,6 +7,15 @@ import { runCommand } from "../lib/command-output.ts";
 // nyaucast 専用の cf プロファイル名。利用者の既定プロファイルは使わない（order.md 決定 1 行目）。
 const cfProfileName = "nyaucast";
 
+// 専用プロファイルに要るスコープ。デプロイ用トークン（Workers R2 Storage Write）とアクセスキーのトークン
+// （Workers R2 Storage Bucket Item Write）を作るのに要るものだけ（ADR-0012 決定 2・10、#851）。
+// `auth create` に渡す引数と、`whoami` で再認証の要否を決める判定の両方がこれを読む（#854）。
+const requiredScopes = [
+  "workers-r2.write",
+  "workers-r2-bucket-item.write",
+  "account_api_tokens:create",
+] as const;
+
 // 失敗は、どの操作で起きたかだけを事実に持つ。cf 自身の標準出力・標準エラーは、認証の案内や
 // アカウント名を含みうるため事実にしない（issue #696 AC 3 行目: 秘密の値は標準出力に出さない）。
 export class CfCommandFailed extends Schema.TaggedError<CfCommandFailed>()("CfCommandFailed", {
@@ -41,7 +50,11 @@ type CfCreatedToken = { readonly id: string; readonly value: Redacted.Redacted<s
 
 type CfOperation = "accounts" | "token" | "token-list" | "whoami" | "r2";
 
-const WhoamiResponseSchema = Schema.Struct({ authenticated: Schema.Boolean });
+// `scopes` が無い出力は、スコープを 1 つも持たないとみなす（decode の失敗にせず再認証へ進める。#854）。
+const WhoamiResponseSchema = Schema.Struct({
+  authenticated: Schema.Boolean,
+  scopes: Schema.optionalKey(Schema.Array(Schema.String)),
+});
 const decodeWhoami = Schema.decodeUnknownEffect(Schema.fromJsonString(WhoamiResponseSchema));
 
 const CfAccountSchema = Schema.Struct({ id: Schema.String, name: Schema.String });
@@ -138,24 +151,13 @@ const makeCf = (parentEnv: Record<string, string | undefined>) =>
       return yield* new CfCommandFailed({ operation: "r2" });
     });
 
-    // auth create は --profile を拒否するため、専用名を位置引数で渡す。スコープは、デプロイ用トークン
-    // （Workers R2 Storage Write）とアクセスキーのトークン（Workers R2 Storage Bucket Item Write）を
-    // 作るのに要るものだけ（ADR-0012 決定 2・10、#851）。
+    // auth create は --profile を拒否するため、専用名を位置引数で渡す。
     const authenticate = Effect.scoped(
       Effect.gen(function* () {
         const handle = yield* spawner.spawn(
           ChildProcess.make(
             process.execPath,
-            [
-              cfExecutablePath(),
-              "auth",
-              "create",
-              cfProfileName,
-              "--scopes",
-              "workers-r2.write",
-              "workers-r2-bucket-item.write",
-              "account_api_tokens:create",
-            ],
+            [cfExecutablePath(), "auth", "create", cfProfileName, "--scopes", ...requiredScopes],
             { env: baseChildEnv, stdin: "inherit", stdout: "inherit", stderr: "inherit" },
           ),
         );
@@ -167,7 +169,10 @@ const makeCf = (parentEnv: Record<string, string | undefined>) =>
     const whoami = invoke("whoami", ["auth", "whoami"]).pipe(
       Effect.flatMap((stdout) =>
         decodeWhoami(stdout).pipe(
-          Effect.map((response) => response.authenticated),
+          Effect.map(
+            ({ authenticated, scopes = [] }) =>
+              authenticated && requiredScopes.every((scope) => scopes.includes(scope)),
+          ),
           Effect.mapError(() => new CfCommandFailed({ operation: "whoami" })),
         ),
       ),
@@ -233,6 +238,7 @@ export class Cf extends Context.Service<
   Cf,
   {
     readonly authenticate: Effect.Effect<void, CfCommandFailed>;
+    /** 専用プロファイルがログイン済みで、`authenticate` が求めるスコープをすべて持つか。 */
     readonly whoami: Effect.Effect<boolean, CfCommandFailed>;
     readonly listAccounts: Effect.Effect<ReadonlyArray<CfAccount>, CfCommandFailed>;
     readonly checkR2Availability: (
