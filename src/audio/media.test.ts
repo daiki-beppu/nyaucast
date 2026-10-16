@@ -75,10 +75,10 @@ const movieBeforeMedia = (boxes: readonly string[]) => {
 
 describe.concurrent("encodeMp4: fast start", () => {
   it.effect("places moov before mdat when the audio is longer than the video", () =>
-    encode(1, 3).pipe(Effect.map(movieBeforeMedia)),
+    encode(0.3, 1).pipe(Effect.map(movieBeforeMedia)),
   );
 
   it.effect("places moov before mdat when the video is longer than the audio", () =>
-    encode(3, 1).pipe(Effect.map(movieBeforeMedia)),
+    encode(1, 0.3).pipe(Effect.map(movieBeforeMedia)),
   );
 });
