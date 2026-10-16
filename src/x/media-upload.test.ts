@@ -136,10 +136,8 @@ describe("uploadXMedia: splitting a file larger than one chunk", () => {
         // #726: 上限が base64 にした JSON の本文に掛かる解釈でも超えないこと。本文は戻したバイト数の
         // 約 4/3 に膨らむので、戻したバイト数の検査だけでは本文の大きさを保証できない。
         for (const request of appendRequests) {
-          assert.isAtMost(
-            request.bodyBytes?.length ?? Number.POSITIVE_INFINITY,
-            appendChunkByteLimit,
-          );
+          assert.isDefined(request.bodyBytes);
+          assert.isAtMost(request.bodyBytes.length, appendChunkByteLimit);
         }
         const reassembled = new Uint8Array(size);
         let offset = 0;
