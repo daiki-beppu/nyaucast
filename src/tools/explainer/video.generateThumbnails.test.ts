@@ -41,6 +41,7 @@ const noon = "2026-10-03T12:00:00.000Z";
 // （他のテストは 0.5 秒前後）。品質を下げていく過程そのものが観測点なので、変換の回数も画像の大きさも
 // 減らせない（出力は常に 1920x1080 に引き伸ばされ、小さいノイズは引き伸ばすと縮みやすくなる）。
 // 負荷で 10 倍以上遅れても落ちないよう、既定の 5 秒ではなく 30 秒を渡す（#680）。
+// 2 回の round で 1344x768 の画像を 6 枚 1920x1080 の JPG にするテストも、同じ理由でこれを渡す（#811）。
 const heavyEncoding = 30_000;
 
 // 16:9 の 1 枚。Gemini の 1K（1344x768）。1920x1080 の JPG にして書かれる。
@@ -1340,24 +1341,28 @@ describe("video.generateThumbnails: the codex provider", () => {
       );
     });
 
-    it.effect("makes a new round with force, leaving the earlier round alone", () => {
-      const codex = fakeCodex({
-        replies: [1, 2, 3, 4, 5, 6].map(() => ({ image: solidPng(1344, 768) })),
-      });
-      return withCodex("nyaucast-thumbnails-codex-force-", {}, codex, () =>
-        Effect.gen(function* () {
-          yield* recordPlan();
-          yield* callTool("video_generate_thumbnails", input());
+    it.effect(
+      "makes a new round with force, leaving the earlier round alone",
+      () => {
+        const codex = fakeCodex({
+          replies: [1, 2, 3, 4, 5, 6].map(() => ({ image: solidPng(1344, 768) })),
+        });
+        return withCodex("nyaucast-thumbnails-codex-force-", {}, codex, () =>
+          Effect.gen(function* () {
+            yield* recordPlan();
+            yield* callTool("video_generate_thumbnails", input());
 
-          const forced = yield* callTool("video_generate_thumbnails", input({ force: true }));
+            const forced = yield* callTool("video_generate_thumbnails", input({ force: true }));
 
-          assert.strictEqual(forced.round, 2);
-          assert.strictEqual(forced.created, 3);
-          assert.strictEqual(codex.execCalls.length, 6);
-          assert.strictEqual(yield* rowCount, 6);
-        }),
-      );
-    });
+            assert.strictEqual(forced.round, 2);
+            assert.strictEqual(forced.created, 3);
+            assert.strictEqual(codex.execCalls.length, 6);
+            assert.strictEqual(yield* rowCount, 6);
+          }),
+        );
+      },
+      heavyEncoding,
+    );
   });
 });
 

@@ -578,6 +578,10 @@ describe("video.assembleComposition: seek is a pure function of t", () => {
           }
         }),
       ),
+    // 同じ時刻の集合を 4 通りの順で DOM 上に seek し、そのたびに snapshot を取るため、既定の 5 秒は
+    // スイート全体を並行実行したときの負荷で越えることがある。時刻を減らすと純粋性の観測が弱まるので、
+    // この重さに見合う上限を明示する（#811）。
+    30_000,
   );
 
   it.effect("reads no clock, random number, timer or network while it is loaded and sought", () =>

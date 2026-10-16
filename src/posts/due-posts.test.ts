@@ -2240,7 +2240,11 @@ describe(
         inPostsChannel("nyaucast-due-posts-x-chunks-", ["x"], (_channelRoot) =>
           Effect.gen(function* () {
             const size = appendChunkBytes * 2 + Math.floor(appendChunkBytes / 2);
-            const content = Uint8Array.from({ length: size }, (_, index) => index % 256);
+            // appendChunkBytes の 2.5 倍の要素を要素ごとのコールバックで作ると、それだけで負荷時に秒単位かかる（#811）。
+            const content = new Uint8Array(size);
+            for (let index = 0; index < size; index++) {
+              content[index] = index % 256;
+            }
             yield* prepareVideoFacts(longCut, content);
             const postId = yield* insertPost({ platform: "x" });
             yield* setClock(defaultScheduledAt);
@@ -2286,8 +2290,8 @@ describe(
             assert.deepStrictEqual(reassembled, content);
           }),
         ),
-      // この 1 本だけは、チャンクの境界を観測するために実ファイルで appendChunkBytes の 2.5 倍
-      // （約 10MB）を書き出し、base64 と JSON を通して再構成する。unit の既定の 5 秒は、スイート全体を
+      // この 1 本だけは、チャンクの境界を観測するために実ファイルで appendChunkBytes の 2.5 倍を
+      // 書き出し、base64 と JSON を通して再構成する。unit の既定の 5 秒は、スイート全体を
       // 並行実行したときの負荷で越えることがあるため、この重さに見合う上限を明示する
       // （vite.config.ts が contract のプロジェクトに 30 秒を与えているのと同じ理由）。
       30_000,
