@@ -161,6 +161,8 @@ export interface Mp4Request<E, R> {
   readonly audioSource: AudioFileSource;
   readonly audioBitrate: number;
   readonly fps: number;
+  /** frames が流すフレームの数。moov を先頭に置くための領域の見積もりに使う（超えて流すと失敗する）。 */
+  readonly frameCount: number;
   /** 順に並ぶフレームの PNG。 */
   readonly frames: Stream.Stream<Uint8Array, E, R>;
   /** 書き出す mp4 のパス。 */
@@ -217,6 +219,12 @@ const openAudioTrack = (
     ),
   );
 
+// 音声のパケット数の上限。mediabunny の指針どおり 1 パケットを約 10 ms か 512 サンプルの短い方とみなし、約 33% の余裕を足す。
+const maximumAudioPackets = async (track: InputAudioTrack) => {
+  const packetSeconds = Math.min(0.01, 512 / track.sampleRate);
+  return Math.ceil(((await track.computeDuration()) / packetSeconds) * (4 / 3)) + 1;
+};
+
 const encodeTracks = <E, R>(
   request: Mp4Request<E, R>,
   track: InputAudioTrack,
@@ -257,20 +265,30 @@ const encodeTracks = <E, R>(
 
 /**
  * H.264 の映像と AAC の音声を持つ mp4 を、パスのファイルへ書く。フレームは流れてくる順に 1 枚ずつ、音声は 1 塊ずつ書き、全体をメモリに載せない。
+ * moov はファイルの先頭（mdat より前）に置く（Fast Start）。
  * 音声が読めないときは AudioDecodeFailed（何も書き始める前）、エンコードの途中の失敗は Mp4EncodeFailed。フレームの失敗はそのまま通す。
  */
 export const encodeMp4 = <E, R>(request: Mp4Request<E, R>) =>
   Effect.scoped(
     Effect.gen(function* () {
       const track = yield* openAudioTrack(request.audioSource);
+      const audioPackets = yield* Effect.tryPromise({
+        catch: () => new AudioDecodeFailed(),
+        try: () => maximumAudioPackets(track),
+      });
+      // 'reserve' は moov の領域を先頭に確保してメディアをそのまま書き、finalize で埋める（'in-memory' と違い全体を持たない）。
       const output = new Output({
-        format: new Mp4OutputFormat({ fastStart: false }),
+        format: new Mp4OutputFormat({ fastStart: "reserve" }),
         target: new FilePathTarget(request.outputPath),
       });
       const video = new VideoSampleSource({ bitrate: request.videoBitrate, codec: "avc" });
       const audio = new AudioSampleSource({ bitrate: request.audioBitrate, codec: "aac" });
-      output.addVideoTrack(video, { frameRate: request.fps });
-      output.addAudioTrack(audio);
+      // 映像は 1 フレーム 1 パケット。
+      output.addVideoTrack(video, {
+        frameRate: request.fps,
+        maximumPacketCount: request.frameCount,
+      });
+      output.addAudioTrack(audio, { maximumPacketCount: audioPackets });
       yield* encodeTracks(request, track, output, video, audio);
     }),
   );

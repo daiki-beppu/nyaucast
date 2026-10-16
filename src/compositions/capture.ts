@@ -241,6 +241,8 @@ const sampleIndices = (hf: Hf) => {
 };
 
 export interface FrameCapture {
+  /** frames が流すフレームの数。 */
+  readonly count: number;
   /** 先頭から順に撮るフレーム。流し終えると samples が埋まる。 */
   readonly frames: Stream.Stream<Uint8Array, ChromeUnavailable>;
   /** 決定論の検証用に控えた、segment の終わる直前のフレーム（番号 → PNG）。 */
@@ -251,7 +253,8 @@ export interface FrameCapture {
 export const captureAllFrames = ({ hf, page }: OpenedComposition): FrameCapture => {
   const wanted = new Set(sampleIndices(hf));
   const samples = new Map<number, Uint8Array>();
-  const frames = Stream.range(0, frameCount(hf.duration, hf.fps) - 1).pipe(
+  const count = frameCount(hf.duration, hf.fps);
+  const frames = Stream.range(0, count - 1).pipe(
     Stream.mapEffect((index) =>
       captureAt(page, frameTime(index, hf.fps)).pipe(
         Effect.tap((png) =>
@@ -262,7 +265,7 @@ export const captureAllFrames = ({ hf, page }: OpenedComposition): FrameCapture 
       ),
     ),
   );
-  return { frames, samples };
+  return { count, frames, samples };
 };
 
 const sameBytes = (left: Uint8Array, right: Uint8Array) =>
