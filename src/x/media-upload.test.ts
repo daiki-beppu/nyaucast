@@ -17,7 +17,7 @@ import type { FileReader } from "../videos/video-files.ts";
 import { appendChunkBytes, uploadXMedia } from "./media-upload.ts";
 
 // 契約（この issue の計画 C-X-FLOW・C-X-NO-CACHE・C-X-STATUS-FAILED、issue 決定 2）:
-//   uploadXMedia は 1 回の試行の中で initialize → append（1 チャンク 4MB、segment_index 昇順）→
+//   uploadXMedia は 1 回の試行の中で initialize → append（1 チャンク 3MiB、segment_index 昇順）→
 //   finalize → （処理が要るなら）STATUS を、同じ media_id の上で `succeeded` になるまで繰り返し、
 //   media_id を返す。`media_id` は戻り値だけで運び、local store には保存しない（呼び出しごとに
 //   initialize からやり直す。再試行で前回の media_id に継ぎ足さない）。
@@ -37,7 +37,8 @@ const sequentialBytes = (length: number) => Uint8Array.from({ length }, (_, inde
 /**
  * #556 の決定 2 の「1 チャンク 5MB 以下」。MB（10 進の 5,000,000）と MiB（2 進の 5,242,880）の
  * どちらの解釈でも超えない、厳しい側の上限を実装の `appendChunkBytes` とは独立に書く。実装側の定数を
- * この上限より大きくすると、実 API に当てる前にこのテストが落ちる。
+ * この上限より大きくすると、実 API に当てる前にこのテストが落ちる。上限が生のバイトと要求の本文の
+ * どちらに掛かるかは X の文書に無いので、戻したバイト数と送った本文のバイト数の両方に当てる（#726）。
  */
 const appendChunkByteLimit = 5_000_000;
 
@@ -132,6 +133,14 @@ describe("uploadXMedia: splitting a file larger than one chunk", () => {
         for (const append of appends) {
           assert.isAtMost(append.bytes.length, appendChunkByteLimit);
         }
+        // #726: 上限が base64 にした JSON の本文に掛かる解釈でも超えないこと。本文は戻したバイト数の
+        // 約 4/3 に膨らむので、戻したバイト数の検査だけでは本文の大きさを保証できない。
+        for (const request of appendRequests) {
+          assert.isAtMost(
+            request.bodyBytes?.length ?? Number.POSITIVE_INFINITY,
+            appendChunkByteLimit,
+          );
+        }
         const reassembled = new Uint8Array(size);
         let offset = 0;
         for (const append of appends) {
@@ -140,7 +149,7 @@ describe("uploadXMedia: splitting a file larger than one chunk", () => {
         }
         assert.deepStrictEqual(reassembled, content);
       }),
-    // チャンクの境界を観測するには appendChunkBytes の 2 倍超（約 8MB）を base64 と JSON に通す必要が
+    // チャンクの境界を観測するには appendChunkBytes の 2 倍超（約 6MB）を base64 と JSON に通す必要が
     // あり、unit の既定の 5 秒はスイート全体を並行実行したときの負荷で越えることがある。この重さに
     // 見合う上限を明示する（vite.config.ts が contract のプロジェクトに 30 秒を与えているのと同じ理由）。
     30_000,
