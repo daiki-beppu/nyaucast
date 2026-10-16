@@ -9,10 +9,13 @@ const mediaCategory = "tweet_video";
 const mediaType = "video/mp4";
 
 /**
- * `append` の 1 チャンクの大きさ。X の上限は 5MB（#556 の決定 2）で、MB（10 進の 5_000_000）と
- * MiB（2 進の 5_242_880）のどちらで解釈しても下回る値にする。
+ * `append` の 1 チャンクの大きさ（生のバイト数）。1 チャンク 5MB 以下は #556 の決定 2 で、X のガイド
+ * （https://docs.x.com/x-api/media/quickstart/media-upload-chunked.md）も 1 セグメントを 5MB 以下に
+ * 推奨し、サーバーの最大を 8MB とする。その上限が生のバイトと要求の本文のどちらに掛かるかは
+ * 書かれていないので、base64 で約 4/3 に膨らんだ JSON の本文で数えても 5MB（10 進の 5_000_000）を
+ * 下回る値にする（#726）。3 MiB の base64 は 4_194_304 文字で、JSON の残りを足しても下回る。
  */
-export const appendChunkBytes = 4 * 1024 * 1024;
+export const appendChunkBytes = 3 * 1024 * 1024;
 
 /**
  * 処理待ちの上限。超えたら投稿を 1 回も送らずに切り上げる。チャンネル設定の許容時間の既定（60 分）
