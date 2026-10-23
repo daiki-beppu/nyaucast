@@ -27,18 +27,14 @@ const decoder = new TextDecoder();
  * 受け取った本文の生バイト列。内容長付きのストリームの本文（R2 への PUT など）も、呼ばれた側が
  * 実際に読めるバイト列として記録する。本文の読み取り自体の失敗は、テストの設計外として落とす。
  */
-const bodyBytesOf = (body: HttpBody.HttpBody): Effect.Effect<Uint8Array | undefined> => {
-  if (body._tag === "Uint8Array") {
-    return Effect.succeed(body.body);
-  }
-  if (body._tag === "Stream") {
-    return Effect.map(
-      Stream.runCollect(body.stream).pipe(Effect.orDie),
-      (chunks) => new Uint8Array(Buffer.concat(chunks)),
-    );
-  }
-  return Effect.succeed(undefined);
-};
+const rawBytesOf = (body: HttpBody.HttpBody): Uint8Array | undefined =>
+  body._tag === "Uint8Array" ? body.body : undefined;
+
+const streamBytesOf = (stream: Stream.Stream<Uint8Array, unknown>) =>
+  Effect.map(
+    Stream.runCollect(stream).pipe(Effect.orDie),
+    (chunks) => new Uint8Array(Buffer.concat(chunks)),
+  );
 
 /** `HttpClient` の偽物。本物の ネットワークには出ず、routes が答え、受け取ったリクエストを順に記録する。 */
 export function fakeHttp(routes: Routes) {
@@ -48,7 +44,10 @@ export function fakeHttp(routes: Routes) {
       const key = `${request.method} ${url.origin}${url.pathname}`;
       const recorded: RecordedRequest = {
         authorization: request.headers["authorization"],
-        bodyBytes: yield* bodyBytesOf(request.body),
+        bodyBytes:
+          request.body._tag === "Stream"
+            ? yield* streamBytesOf(request.body.stream)
+            : rawBytesOf(request.body),
         form:
           request.body._tag === "Uint8Array"
             ? Object.fromEntries(new URLSearchParams(decoder.decode(request.body.body)))

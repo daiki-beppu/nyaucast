@@ -19,9 +19,7 @@ import { LocalStore } from "./local-store.ts";
 
 // ストアを開いて閉じるだけ。マイグレーションはここで適用される。
 const openAndClose = (channelRoot: string) =>
-  Effect.gen(function* () {
-    yield* SqlClient.SqlClient;
-  }).pipe(Effect.provide(channelLayer(channelRoot)));
+  SqlClient.SqlClient.pipe(Effect.asVoid, Effect.provide(channelLayer(channelRoot)));
 
 function tableColumns(databasePath: string, table: string): string[] {
   const database = new DatabaseSync(databasePath);

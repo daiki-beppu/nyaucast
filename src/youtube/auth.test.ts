@@ -132,7 +132,7 @@ const identityHttp = (response: IdentityResponse) => {
       });
       if (response === undefined) return yield* Effect.die("identity was not expected");
       if (response instanceof Response) return HttpClientResponse.fromWeb(request, response);
-      return yield* Effect.fail(response);
+      return yield* response;
     }),
   );
   return { layer: Layer.succeed(HttpClient.HttpClient, http), requests };

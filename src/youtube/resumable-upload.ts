@@ -186,7 +186,7 @@ const sendChunkFrom = (
     // 送信の中断（HTTP の応答より前に通信が切れた）だけを、照会による再開の対象にする。他の失敗
     // （確定した HTTP 応答）はそのまま伝播する（A: 投稿経路はここで再試行しない）。
     if (putOutcome.failure._tag !== "YouTubeHttpBoundaryFailed") {
-      return yield* Effect.fail(putOutcome.failure);
+      return yield* putOutcome.failure;
     }
     const queryOutcome = yield* queryProgress(input, session).pipe(Effect.result);
     if (queryOutcome._tag === "Success") {

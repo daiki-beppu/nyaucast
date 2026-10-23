@@ -95,7 +95,7 @@ describe("writePrivateFileAtomically", () => {
                 writeFileString: ((path, contents, options) =>
                   Effect.gen(function* () {
                     yield* real.writeFileString(path, contents.slice(0, 3), options);
-                    return yield* Effect.fail(storageFailure);
+                    return yield* storageFailure;
                   })) satisfies FileSystem.FileSystem["writeFileString"],
               }
             : { rename: () => Effect.fail(storageFailure) }),
@@ -140,7 +140,7 @@ describe("writePrivateFileAtomically", () => {
             remove: (path) =>
               Effect.gen(function* () {
                 removed.push(path);
-                return yield* Effect.fail(cleanupFailure);
+                return yield* cleanupFailure;
               }),
           }),
         ),
