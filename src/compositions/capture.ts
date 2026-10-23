@@ -160,7 +160,7 @@ const captureAt = (page: ChromePage, seconds: number) =>
     yield* evaluate(page, seekExpression(seconds), true);
     const raw = yield* page.connection.send(
       "Page.captureScreenshot",
-      { format: "png" },
+      { format: "png", optimizeForSpeed: true },
       page.sessionId,
     );
     const shot = yield* Schema.decodeUnknownEffect(Screenshot)(raw).pipe(
