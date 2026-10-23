@@ -105,16 +105,17 @@ export const writeThemeFonts = (channelRoot: string) => {
 
 // ---- 偽の DOM と node:vm による composition の実行（Chrome は使わない） ----
 
-export interface Segment {
+interface Segment {
   readonly duration: number;
   readonly start: number;
   readonly static: boolean;
 }
 
-export interface Hf {
+interface Hf {
   readonly duration: number;
   readonly fps: number;
   readonly height: number;
+  readonly holds?: readonly { readonly duration: number; readonly start: number }[];
   readonly seek: (t: number) => void;
   readonly segments: readonly Segment[];
   readonly width: number;

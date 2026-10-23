@@ -56,6 +56,7 @@ import {
   writeShort,
 } from "../../../test/short-helpers.ts";
 import { callTool, rejectionReason, withToolChannel } from "../../../test/tool-helpers.ts";
+import { reviewHf } from "../../compositions/capture.ts";
 import { ExplainerVideoAssembleCompositionTool } from "./video.assembleComposition.ts";
 
 const speech = (seconds: number): FakeReply => ({ audio: pcmSeconds(seconds) });
@@ -1821,6 +1822,400 @@ describe("video.assembleComposition: the composition of a dedicated short", () =
           assert.strictEqual(failure._tag, "InvalidDiagrams");
           assert.isFalse(channelFileExists(channelRoot, cutCompositionKey(dedicatedCut(1))));
         }),
+    ),
+  );
+});
+
+// ---- holds: 変わらない区間（docs/reference/composition-contract.md の「holds の規則」） ----
+//   hold は seek の runtime が読む nc-data（motions・captions・scenes）から導く。
+//   動きの区間 [start, start+length] 全体は「変わる」、字幕の start / end とシーンの境目は「変わる時刻」。
+//   変わらない残りのうち 2 フレーム以上続く区間が hold で、端は 1/1024 秒の格子の上にあり、シーンをまたがない。
+
+interface TimedData {
+  readonly length: number;
+  readonly start: number;
+}
+
+interface HoldData {
+  readonly captions: readonly { readonly end: number; readonly start: number }[];
+  readonly duration: number;
+  readonly fps: number;
+  readonly holds: readonly { readonly duration: number; readonly start: number }[];
+  readonly motions: readonly {
+    readonly beat: TimedData | null;
+    readonly dim: TimedData | null;
+  }[];
+  readonly scenes: readonly { readonly end: number; readonly start: number }[];
+}
+
+const dataOf = (html: string): HoldData => {
+  const match = /<script type="application\/json" id="nc-data">([\s\S]*?)<\/script>/u.exec(html);
+  return JSON.parse(defined(match?.[1])) as HoldData;
+};
+
+interface Interval {
+  readonly from: number;
+  readonly to: number;
+}
+
+const motionIntervals = (data: HoldData): Interval[] =>
+  data.motions
+    .flatMap((motion) => [motion.beat, motion.dim])
+    .filter((timed): timed is TimedData => timed !== null)
+    .map((timed) => ({ from: timed.start, to: timed.start + timed.length }));
+
+// 変わる時刻と区間。動きは区間全体、字幕とシーンの境目は点。
+const changesOf = (data: HoldData): Interval[] => [
+  ...motionIntervals(data),
+  ...data.captions.flatMap((caption) => [
+    { from: caption.start, to: caption.start },
+    { from: caption.end, to: caption.end },
+  ]),
+  ...data.scenes.flatMap((scene) => [
+    { from: scene.start, to: scene.start },
+    { from: scene.end, to: scene.end },
+  ]),
+];
+
+// 変わる時刻と区間を除いた残りの区間（[0, duration] の中）。
+const quietSpansOf = (data: HoldData): Interval[] => {
+  const changes = changesOf(data).toSorted((left, right) => left.from - right.from);
+  const spans: Interval[] = [];
+  let reach = 0;
+  for (const change of changes) {
+    if (change.from > reach) spans.push({ from: reach, to: Math.min(change.from, data.duration) });
+    reach = Math.max(reach, change.to);
+  }
+  if (data.duration > reach) spans.push({ from: reach, to: data.duration });
+  return spans;
+};
+
+// 厳密に内側（両端を除く）にあるか。
+const strictlyInside = (hold: Interval, at: number) => hold.from < at && at < hold.to;
+const overlaps = (hold: Interval, other: Interval) => hold.from < other.to && other.from < hold.to;
+
+const holdIntervals = (data: HoldData): Interval[] =>
+  data.holds.map((hold) => ({ from: hold.start, to: hold.start + hold.duration }));
+
+const assertHoldsAvoidChanges = (data: HoldData) => {
+  const holds = holdIntervals(data);
+  const motions = motionIntervals(data);
+  for (const hold of holds) {
+    assert.isFalse(
+      motions.some((motion) => overlaps(hold, motion)),
+      `hold ${JSON.stringify(hold)} overlaps a motion`,
+    );
+    for (const caption of data.captions) {
+      assert.isFalse(strictlyInside(hold, caption.start), "a caption start is inside a hold");
+      assert.isFalse(strictlyInside(hold, caption.end), "a caption end is inside a hold");
+    }
+    for (const scene of data.scenes) {
+      assert.isFalse(strictlyInside(hold, scene.start), "a scene boundary is inside a hold");
+      assert.isFalse(strictlyInside(hold, scene.end), "a scene boundary is inside a hold");
+    }
+  }
+};
+
+const assertHoldsShapeAndGrid = (data: HoldData) => {
+  const holds = holdIntervals(data);
+  for (const hold of holds) {
+    assert.isAtLeast((hold.to - hold.from) * data.fps, 2 - 1e-9, "a hold is 2 frames or more");
+    assert.isAtLeast(hold.from, 0);
+    assert.isAtMost(hold.to, data.duration);
+    assert.isTrue(Number.isInteger(hold.from * 1024), `hold start ${hold.from} is on the grid`);
+    assert.isTrue(Number.isInteger(hold.to * 1024), `hold end ${hold.to} is on the grid`);
+  }
+  const sorted = holds.toSorted((left, right) => left.from - right.from);
+  sorted.slice(1).forEach((hold, index) => {
+    assert.isAtLeast(hold.from, defined(sorted[index]).to, "holds do not overlap");
+  });
+};
+
+// 2 フレームと格子 2 つ分より長く変わらない区間は、格子の丸めの分だけを除いて hold に覆われる。
+const assertQuietSpansAreHeld = (data: HoldData) => {
+  const holds = holdIntervals(data);
+  for (const span of quietSpansOf(data)) {
+    if ((span.to - span.from) * data.fps < 2 + 4 * data.fps * grid) continue;
+    assert.isTrue(
+      holds.some((hold) => hold.from <= span.from + 2 * grid && hold.to >= span.to - 2 * grid),
+      `quiet span ${JSON.stringify(span)} is held`,
+    );
+  }
+};
+
+// hold の中のすべてのフレームの絵は、hold の最初のフレームの絵と同じ。
+const assertHoldsAreStill = (html: string, data: HoldData) => {
+  const page = loadComposition(html);
+  for (const hold of holdIntervals(data)) {
+    const first = Math.ceil(hold.from * data.fps - 1e-9);
+    page.seek(first / data.fps);
+    const reference = page.snapshot();
+    for (let frame = first + 1; frame / data.fps < hold.to - 1e-9; frame += 1) {
+      page.seek(frame / data.fps);
+      assert.strictEqual(
+        page.snapshot(),
+        reference,
+        `frame ${frame} in hold ${JSON.stringify(hold)}`,
+      );
+    }
+  }
+};
+
+const assertWithinOneSegment = (html: string, data: HoldData) => {
+  const { hf } = loadComposition(html);
+  for (const hold of data.holds) {
+    assert.isTrue(
+      hf.segments.some(
+        (segment) =>
+          hold.start >= segment.start &&
+          hold.start + hold.duration <= segment.start + segment.duration,
+      ),
+      `hold ${JSON.stringify(hold)} crosses a segment boundary`,
+    );
+  }
+};
+
+// 組み立てた composition 1 枚が、holds の性質と #869 の契約の検査を満たす。hold を返す。
+const assertHoldContract = (html: string) => {
+  const data = dataOf(html);
+  const { hf } = loadComposition(html);
+  assert.isDefined(hf.holds, "window.__hf.holds is written");
+  assert.deepStrictEqual(hf.holds, data.holds);
+  assert.deepStrictEqual(
+    reviewHf(
+      {
+        duration: hf.duration,
+        fps: hf.fps,
+        height: hf.height,
+        holds: hf.holds,
+        seekType: typeof hf.seek,
+        segments: hf.segments,
+        width: hf.width,
+      },
+      undefined,
+    ),
+    [],
+  );
+  assertHoldsShapeAndGrid(data);
+  assertHoldsAvoidChanges(data);
+  assertWithinOneSegment(html, data);
+  assertQuietSpansAreHeld(data);
+  assertHoldsAreStill(html, data);
+  return data;
+};
+
+const threeSceneReplies = [speech(2), speech(6), speech(3), speech(2), speech(2)];
+const threeScenes = [...scriptScenes, ["三つ目の場面です。"]];
+
+// 動きが詰まった 1 シーン: 2 段落目の 2〜4 句目に動きが続く。
+const denseScenes = [["短い。", "一つ、二つ、三つ、四つ、五つ。"]];
+const denseDiagram =
+  '<div><p data-beat="1" data-dim="2.2">甲</p><p data-beat="2">乙</p><p data-beat="2.3">丙</p></div>';
+
+// 動きの無い 2 シーン。字幕とシーンの境目だけが変わる。
+const stillScenes = [["静かな場面です、何も動きません。"], ["次の場面も静かです。"]];
+const stillDiagram = "<div><h1>静止</h1></div>";
+
+const withScript = <A, E, R>(
+  prefix: string,
+  scenes: readonly (readonly string[])[],
+  replies: readonly FakeReply[],
+  diagrams: readonly string[],
+  use: (channelRoot: string) => Effect.Effect<A, E, R>,
+) =>
+  prepared(prefix, { replies, scenes, withoutDiagrams: true }, (channelRoot) =>
+    Effect.gen(function* () {
+      for (const [index, html] of diagrams.entries()) {
+        yield* callTool("video_write_diagram", { html, scene: index + 1, videoId: "V1" });
+      }
+      return yield* use(channelRoot);
+    }),
+  );
+
+describe("video.assembleComposition: holds of the long cut", () => {
+  it.effect("keeps every property of the contract for the default two scenes", () =>
+    prepared("nyaucast-composition-holds-default-", {}, (channelRoot) =>
+      Effect.gen(function* () {
+        yield* assemble();
+
+        const data = assertHoldContract(readComposition(channelRoot));
+        assert.isAbove(data.holds.length, 0);
+      }),
+    ),
+  );
+
+  it.effect(
+    "holds the span between the end of the first motion and the end of the first phrase",
+    () =>
+      prepared("nyaucast-composition-holds-exists-", {}, (channelRoot) =>
+        Effect.gen(function* () {
+          yield* assemble();
+
+          const data = dataOf(readComposition(channelRoot));
+          const beat = defined(data.motions[0]).beat;
+          if (beat === null) throw new Error("the first motion has no beat");
+          const phraseEnd = defined(data.captions[0]).end;
+          const motionEnd = beat.start + beat.length;
+          assert.isAbove((phraseEnd - motionEnd) * data.fps, 2);
+          assert.isTrue(
+            holdIntervals(data).some(
+              (hold) => hold.from <= motionEnd + 2 * grid && hold.to >= phraseEnd - 2 * grid,
+            ),
+            "no hold covers the span where nothing changes",
+          );
+        }),
+      ),
+  );
+
+  it.effect("keeps every property for three scenes", () =>
+    withScript(
+      "nyaucast-composition-holds-three-",
+      threeScenes,
+      threeSceneReplies,
+      [sceneOneDiagram, sceneTwoDiagram, '<div data-beat="1">三つ目</div>'],
+      (channelRoot) =>
+        Effect.gen(function* () {
+          yield* assemble();
+
+          const data = assertHoldContract(readComposition(channelRoot));
+          assert.strictEqual(data.scenes.length, 3);
+          assert.isAbove(data.holds.length, 0);
+        }),
+    ),
+  );
+
+  it.effect("keeps every property for a diagram whose motions follow one another", () =>
+    withScript(
+      "nyaucast-composition-holds-dense-",
+      denseScenes,
+      [speech(2), speech(3)],
+      [denseDiagram],
+      (channelRoot) =>
+        Effect.gen(function* () {
+          yield* assemble();
+
+          const data = assertHoldContract(readComposition(channelRoot));
+          assert.isAbove(data.motions.length, 2);
+        }),
+    ),
+  );
+
+  it.effect("keeps every property when nothing moves, holding between captions and scenes", () =>
+    withScript(
+      "nyaucast-composition-holds-still-",
+      stillScenes,
+      [speech(3), speech(2)],
+      [stillDiagram, stillDiagram],
+      (channelRoot) =>
+        Effect.gen(function* () {
+          yield* assemble();
+
+          const data = assertHoldContract(readComposition(channelRoot));
+          assert.isAbove(data.holds.length, 1);
+        }),
+    ),
+  );
+
+  it.effect("cuts holds at the scene boundary, so no hold spans two scenes", () =>
+    withScript(
+      "nyaucast-composition-holds-scene-cut-",
+      stillScenes,
+      [speech(3), speech(2)],
+      [stillDiagram, stillDiagram],
+      (channelRoot) =>
+        Effect.gen(function* () {
+          yield* assemble();
+
+          const data = dataOf(readComposition(channelRoot));
+          const boundary = defined(data.scenes[1]).start;
+          const holds = holdIntervals(data);
+          assert.isTrue(holds.some((hold) => hold.to <= boundary));
+          assert.isTrue(holds.some((hold) => hold.from >= boundary));
+          assert.isFalse(holds.some((hold) => strictlyInside(hold, boundary)));
+        }),
+    ),
+  );
+
+  it.effect("keeps the segments one per scene and not static", () =>
+    prepared("nyaucast-composition-holds-segments-", {}, (channelRoot) =>
+      Effect.gen(function* () {
+        yield* assemble();
+
+        const { hf } = pageOf(channelRoot);
+        assert.strictEqual(hf.segments.length, 2);
+        assert.isTrue(hf.segments.every((segment) => segment.static === false));
+      }),
+    ),
+  );
+
+  it.effect(
+    "writes holds as an array even when it is empty, and derives them from nc-data only",
+    () =>
+      prepared("nyaucast-composition-holds-array-", {}, (channelRoot) =>
+        Effect.gen(function* () {
+          yield* assemble();
+
+          const html = readComposition(channelRoot);
+          assert.isTrue(Array.isArray(dataOf(html).holds));
+          assert.isTrue(Array.isArray(pageOf(channelRoot).hf.holds));
+        }),
+      ),
+  );
+});
+
+describe("video.assembleComposition: holds of a short", () => {
+  it.effect.each([
+    ["across the scenes", crossRange],
+    ["inside one scene", paragraphRange([1, 2], [1, 2])],
+    ["the whole second scene", paragraphRange([2, 1], [2, 2])],
+  ] as const)("keeps every property of a clip short %s", ([, range]) =>
+    withClip(
+      "nyaucast-composition-holds-clip-",
+      (channelRoot) =>
+        Effect.gen(function* () {
+          yield* assembleCut(clipCut(1));
+
+          const data = assertHoldContract(readCutHtml(channelRoot, clipCut(1)));
+          assert.isAbove(data.holds.length, 0);
+        }),
+      range,
+    ),
+  );
+
+  it.effect("derives the holds of a clip from the shifted times, not from the long times", () =>
+    withClip(
+      "nyaucast-composition-holds-clip-shifted-",
+      (channelRoot) =>
+        Effect.gen(function* () {
+          yield* assemble();
+          yield* assembleCut(clipCut(1));
+
+          const long = dataOf(readComposition(channelRoot));
+          const clip = dataOf(readCutHtml(channelRoot, clipCut(1)));
+          const offset = paragraphStart(readTimingFile(channelRoot), 1);
+          assert.isAbove(offset, 0);
+          for (const hold of clip.holds) {
+            assert.isAtMost(hold.start + hold.duration, clip.duration);
+          }
+          const firstCaption = defined(clip.captions[0]);
+          near(
+            firstCaption.start,
+            defined(long.captions.find((c) => c.start >= offset - 1e-9)).start - offset,
+          );
+          assertQuietSpansAreHeld(clip);
+        }),
+      paragraphRange([1, 2], [1, 2]),
+    ),
+  );
+
+  it.effect("keeps every property of a dedicated short", () =>
+    withDedicated("nyaucast-composition-holds-dedicated-", (channelRoot) =>
+      Effect.gen(function* () {
+        yield* assembleCut(dedicatedCut(1));
+
+        const data = assertHoldContract(readCutHtml(channelRoot, dedicatedCut(1)));
+        assert.isAbove(data.holds.length, 0);
+      }),
     ),
   );
 });
