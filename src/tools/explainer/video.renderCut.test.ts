@@ -59,7 +59,7 @@ import { ExplainerVideoRenderCutTool } from "./video.renderCut.ts";
 //   tool 名 video_render_cut、パラメータ { videoId, cut?, force? }（cut は "long" か "short-<n>-clip" / "short-<n>-dedicated"。省略は "long"）。
 //   成功値 { cut: "long", compositionHash, key, renderHash, rendered, videoId }。
 //   成果物は videos/<id>/cuts/long/long.mp4。事実 explainer_cut_exports の行は、実際に作ったときだけ積む。
-//   失敗のタグ: CompositionNotFound / AudioTrackNotFound / InvalidComposition{violations} / NondeterministicComposition{seconds} /
+//   失敗のタグ: CompositionNotFound / AudioTrackNotFound / InvalidComposition{violations} / NondeterministicComposition{seconds} / HoldMismatch{seconds} /
 //   VideoNotFound / ProduceGateNotApproved（Chrome を使わずに決まる失敗は Chrome を起動しない）。
 
 const noon = "2026-10-04T12:00:00.000Z";
@@ -101,6 +101,22 @@ const readMp4 = async (channelRoot: string, key = cutExportKey) => {
 const codecsOf = async (channelRoot: string) => {
   const mp4 = await readMp4(channelRoot);
   return [mp4.video?.codec, mp4.audio?.codec];
+};
+
+const centerOf = async (channelRoot: string, seconds: number) => {
+  const input = new Input({
+    formats: ALL_FORMATS,
+    source: new BufferSource(readChannelFile(channelRoot, cutExportKey)),
+  });
+  const track = await input.getPrimaryVideoTrack();
+  const sample = await new VideoSampleSink(track as NonNullable<typeof track>).getSample(seconds);
+  const frame = sample as NonNullable<typeof sample>;
+  const width = frame.displayWidth;
+  const buffer = new Uint8Array(frame.allocationSize({ format: "RGBA" }));
+  await frame.copyTo(buffer, { format: "RGBA" });
+  const offset = (Math.floor(frame.displayHeight / 2) * width + Math.floor(width / 2)) * 4;
+  frame.close();
+  return [buffer[offset] ?? -1, buffer[offset + 1] ?? -1, buffer[offset + 2] ?? -1];
 };
 
 describe.concurrent("video.renderCut: parameters", () => {
@@ -146,9 +162,11 @@ describe.concurrent("video.renderCut: parameters", () => {
       "AudioTrackNotFound",
       "InvalidComposition",
       "NondeterministicComposition",
+      "HoldMismatch",
     ]) {
       assert.include(description, tag);
     }
+    assert.notInclude(description, "every frame is captured");
     assert.notMatch(description, /\b(next|then run|you should|please)\b/iu);
   });
 });
@@ -237,22 +255,6 @@ describe.concurrent("video.renderCut: a real render", () => {
 
 // 復号した内容を確かめる: 映像は時刻ごとの色（前半は赤系、後半は青系）、音声は 440 Hz の音が残っている。
 describe.concurrent("video.renderCut: the encoded content", () => {
-  const centerOf = async (channelRoot: string, seconds: number) => {
-    const input = new Input({
-      formats: ALL_FORMATS,
-      source: new BufferSource(readChannelFile(channelRoot, cutExportKey)),
-    });
-    const track = await input.getPrimaryVideoTrack();
-    const sample = await new VideoSampleSink(track as NonNullable<typeof track>).getSample(seconds);
-    const frame = sample as NonNullable<typeof sample>;
-    const width = frame.displayWidth;
-    const buffer = new Uint8Array(frame.allocationSize({ format: "RGBA" }));
-    await frame.copyTo(buffer, { format: "RGBA" });
-    const offset = (Math.floor(frame.displayHeight / 2) * width + Math.floor(width / 2)) * 4;
-    frame.close();
-    return [buffer[offset] ?? -1, buffer[offset + 1] ?? -1, buffer[offset + 2] ?? -1];
-  };
-
   it.effect(
     "carries each time's picture and the audio track into the mp4",
     () =>
@@ -271,6 +273,95 @@ describe.concurrent("video.renderCut: the encoded content", () => {
           // 無音ではなく、入力の 440 Hz の音が、別の周波数よりはるかに強く残っている
           assert.isAbove(tonePower(audio[0], 440), 0.001);
           assert.isAbove(tonePower(audio[0], 440), tonePower(audio[0], 3000) * 100);
+        }),
+      ),
+    slow,
+  );
+});
+
+// static 区間（static: true の segment と hold）は代表の最初のフレームだけを撮り、同じ画像を区間のフレーム数だけ流す。
+describe.concurrent("video.renderCut: static intervals", () => {
+  const red = "rgb(255,0,0)";
+  const green = "rgb(0,255,0)";
+  const blue = "rgb(0,0,255)";
+  const paint = (condition: string, otherwise: string) =>
+    `document.body.style.background = ${condition} ? ${JSON.stringify(green)} : ${JSON.stringify(otherwise)};`;
+
+  const rendersFrames = (
+    prefix: string,
+    html: string,
+    frames: readonly number[],
+    expected: (index: number) => readonly [number, number, number],
+  ) =>
+    withInputs(
+      prefix,
+      (channelRoot) =>
+        Effect.gen(function* () {
+          yield* render();
+          for (const index of frames) {
+            const color = yield* Effect.promise(() => centerOf(channelRoot, index / 30 + 0.001));
+            const [r, g, b] = expected(index);
+            // H.264 の色の誤差を許す
+            assert.isBelow(Math.abs((color[0] ?? 0) - r), 60, `frame ${index} red`);
+            assert.isBelow(Math.abs((color[1] ?? 0) - g), 60, `frame ${index} green`);
+            assert.isBelow(Math.abs((color[2] ?? 0) - b), 60, `frame ${index} blue`);
+          }
+        }),
+      html,
+    );
+
+  it.effect(
+    "fills a hold with the representative picture when only the middle of the hold changes",
+    () =>
+      rendersFrames(
+        "nyaucast-render-hold-middle-",
+        compositionHtml({
+          holds: [{ duration: 0.3, start: 0.1 }],
+          seekBody: paint("t >= 0.15 && t < 0.35", red),
+          segments: twoSegments,
+        }),
+        [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+        () => [255, 0, 0],
+      ),
+    slow,
+  );
+
+  it.effect(
+    "fills a static segment with the representative picture when only its middle changes",
+    () =>
+      rendersFrames(
+        "nyaucast-render-static-middle-",
+        compositionHtml({
+          seekBody: `if (t >= 0.5) { document.body.style.background = ${JSON.stringify(blue)}; } else { ${paint("t >= 0.1 && t < 0.4", red)} }`,
+          segments: [
+            { duration: 0.5, start: 0, static: true },
+            { duration: 0.5, start: 0.5, static: false },
+          ],
+        }),
+        [0, 1, 3, 6, 10, 13, 14, 15, 16],
+        (index) => (index < 15 ? [255, 0, 0] : [0, 0, 255]),
+      ),
+    slow,
+  );
+
+  it.effect(
+    "fails with HoldMismatch naming the hold's start when the hold's last frame differs from its first, and writes nothing",
+    () =>
+      withInputs(
+        "nyaucast-render-hold-mismatch-",
+        (channelRoot) =>
+          Effect.gen(function* () {
+            const failure = yield* Effect.flip(render());
+
+            assert.strictEqual(failure._tag, "HoldMismatch");
+            assert.deepStrictEqual(failureFacts(failure)["seconds"], [0.1]);
+            assert.isFalse(channelFileExists(channelRoot, cutExportKey));
+            assert.deepStrictEqual(yield* exportRows, []);
+          }),
+        compositionHtml({
+          holds: [{ duration: 0.3, start: 0.1 }],
+          seekBody: paint("t >= 0.36 && t < 0.4", red),
+          segments: twoSegments,
         }),
       ),
     slow,
@@ -545,7 +636,11 @@ describe.concurrent("video.renderCut: composition contract checks", () => {
             assert.strictEqual(result.rendered, true);
             assert.isTrue(channelFileExists(channelRoot, cutExportKey));
           }),
-        compositionHtml({ holds: validHolds }),
+        // holds が覆う区間の絵は変わらない（両端が違うと HoldMismatch になる）
+        compositionHtml({
+          holds: validHolds,
+          seekBody: 'document.body.style.background = "rgb(1,2,3)";',
+        }),
       ),
     slow,
   );
