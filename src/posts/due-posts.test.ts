@@ -284,9 +284,7 @@ describe("runDuePosts: C8 - the scheduled time is re-checked immediately before 
           const advancingVideoFiles = Layer.effect(
             VideoFiles,
             Effect.gen(function* () {
-              const real = yield* Effect.gen(function* () {
-                return yield* VideoFiles;
-              }).pipe(Effect.provide(VideoFiles.layer(channelRoot)));
+              const real = yield* VideoFiles.pipe(Effect.provide(VideoFiles.layer(channelRoot)));
               return VideoFiles.of({
                 ...real,
                 exists: (key: string) =>
@@ -331,9 +329,7 @@ describe(
             const advancingVideoFiles = Layer.effect(
               VideoFiles,
               Effect.gen(function* () {
-                const real = yield* Effect.gen(function* () {
-                  return yield* VideoFiles;
-                }).pipe(Effect.provide(VideoFiles.layer(channelRoot)));
+                const real = yield* VideoFiles.pipe(Effect.provide(VideoFiles.layer(channelRoot)));
                 return VideoFiles.of({
                   ...real,
                   openReader: (key: string) =>
@@ -397,9 +393,7 @@ describe(
             const mismatchingAfterFirstPrepare = Layer.effect(
               VideoFiles,
               Effect.gen(function* () {
-                const real = yield* Effect.gen(function* () {
-                  return yield* VideoFiles;
-                }).pipe(Effect.provide(VideoFiles.layer(channelRoot)));
+                const real = yield* VideoFiles.pipe(Effect.provide(VideoFiles.layer(channelRoot)));
                 const credentialStore = yield* CredentialStore;
                 return VideoFiles.of({
                   ...real,
@@ -664,9 +658,7 @@ describe("runDuePosts: C6 - atomic acquisition under real concurrency (same post
           const rendezvousVideoFiles = Layer.effect(
             VideoFiles,
             Effect.gen(function* () {
-              const real = yield* Effect.gen(function* () {
-                return yield* VideoFiles;
-              }).pipe(Effect.provide(VideoFiles.layer(channelRoot)));
+              const real = yield* VideoFiles.pipe(Effect.provide(VideoFiles.layer(channelRoot)));
               const callsByFiber = new Map<number, number>();
               return VideoFiles.of({
                 ...real,
@@ -744,9 +736,7 @@ describe(
             const rendezvousVideoFiles = Layer.effect(
               VideoFiles,
               Effect.gen(function* () {
-                const real = yield* Effect.gen(function* () {
-                  return yield* VideoFiles;
-                }).pipe(Effect.provide(VideoFiles.layer(channelRoot)));
+                const real = yield* VideoFiles.pipe(Effect.provide(VideoFiles.layer(channelRoot)));
                 const callsByFiber = new Map<number, number>();
                 return VideoFiles.of({
                   ...real,
@@ -830,9 +820,7 @@ describe("runDuePosts: C7/C18 - a late run does not acquire after a success was 
           const blockedVideoFiles = Layer.effect(
             VideoFiles,
             Effect.gen(function* () {
-              const real = yield* Effect.gen(function* () {
-                return yield* VideoFiles;
-              }).pipe(Effect.provide(VideoFiles.layer(channelRoot)));
+              const real = yield* VideoFiles.pipe(Effect.provide(VideoFiles.layer(channelRoot)));
               return VideoFiles.of({
                 ...real,
                 exists: (key: string) =>
@@ -1413,9 +1401,7 @@ describe(
             const staleAfterCheckVideoFiles = Layer.effect(
               VideoFiles,
               Effect.gen(function* () {
-                const real = yield* Effect.gen(function* () {
-                  return yield* VideoFiles;
-                }).pipe(Effect.provide(VideoFiles.layer(channelRoot)));
+                const real = yield* VideoFiles.pipe(Effect.provide(VideoFiles.layer(channelRoot)));
                 // VideoFiles.exists の公開契約は SqlClient に依存できない。appendCutExport が
                 // 要る SqlClient は、この Layer の構築時に先に解決しておく(real の取得と同じ作法)。
                 const sql = yield* SqlClient.SqlClient;
@@ -1483,9 +1469,7 @@ describe(
             const staleAfterCheckVideoFiles = Layer.effect(
               VideoFiles,
               Effect.gen(function* () {
-                const real = yield* Effect.gen(function* () {
-                  return yield* VideoFiles;
-                }).pipe(Effect.provide(VideoFiles.layer(channelRoot)));
+                const real = yield* VideoFiles.pipe(Effect.provide(VideoFiles.layer(channelRoot)));
                 // VideoFiles.exists の公開契約は SqlClient に依存できない。appendCandidate/
                 // appendSelection が要る SqlClient は、この Layer の構築時に先に解決しておく。
                 const sql = yield* SqlClient.SqlClient;

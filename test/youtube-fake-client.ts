@@ -37,14 +37,12 @@ export function fakeYouTubeHttp(responses: readonly FakeYouTubeResponse[]) {
         return yield* Effect.die("test response queue is empty");
       }
       if (next === "network-error") {
-        return yield* Effect.fail(
-          new HttpClientError.HttpClientError({
-            reason: new HttpClientError.TransportError({
-              cause: new Error("simulated connection drop"),
-              request,
-            }),
+        return yield* new HttpClientError.HttpClientError({
+          reason: new HttpClientError.TransportError({
+            cause: new Error("simulated connection drop"),
+            request,
           }),
-        );
+        });
       }
       return HttpClientResponse.fromWeb(request, next);
     }),

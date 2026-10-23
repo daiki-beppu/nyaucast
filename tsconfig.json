@@ -22,7 +22,10 @@
       {
         "name": "@effect/language-service",
         "diagnosticSeverity": {
+          "effectSucceedWithVoid": "error",
           "outdatedApi": "error",
+          "unnecessaryEffectGen": "error",
+          "unnecessaryFailYieldableError": "error",
           "unstableApiUsage": "off"
         }
       }
