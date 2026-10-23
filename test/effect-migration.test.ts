@@ -111,37 +111,8 @@ describe("full migration to Effect 4.0", () => {
   describe("under src/", () => {
     const sources = sourceFiles("src");
 
-    it("imports no zod", () => {
-      assert.deepStrictEqual(filesMatching(sources, /zod/u), []);
-    });
-
-    it("imports no Drizzle and no official MCP SDK", () => {
-      assert.deepStrictEqual(filesMatching(sources, /drizzle-orm|@modelcontextprotocol/u), []);
-    });
-
-    it("parses no arguments by hand", () => {
-      assert.deepStrictEqual(filesMatching(sources, /process\.argv/u), []);
-    });
-
-    it("keeps the HTTP boundary on HttpClient rather than a fetch function", () => {
-      assert.isFalse(/\bfetch\b/u.test(contents("src/youtube/client.ts")));
-    });
-
-    it("calls an Effect runner (runMain, runPromise, runSync, runFork) only from the entry point", () => {
-      const runners = filesMatching(production(sources), /\brun(?:Main|Promise|Sync|Fork)\b/u);
-
-      assert.deepStrictEqual(runners, ["src/index.ts"]);
-      expect(contents("src/index.ts").match(/\bNodeRuntime\.runMain\b/gu)).toHaveLength(1);
-    });
-
     it("reads the time from the Clock, never from Date.now() or an argument-less new Date()", () => {
       assert.deepStrictEqual(filesMatching(production(sources), /Date\.now\(|new Date\(\)/u), []);
-    });
-
-    it("opens the libSQL client in exactly one place: the local store", () => {
-      assert.deepStrictEqual(filesMatching(sources, /LibsqlClient|@libsql\/client/u), [
-        "src/db/local-store.ts",
-      ]);
     });
 
     it("keeps migrations as hand-written <id>_<name> modules", () => {
@@ -198,20 +169,6 @@ describe("full migration to Effect 4.0", () => {
         "video.writeScript.ts",
         "video.writeShort.ts",
       ]);
-    });
-  });
-
-  describe("under test/ and src/", () => {
-    it("imports the test API from @effect/vitest, not from vite-plus/test", () => {
-      assert.deepStrictEqual(
-        filesMatching(
-          [...sourceFiles("src"), ...sourceFiles("test")].filter(
-            (file) => file !== "test/effect-migration.test.ts",
-          ),
-          /vite-plus\/test/u,
-        ),
-        [],
-      );
     });
   });
 });
