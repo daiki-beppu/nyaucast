@@ -1,4 +1,4 @@
-import { Effect, Option, Schema } from "effect";
+import { Context, Effect, Option, Schema } from "effect";
 import { Tool } from "effect/ai";
 
 import { encodeMp4 } from "../../audio/media.ts";
@@ -14,7 +14,9 @@ import {
   InvalidComposition,
   NondeterministicComposition,
   captureFrames,
-  openComposition,
+  CaptureParallelism,
+  confirmWorkersAlive,
+  openCaptureWorkers,
   reseekMismatches,
 } from "../../compositions/capture.ts";
 import { appendCutExport, lastCutExport } from "../../db/explainer-cuts.ts";
@@ -142,6 +144,15 @@ const reusableExport = (
     return (yield* (yield* VideoFiles).exists(last.value.key)) ? last : Option.none();
   });
 
+/**
+ * 映像エンコーダーの選択。本番は提供せず（未指定 = エンコーダーの既定。macOS ではハードウェア優先）、出力は変わらない。
+ * ハードウェアのエンコーダーは同じ入力でも毎回バイトが変わるので、バイト単位の一致を確かめるテストだけが "prefer-software" を提供する。
+ */
+export const VideoEncoderAcceleration = Context.Reference<"prefer-software" | undefined>(
+  "nyaucast/VideoEncoderAcceleration",
+  { defaultValue: () => undefined },
+);
+
 // Chrome でフレームを（static 区間は代表だけ）撮りながらキーのファイルへエンコードし、seek の決定論を確かめる。
 // ファイルは一時ファイルへ書き、このスコープが成功で閉じたときだけキーへ置く（失敗・中断では消す）。
 const renderMp4 = (videoId: string, composition: Uint8Array, key: string, track: FileReader) =>
@@ -149,8 +160,10 @@ const renderMp4 = (videoId: string, composition: Uint8Array, key: string, track:
     Effect.gen(function* () {
       const files = yield* VideoFiles;
       const outputPath = yield* files.stage(key);
-      const opened = yield* openComposition(videoId, composition, encoding.fps);
+      const { workers } = yield* CaptureParallelism;
+      const opened = yield* openCaptureWorkers(videoId, composition, encoding.fps, workers);
       const capture = captureFrames(opened);
+      const acceleration = yield* VideoEncoderAcceleration;
       yield* encodeMp4({
         audioBitrate: encoding.audioBitrate,
         audioSource: track,
@@ -159,17 +172,20 @@ const renderMp4 = (videoId: string, composition: Uint8Array, key: string, track:
         frames: capture.frames,
         outputPath,
         videoBitrate: encoding.videoBitrate,
+        ...(acceleration === undefined ? {} : { videoHardwareAcceleration: acceleration }),
       }).pipe(
         Effect.catchTag("AudioDecodeFailed", () => new AudioTrackUnreadable({ videoId })),
         Effect.catchTag("Mp4EncodeFailed", () => new EncodeFailed({ videoId })),
       );
+      const nondeterministic = yield* reseekMismatches(opened, capture.samples);
+      // Chrome が 1 本でも落ちていれば、ほかの検証結果より先に ChromeUnavailable で失敗させる。
+      yield* confirmWorkersAlive(opened);
       if (capture.holdMismatches.length > 0) {
         const seconds = capture.holdMismatches.toSorted((left, right) => left - right);
         return yield* new HoldMismatch({ seconds, videoId });
       }
-      const seconds = yield* reseekMismatches(opened, capture.samples);
-      if (seconds.length > 0) {
-        return yield* new NondeterministicComposition({ seconds, videoId });
+      if (nondeterministic.length > 0) {
+        return yield* new NondeterministicComposition({ seconds: nondeterministic, videoId });
       }
     }),
   );

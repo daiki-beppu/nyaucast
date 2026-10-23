@@ -1,6 +1,6 @@
 import { join } from "node:path";
 
-import { Effect, FileSystem, Schema, Stream } from "effect";
+import { Context, Effect, FileSystem, Layer, Schema, Semaphore, Stream } from "effect";
 
 import { Chrome, ChromeUnavailable, type ChromePage } from "../lib/chrome.ts";
 
@@ -298,11 +298,14 @@ export interface OpenedComposition {
   readonly page: ChromePage;
 }
 
-/**
- * composition を Chrome で開き、`window.__hf` を読んで契約を検証する。違反があれば InvalidComposition（すべての違反を挙げる）。
- * Chrome のプロセスと一時ファイルは、呼び出し側のスコープが終わると片付く。
- */
-export const openComposition = (videoId: string, bytes: Uint8Array, encodingFps?: number) =>
+/** render の撮影ワーカー: composition を読み込んだページ（Chrome 1 本 + タブ 1 つ）の並び。ワーカー w は pages[w]。 */
+export interface CaptureWorkers {
+  readonly hf: Hf;
+  readonly pages: readonly ChromePage[];
+}
+
+/** composition を一時ファイルへ書く。ファイルは呼び出し側のスコープが終わると片付く。 */
+const writeCompositionFile = (bytes: Uint8Array) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const directory = yield* fileSystem
@@ -310,17 +313,81 @@ export const openComposition = (videoId: string, bytes: Uint8Array, encodingFps?
       .pipe(Effect.orDie);
     const file = join(directory, "composition.html");
     yield* fileSystem.writeFile(file, bytes).pipe(Effect.orDie);
+    return file;
+  });
+
+/** Chrome を 1 本起動して 1 ページ開き、composition のファイルを読み込む。 */
+const openLoadedPage = (file: string) =>
+  Effect.gen(function* () {
     const page = yield* (yield* Chrome).openPage;
     yield* loadFile(page, file);
+    return page;
+  });
+
+/** 読み込んだページの `window.__hf` を読んで契約を検証する。違反があれば InvalidComposition（すべての違反を挙げる）。 */
+const readHf = (page: ChromePage, videoId: string, encodingFps: number | undefined) =>
+  Effect.gen(function* () {
     const raw = yield* decodeRawHf(yield* evaluate(page, readHfExpression, false));
     const violations = reviewHf(raw, encodingFps);
     if (violations.length > 0) {
       return yield* new InvalidComposition({ videoId, violations });
     }
-    const hf = yield* Schema.decodeUnknownEffect(Hf)(raw).pipe(Effect.mapError(commandFailed));
+    return yield* Schema.decodeUnknownEffect(Hf)(raw).pipe(Effect.mapError(commandFailed));
+  });
+
+/**
+ * composition を Chrome で開き、`window.__hf` を読んで契約を検証する。違反があれば InvalidComposition（すべての違反を挙げる）。
+ * Chrome のプロセスと一時ファイルは、呼び出し側のスコープが終わると片付く。
+ */
+export const openComposition = (videoId: string, bytes: Uint8Array) =>
+  Effect.gen(function* () {
+    const page = yield* openLoadedPage(yield* writeCompositionFile(bytes));
+    const hf = yield* readHf(page, videoId, undefined);
     yield* setViewport(page, hf);
     return { hf, page } satisfies OpenedComposition;
   });
+
+// ワーカーの番号は 0..N-1 に収まるように剰余を取って渡す。範囲の外は呼び出しの誤りなので defect。
+const workerAt = <Item>(items: readonly Item[], worker: number) => {
+  const item = items[worker];
+  return item === undefined ? Effect.die(`no capture worker ${worker}`) : Effect.succeed(item);
+};
+
+/**
+ * render 用に、composition を `count` 本の Chrome（各 1 タブ）で開く。契約の検証は先頭のワーカーで 1 度だけ行う。
+ * すべての Chrome と一時ファイルは、呼び出し側のスコープが終わると片付く。
+ */
+export const openCaptureWorkers = (
+  videoId: string,
+  bytes: Uint8Array,
+  encodingFps: number,
+  count: number,
+) =>
+  Effect.gen(function* () {
+    const file = yield* writeCompositionFile(bytes);
+    const pages = yield* Effect.forEach(
+      Array.from({ length: count }, () => file),
+      openLoadedPage,
+      { concurrency: count },
+    );
+    const first = yield* workerAt(pages, 0);
+    const hf = yield* readHf(first, videoId, encodingFps);
+    yield* Effect.forEach(pages, (page) => setViewport(page, hf), { concurrency: count });
+    return { hf, pages } satisfies CaptureWorkers;
+  });
+
+/** 撮影ワーカーの並列度（Chrome の本数）。 */
+const parallelismFor = (cores: number) => Math.max(2, Math.min(8, cores));
+
+/** render の並列度。本番の Layer は CPU のコア数から式で決める。テストは `Layer.succeed` で値を差し替える。 */
+export class CaptureParallelism extends Context.Service<
+  CaptureParallelism,
+  { readonly workers: number }
+>()("nyaucast/compositions/CaptureParallelism") {
+  static layerFromCores(cores: number) {
+    return Layer.succeed(CaptureParallelism, { workers: parallelismFor(cores) });
+  }
+}
 
 // ---- 撮影 ----
 
@@ -342,15 +409,21 @@ const sampleIndices = (hf: Hf) => {
   return [...new Set(indices)].toSorted((left, right) => left - right);
 };
 
+/** 決定論の検証用に控えたフレーム。撮ったワーカーの番号を持つ（再 seek は次のワーカーが行う）。 */
+export interface CaptureSample {
+  readonly png: Uint8Array;
+  readonly worker: number;
+}
+
 export interface FrameCapture {
   /** frames が流すフレームの数（全フレームを撮ったときと同じ）。 */
   readonly count: number;
-  /** 先頭から順に撮り、static 区間のフレームには代表の画像を流すフレーム。流し終えると samples と holdMismatches が埋まる。 */
+  /** 撮るフレームの列を順序を保って並行に撮り、static 区間のフレームには代表の画像を流すフレーム。流し終えると samples と holdMismatches が埋まる。 */
   readonly frames: Stream.Stream<Uint8Array, ChromeUnavailable>;
   /** 流し終えたあとに、最初と最後のフレームが一致しなかった hold の start（撮った順）。 */
   readonly holdMismatches: readonly number[];
   /** 決定論の検証用に控えた、segment の終わる直前のフレーム（番号 → PNG。static 区間の中は代表の PNG）。 */
-  readonly samples: ReadonlyMap<number, Uint8Array>;
+  readonly samples: ReadonlyMap<number, CaptureSample>;
 }
 
 // ---- static 区間（static: true の segment と hold）のフレームの範囲 ----
@@ -434,42 +507,60 @@ const frameRouter = (hf: Hf) => {
       .filter((interval) => interval.isHold && interval.last > interval.first)
       .map((interval) => [interval.last, interval]),
   );
-  const samples = new Map<number, Uint8Array>();
+  const samples = new Map<number, CaptureSample>();
   const holdMismatches: number[] = [];
   let representative: Uint8Array = new Uint8Array();
 
-  const startRun = (run: StaticInterval, png: Uint8Array) => {
+  const startRun = (run: StaticInterval, png: Uint8Array, worker: number) => {
     representative = png;
     for (const index of wanted) {
-      if (index >= run.first && index <= run.last) samples.set(index, png);
+      if (index >= run.first && index <= run.last) samples.set(index, { png, worker });
     }
     // 区間のフレーム数だけ代表を流す。区間長の配列は作らない。
     return Stream.range(1, run.last - run.first + 1).pipe(Stream.map(() => png));
   };
 
-  const route = (index: number, png: Uint8Array): Stream.Stream<Uint8Array> => {
+  const route = (index: number, png: Uint8Array, worker: number): Stream.Stream<Uint8Array> => {
     const run = runs.get(index);
-    if (run !== undefined) return startRun(run, png);
+    if (run !== undefined) return startRun(run, png, worker);
     const hold = holdEnds.get(index);
     if (hold !== undefined) {
       if (!sameBytes(representative, png)) holdMismatches.push(hold.start);
       return Stream.empty;
     }
-    if (wanted.includes(index)) samples.set(index, png);
+    if (wanted.includes(index)) samples.set(index, { png, worker });
     return Stream.succeed(png);
   };
 
   return { holdMismatches, route, samples };
 };
 
-/** 撮るフレームの列（captureIndices）を時刻 i / fps で順に撮り、全フレーム分の画像を番号順に流す。 */
-export const captureFrames = ({ hf, page }: OpenedComposition): FrameCapture => {
-  const { holdMismatches, route, samples } = frameRouter(hf);
-  const frames = Stream.fromIterable(captureIndices(hf)).pipe(
-    Stream.mapEffect((index) =>
-      captureAt(page, frameTime(index, hf.fps)).pipe(Effect.map((png) => route(index, png))),
+// 撮るフレームの列の位置 k は、ワーカー k mod N が撮る。ワーカーのページへの操作（seek と撮影）は 1 度に 1 つだけ。
+const captureOnWorkers = (hf: Hf, pages: readonly ChromePage[]) => {
+  const locks = pages.map(() => Semaphore.makeUnsafe(1));
+  return Stream.fromIterable(captureIndices(hf)).pipe(
+    Stream.mapEffect(
+      (index, position) =>
+        Effect.gen(function* () {
+          const worker = position % pages.length;
+          const page = yield* workerAt(pages, worker);
+          const lock = yield* workerAt(locks, worker);
+          const png = yield* lock.withPermits(1)(captureAt(page, frameTime(index, hf.fps)));
+          return { index, png, worker };
+        }),
+      { concurrency: pages.length },
     ),
-    Stream.flatMap((pngs) => pngs),
+  );
+};
+
+/**
+ * 撮るフレームの列（captureIndices）を時刻 i / fps で、順序を保った並行 N（ワーカーの数）で撮り、全フレーム分の画像を番号順に流す。
+ * 代表と控えの状態を持つ route は、順序が揃ったあとに番号順で呼ぶ。
+ */
+export const captureFrames = ({ hf, pages }: CaptureWorkers): FrameCapture => {
+  const { holdMismatches, route, samples } = frameRouter(hf);
+  const frames = captureOnWorkers(hf, pages).pipe(
+    Stream.flatMap(({ index, png, worker }) => route(index, png, worker)),
   );
   return { count: frameCount(hf.duration, hf.fps), frames, holdMismatches, samples };
 };
@@ -477,17 +568,28 @@ export const captureFrames = ({ hf, page }: OpenedComposition): FrameCapture => 
 const sameBytes = (left: Uint8Array, right: Uint8Array) =>
   Buffer.from(left).equals(Buffer.from(right));
 
-/** seek の純関数性の検証: 控えたフレームの時刻へ（逆順に）再 seek して撮り、バイトを比べる。一致しなかった時刻を返す。 */
+/**
+ * seek の純関数性の検証: 控えたフレームの時刻へ（逆順に）再 seek して撮り、バイトを比べる。一致しなかった時刻を返す。
+ * 撮り直しは、元のフレームを撮ったワーカーの次（(w + 1) mod N）が行う。ワーカーが 2 本以上なら、別の Chrome で撮り直す。
+ */
 export const reseekMismatches = (
-  opened: OpenedComposition,
-  samples: ReadonlyMap<number, Uint8Array>,
+  { hf, pages }: CaptureWorkers,
+  samples: ReadonlyMap<number, CaptureSample>,
 ) =>
-  Effect.forEach([...samples.keys()].toReversed(), (index) =>
-    captureAt(opened.page, frameTime(index, opened.hf.fps)).pipe(
-      Effect.map((png) =>
-        sameBytes(png, samples.get(index) ?? new Uint8Array())
-          ? []
-          : [frameTime(index, opened.hf.fps)],
-      ),
-    ),
+  Effect.forEach([...samples.entries()].toReversed(), ([index, sample]) =>
+    Effect.gen(function* () {
+      const page = yield* workerAt(pages, (sample.worker + 1) % pages.length);
+      const png = yield* captureAt(page, frameTime(index, hf.fps));
+      return sameBytes(png, sample.png) ? [] : [frameTime(index, hf.fps)];
+    }),
   ).pipe(Effect.map((groups) => groups.flat().toSorted((left, right) => left - right)));
+
+/**
+ * 全ワーカーの Chrome が生きているか確かめる。Chrome の終了は、そのページへの命令が失敗したときにしか表に出ないので、
+ * 撮影にも撮り直しにも使われなかったワーカーが落ちていても気付けない。1 本でも落ちていれば ChromeUnavailable。
+ */
+export const confirmWorkersAlive = ({ pages }: CaptureWorkers) =>
+  Effect.forEach(pages, (page) => evaluate(page, "true", false), {
+    concurrency: "unbounded",
+    discard: true,
+  });

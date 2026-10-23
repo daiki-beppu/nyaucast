@@ -2,6 +2,7 @@ import { join } from "node:path";
 
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
+import { vi } from "vitest";
 import { ALL_FORMATS, BufferSource, Input, VideoSampleSink } from "mediabunny";
 import { decodeStereo } from "../../audio/media.ts";
 import { tonePower } from "../../../test/bgm-helpers.ts";
@@ -50,7 +51,12 @@ import {
   readChannelFile,
   writeChannelFile,
 } from "../../../test/thumbnail-helpers.ts";
-import { callTool, rejectionReason, withToolChannel } from "../../../test/tool-helpers.ts";
+import {
+  callTool,
+  rejectionReason,
+  type ChromeService,
+  withToolChannel,
+} from "../../../test/tool-helpers.ts";
 import { explainerConfig } from "../../../test/explainer-helpers.ts";
 import { VideoFiles } from "../../videos/video-files.ts";
 import { ExplainerVideoRenderCutTool } from "./video.renderCut.ts";
@@ -73,6 +79,7 @@ const withInputs = <A, E, R>(
   use: (channelRoot: string) => Effect.Effect<A, E, R>,
   html = compositionHtml(),
   videoFiles?: Parameters<typeof inVideo>[2],
+  captureOptions?: Parameters<typeof inVideo>[3],
 ) =>
   inVideo(
     prefix,
@@ -82,6 +89,7 @@ const withInputs = <A, E, R>(
       return setClock(noon).pipe(Effect.andThen(use(channelRoot)));
     },
     videoFiles,
+    captureOptions,
   );
 
 const readMp4 = async (channelRoot: string, key = cutExportKey) => {
@@ -700,15 +708,16 @@ describe.concurrent("video.renderCut: composition contract checks", () => {
   );
 });
 
-describe.concurrent("video.renderCut: failures while encoding", () => {
-  const writesNothing = (channelRoot: string) =>
-    Effect.gen(function* () {
-      const fs = yield* Effect.promise(() => import("node:fs"));
-      const directory = join(channelRoot, cutDirectory);
-      assert.deepStrictEqual(fs.existsSync(directory) ? fs.readdirSync(directory) : [], []);
-      assert.deepStrictEqual(yield* exportRows, []);
-    });
+// 書き出し先のディレクトリに何も残らず（一時ファイルも）、書き出しの記録も積まれていない。
+const writesNothing = (channelRoot: string) =>
+  Effect.gen(function* () {
+    const fs = yield* Effect.promise(() => import("node:fs"));
+    const directory = join(channelRoot, cutDirectory);
+    assert.deepStrictEqual(fs.existsSync(directory) ? fs.readdirSync(directory) : [], []);
+    assert.deepStrictEqual(yield* exportRows, []);
+  });
 
+describe.concurrent("video.renderCut: failures while encoding", () => {
   it.effect(
     "leaves no file, not even a temporary one, when the picture check fails after the encoding",
     () =>
@@ -763,6 +772,300 @@ describe.concurrent("video.renderCut: failures while encoding", () => {
           yield* writesNothing(channelRoot);
         }),
       ),
+    slow,
+  );
+});
+
+// ---- 撮影の並列（Chrome を N 本開いて、撮るフレームを順序を保って配る） ----
+
+// 開いたページの数と、スコープが閉じたページの数を数える。ページ 1 つ = Chrome 1 本 + タブ 1 つ。
+const countingChrome = (counts: { closed: number; opened: number }) => (real: ChromeService) =>
+  ({
+    openPage: real.openPage.pipe(
+      Effect.tap(() =>
+        Effect.suspend(() => {
+          counts.opened += 1;
+          return Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              counts.closed += 1;
+            }),
+          );
+        }),
+      ),
+    ),
+  }) satisfies ChromeService;
+
+// 2 本目に開いた Chrome を、`afterShots` 回目の撮影の直前に落とす（ブラウザごと閉じてから、その撮影の命令を転送する）。
+const crashingSecondChrome = (afterShots: number, counts: { closed: number; opened: number }) => {
+  const counting = countingChrome(counts);
+  return (real: ChromeService): ChromeService => {
+    let opened = 0;
+    return {
+      openPage: counting(real).openPage.pipe(
+        Effect.map((page): Effect.Success<ChromeService["openPage"]> => {
+          opened += 1;
+          if (opened !== 2) return page;
+          let shots = 0;
+          return {
+            ...page,
+            connection: {
+              ...page.connection,
+              send: (method, params, sessionId) => {
+                if (method !== "Page.captureScreenshot") {
+                  return page.connection.send(method, params, sessionId);
+                }
+                shots += 1;
+                const crash =
+                  shots === afterShots
+                    ? page.connection.send("Browser.close").pipe(Effect.ignore)
+                    : Effect.void;
+                return crash.pipe(Effect.andThen(page.connection.send(method, params, sessionId)));
+              },
+            },
+          };
+        }),
+      ),
+    };
+  };
+};
+
+// 3 本目に開いた Chrome を、viewport の設定の応答の後（以後は命令が送られない）に落とす。落ちたことは、閉じたことを示す失敗が返るまで軽い命令を送って、ここで確かめてから戻る。
+const crashingThirdChromeAfterViewport = (counts: { closed: number; opened: number }) => {
+  const counting = countingChrome(counts);
+  return (real: ChromeService): ChromeService => {
+    let started = 0;
+    return {
+      // 何本目かは、開き始めた順で決める（開き終わった順は並行なので worker の番号と一致しない。worker の番号は開き始めた順と同じ）。
+      openPage: Effect.suspend(() => {
+        started += 1;
+        const mine = started;
+        return counting(real).openPage.pipe(
+          Effect.map((page): Effect.Success<ChromeService["openPage"]> => {
+            if (mine !== 3) return page;
+            return {
+              ...page,
+              connection: {
+                ...page.connection,
+                send: (method, params, sessionId) => {
+                  const sent = page.connection.send(method, params, sessionId);
+                  if (method !== "Emulation.setDeviceMetricsOverride") return sent;
+                  const closed = page.connection
+                    .send("Browser.close")
+                    .pipe(
+                      Effect.ignore,
+                      Effect.andThen(
+                        Effect.flip(Effect.forever(page.connection.send("Browser.getVersion"))),
+                      ),
+                    );
+                  return sent.pipe(Effect.tap(() => closed));
+                },
+              },
+            };
+          }),
+        );
+      }),
+    };
+  };
+};
+
+// 全体が 1 つの static segment: 撮るのは先頭の 1 フレームだけ（ワーカー 0）、撮り直すのは終わる直前のフレームだけ（ワーカー 1）。ワーカー 2 には命令が送られない。
+const singleStaticSegment = compositionHtml({
+  seekBody: 'document.body.style.background = "rgb(1,2,3)";',
+  segments: [{ duration: 1, start: 0, static: true }],
+});
+
+// フレームごとに色が違う composition（順序の取り違えがバイトの違いになる）。seek は時刻だけで決まる。
+const everyFrameDiffers = compositionHtml({
+  seekBody: `const frame = Math.round(t * 30);
+    document.body.style.background = "rgb(" + ((frame * 8) % 256) + "," + ((frame * 5 + 40) % 256) + "," + ((frame * 3 + 90) % 256) + ")";`,
+});
+
+// Chrome ごとに別の絵を出す composition: 色は Chrome の識別（下の chrome wrapper が文書の読み込み前に window.__color へ入れる）で決まる。同じ Chrome の中では seek は純関数。
+const perChromeColor = compositionHtml({
+  seekBody: 'document.body.style.background = "rgb(" + window.__color + ")";',
+});
+
+// 開いた Chrome ごとに、必ず異なる色（開いた順の番号）を新しい文書の読み込み前に仕込む。
+const distinctChromeIdentity = (real: ChromeService): ChromeService => {
+  let opened = 0;
+  return {
+    openPage: real.openPage.pipe(
+      Effect.tap((page) => {
+        opened += 1;
+        return page.connection.send(
+          "Page.addScriptToEvaluateOnNewDocument",
+          { source: `window.__color = "${opened * 40},0,0";` },
+          page.sessionId,
+        );
+      }),
+    ),
+  };
+};
+
+// mp4 の作成時刻は Date.now から作られる。描画が秒をまたいでもバイトが変わらないよう、描画の間だけ時刻を固定する。
+const withFixedNow = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => vi.spyOn(Date, "now").mockReturnValue(Date.UTC(2026, 9, 4, 12))),
+    () => effect,
+    (spy) =>
+      Effect.sync(() => {
+        spy.mockRestore();
+      }),
+  );
+
+const renderWith = (workers: number, html: string) => {
+  const counts = { closed: 0, opened: 0 };
+  return withFixedNow(
+    withInputs(
+      `nyaucast-render-parallel-${workers}-`,
+      (channelRoot) =>
+        Effect.gen(function* () {
+          const result = yield* render();
+          return { bytes: readChannelFile(channelRoot, cutExportKey), counts, result };
+        }),
+      html,
+      undefined,
+      {
+        captureParallelism: workers,
+        chrome: countingChrome(counts),
+        videoEncoderAcceleration: "prefer-software",
+      },
+    ),
+  );
+};
+
+// 本番の既定（ハードウェア優先）のエンコーダーは同じ入力でも毎回バイトが変わる（Chrome 1 本どうしでも）。
+// 並列化がエンコーダーへ渡すフレームを変えないことを全バイトで比べるため、ここでは決定的なソフトウェアのエンコーダー（libx264）を使う。
+// 描画を同じ時刻の固定で比べるので、このファイルのほかのテストと並走させない（describe.concurrent にしない）。
+describe("video.renderCut: parallel capture", () => {
+  it.effect(
+    "writes the same mp4 bytes with 2 and 3 workers as with one Chrome, using one Chrome per worker, all closed",
+    () =>
+      Effect.gen(function* () {
+        const single = yield* renderWith(1, everyFrameDiffers);
+        const pair = yield* renderWith(2, everyFrameDiffers);
+        const triple = yield* renderWith(3, everyFrameDiffers);
+
+        assert.strictEqual(single.result.rendered, true);
+        assert.isTrue(Buffer.from(pair.bytes).equals(single.bytes));
+        assert.isTrue(Buffer.from(triple.bytes).equals(single.bytes));
+        // 同じ入力なので render の鍵も同じ（並列度は出力に影響しない）
+        assert.strictEqual(pair.result.renderHash, single.result.renderHash);
+        assert.deepStrictEqual(
+          [single, pair, triple].map(({ counts }) => [counts.opened, counts.closed]),
+          [
+            [1, 1],
+            [2, 2],
+            [3, 3],
+          ],
+        );
+      }),
+    slow * 3,
+  );
+
+  it.effect(
+    "fails with NondeterministicComposition when each Chrome paints a different picture, and writes nothing",
+    () =>
+      withInputs(
+        "nyaucast-render-per-chrome-",
+        (channelRoot) =>
+          Effect.gen(function* () {
+            const failure = yield* Effect.flip(render());
+
+            assert.strictEqual(failure._tag, "NondeterministicComposition");
+            assert.isAbove((failureFacts(failure)["seconds"] as readonly number[]).length, 0);
+            yield* writesNothing(channelRoot);
+          }),
+        perChromeColor,
+        undefined,
+        { captureParallelism: 2, chrome: distinctChromeIdentity },
+      ),
+    slow,
+  );
+
+  it.effect(
+    "renders the same per-Chrome composition with one Chrome, where every re-seek lands on the same Chrome",
+    () =>
+      withInputs(
+        "nyaucast-render-per-chrome-single-",
+        () =>
+          Effect.gen(function* () {
+            const result = yield* render();
+
+            assert.strictEqual(result.rendered, true);
+          }),
+        perChromeColor,
+        undefined,
+        { captureParallelism: 1, chrome: distinctChromeIdentity },
+      ),
+    slow,
+  );
+
+  for (const workers of [2, 3]) {
+    it.effect(
+      `fails with ChromeUnavailable when one of ${workers} Chromes dies mid-capture, closes every Chrome, does not retry, and writes nothing`,
+      () => {
+        const counts = { closed: 0, opened: 0 };
+        return withInputs(
+          `nyaucast-render-crash-${workers}-`,
+          (channelRoot) =>
+            Effect.gen(function* () {
+              const failure = yield* Effect.flip(render());
+
+              assert.strictEqual(failure._tag, "ChromeUnavailable");
+              yield* writesNothing(channelRoot);
+              // 残りの Chrome で続けず、開き直しもしない。開いた Chrome はすべて閉じている
+              assert.deepStrictEqual(counts, { closed: workers, opened: workers });
+            }),
+          everyFrameDiffers,
+          undefined,
+          { captureParallelism: workers, chrome: crashingSecondChrome(3, counts) },
+        );
+      },
+      slow,
+    );
+  }
+
+  it.effect(
+    "renders a single static segment with 3 workers when no Chrome dies, opening and closing all 3",
+    () => {
+      const counts = { closed: 0, opened: 0 };
+      return withInputs(
+        "nyaucast-render-unused-worker-alive-",
+        () =>
+          Effect.gen(function* () {
+            const result = yield* render();
+
+            assert.strictEqual(result.rendered, true);
+            assert.deepStrictEqual(counts, { closed: 3, opened: 3 });
+          }),
+        singleStaticSegment,
+        undefined,
+        { captureParallelism: 3, chrome: countingChrome(counts) },
+      );
+    },
+    slow,
+  );
+
+  it.effect(
+    "fails with ChromeUnavailable when a Chrome that is neither capturing nor re-seeking dies, closes every Chrome, and writes nothing",
+    () => {
+      const counts = { closed: 0, opened: 0 };
+      return withInputs(
+        "nyaucast-render-unused-worker-crash-",
+        (channelRoot) =>
+          Effect.gen(function* () {
+            const failure = yield* Effect.flip(render());
+
+            assert.strictEqual(failure._tag, "ChromeUnavailable");
+            yield* writesNothing(channelRoot);
+            assert.deepStrictEqual(counts, { closed: 3, opened: 3 });
+          }),
+        singleStaticSegment,
+        undefined,
+        { captureParallelism: 3, chrome: crashingThirdChromeAfterViewport(counts) },
+      );
+    },
     slow,
   );
 });

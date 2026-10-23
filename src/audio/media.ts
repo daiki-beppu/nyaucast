@@ -168,7 +168,17 @@ export interface Mp4Request<E, R> {
   /** 書き出す mp4 のパス。 */
   readonly outputPath: string;
   readonly videoBitrate: number;
+  /** 映像エンコーダーの選択。省略はエンコーダーの既定（ハードウェア優先）。"prefer-software" はソフトウェアのエンコーダーを選ぶ（同じ入力から同じバイトを出すために使う）。 */
+  readonly videoHardwareAcceleration?: "prefer-software";
 }
+
+const videoSourceOptions = <E, R>(request: Mp4Request<E, R>) => ({
+  bitrate: request.videoBitrate,
+  codec: "avc" as const,
+  ...(request.videoHardwareAcceleration === undefined
+    ? {}
+    : { hardwareAcceleration: request.videoHardwareAcceleration }),
+});
 
 // PNG 1 枚を、時刻 index / fps・長さ 1 / fps の RGBA のフレームとして source へ流す。
 const addFrame = async (source: VideoSampleSource, png: Uint8Array, index: number, fps: number) => {
@@ -281,7 +291,7 @@ export const encodeMp4 = <E, R>(request: Mp4Request<E, R>) =>
         format: new Mp4OutputFormat({ fastStart: "reserve" }),
         target: new FilePathTarget(request.outputPath),
       });
-      const video = new VideoSampleSource({ bitrate: request.videoBitrate, codec: "avc" });
+      const video = new VideoSampleSource(videoSourceOptions(request));
       const audio = new AudioSampleSource({ bitrate: request.audioBitrate, codec: "aac" });
       // 映像は 1 フレーム 1 パケット。
       output.addVideoTrack(video, {
