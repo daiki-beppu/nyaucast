@@ -28,11 +28,12 @@
     "access": "public"
   },
   "scripts": {
-    "check": "pnpm run lockfile:check && pnpm run '/^(vp|effect|actions|builds):check$/' && vp test run ${VITEST_SHARD:+--shard=$VITEST_SHARD} && pnpm run fallow",
+    "check": "pnpm run lockfile:check && pnpm run '/^(vp|effect|actions|builds|structure):check$/' && vp test run ${VITEST_SHARD:+--shard=$VITEST_SHARD} && pnpm run fallow",
     "lockfile:check": "pnpm install --frozen-lockfile --lockfile-only",
     "vp:check": "vp check",
     "actions:check": "github-actionlint",
     "builds:check": "node scripts/check-allow-builds.ts",
+    "structure:check": "node scripts/check-structure.ts",
     "fallow": "fallow --no-cache --fail-on-issues",
     "prepack": "tsc --project tsconfig.build.json",
     "prepare": "vp hooks enable",

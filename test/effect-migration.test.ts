@@ -34,7 +34,6 @@ function sourceFiles(directory: string): string[] {
     .toSorted();
 }
 
-const production = (files: string[]) => files.filter((file) => !file.endsWith(".test.ts"));
 const contents = (file: string) => readFileSync(join(packageRoot, file), "utf8");
 const filesMatching = (files: string[], pattern: RegExp) =>
   files.filter((file) => pattern.test(contents(file)));
@@ -110,10 +109,6 @@ describe("full migration to Effect 4.0", () => {
 
   describe("under src/", () => {
     const sources = sourceFiles("src");
-
-    it("reads the time from the Clock, never from Date.now() or an argument-less new Date()", () => {
-      assert.deepStrictEqual(filesMatching(production(sources), /Date\.now\(|new Date\(\)/u), []);
-    });
 
     it("keeps migrations as hand-written <id>_<name> modules", () => {
       const migrations = readdirSync(join(packageRoot, "src", "db", "migrations"));
