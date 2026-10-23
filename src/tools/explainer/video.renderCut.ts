@@ -10,9 +10,10 @@ import {
   sha256,
 } from "../../compositions/composition.ts";
 import {
+  HoldMismatch,
   InvalidComposition,
   NondeterministicComposition,
-  captureAllFrames,
+  captureFrames,
   openComposition,
   reseekMismatches,
 } from "../../compositions/capture.ts";
@@ -42,8 +43,9 @@ class EncodeFailed extends Schema.TaggedError<EncodeFailed>()("EncodeFailed", {
 export const ExplainerVideoRenderCutTool = Tool.make("video_render_cut", {
   description: [
     "Render a cut of an explainer video (the long cut by default) to an mp4 (H.264 video and AAC audio, 30 fps): ",
-    "the composition of the cut (videos/<id>/compositions/<cut>.html) is opened in a headless Chrome, every frame is captured by seeking to its time, ",
-    "and the frames are encoded together with the final audio track of the cut (videos/<id>/audio/track.wav for the long cut, audio/<cut>.wav for a short). ",
+    "the composition of the cut (videos/<id>/compositions/<cut>.html) is opened in a headless Chrome and the frames are captured by seeking to their times. ",
+    "A static interval (a segment with static: true, or a hold) is captured as one representative frame (its first), and that picture is used for every frame of the interval; the first and last frames of each hold are compared. ",
+    "The frames are encoded together with the final audio track of the cut (videos/<id>/audio/track.wav for the long cut, audio/<cut>.wav for a short). ",
     "The composition is checked against docs/reference/composition-contract.md first, and seeking again to the end of every segment must give the same picture as the first time. ",
     "The mp4 is written to videos/<id>/cuts/<cut>/<cut>.mp4 and one export is recorded for the cut with the key, the composition hash and the render hash. ",
     "An export whose render hash (composition, audio track and encoding settings) is unchanged and whose file exists is returned as it is, without recording another; force renders it again. ",
@@ -54,6 +56,7 @@ export const ExplainerVideoRenderCutTool = Tool.make("video_render_cut", {
       "with CompositionStale for a short whose candidate was rewritten after the composition was assembled, ",
     "with AudioTrackUnreadable when the audio track cannot be decoded, with EncodeFailed when the encoding fails part way, ",
     "with InvalidComposition (violations lists every broken rule) when the composition breaks the contract or its fps is not 30, ",
+    "with HoldMismatch (seconds lists the start of every hold whose first and last frames differ) when a hold is not static, ",
     "with NondeterministicComposition (seconds lists the times that differed) when seeking is not a pure function of the time, ",
     "and with ChromeUnavailable when the browser cannot be downloaded, started or driven. ",
     "Nothing is written when it fails. ",
@@ -71,6 +74,7 @@ export const ExplainerVideoRenderCutTool = Tool.make("video_render_cut", {
     AudioTrackUnreadable,
     EncodeFailed,
     InvalidComposition,
+    HoldMismatch,
     NondeterministicComposition,
     ChromeUnavailable,
   ]),
@@ -138,7 +142,7 @@ const reusableExport = (
     return (yield* (yield* VideoFiles).exists(last.value.key)) ? last : Option.none();
   });
 
-// Chrome で全フレームを撮りながらキーのファイルへエンコードし、seek の決定論を確かめる。
+// Chrome でフレームを（static 区間は代表だけ）撮りながらキーのファイルへエンコードし、seek の決定論を確かめる。
 // ファイルは一時ファイルへ書き、このスコープが成功で閉じたときだけキーへ置く（失敗・中断では消す）。
 const renderMp4 = (videoId: string, composition: Uint8Array, key: string, track: FileReader) =>
   Effect.scoped(
@@ -146,7 +150,7 @@ const renderMp4 = (videoId: string, composition: Uint8Array, key: string, track:
       const files = yield* VideoFiles;
       const outputPath = yield* files.stage(key);
       const opened = yield* openComposition(videoId, composition, encoding.fps);
-      const capture = captureAllFrames(opened);
+      const capture = captureFrames(opened);
       yield* encodeMp4({
         audioBitrate: encoding.audioBitrate,
         audioSource: track,
@@ -159,6 +163,10 @@ const renderMp4 = (videoId: string, composition: Uint8Array, key: string, track:
         Effect.catchTag("AudioDecodeFailed", () => new AudioTrackUnreadable({ videoId })),
         Effect.catchTag("Mp4EncodeFailed", () => new EncodeFailed({ videoId })),
       );
+      if (capture.holdMismatches.length > 0) {
+        const seconds = capture.holdMismatches.toSorted((left, right) => left - right);
+        return yield* new HoldMismatch({ seconds, videoId });
+      }
       const seconds = yield* reseekMismatches(opened, capture.samples);
       if (seconds.length > 0) {
         return yield* new NondeterministicComposition({ seconds, videoId });

@@ -76,6 +76,12 @@ export class NondeterministicComposition extends Schema.TaggedError<Nondetermini
   { seconds: Schema.Array(Schema.Finite), videoId: Schema.String },
 ) {}
 
+/** hold の最初（代表）と最後のフレームが一致しなかった。composition の hold の申告の誤りで、seek の決定論の破れではない。 */
+export class HoldMismatch extends Schema.TaggedError<HoldMismatch>()("HoldMismatch", {
+  seconds: Schema.Array(Schema.Finite),
+  videoId: Schema.String,
+}) {}
+
 const unless = (holds: boolean, rule: string): string[] => (holds ? [] : [rule]);
 
 const positiveInteger = (value: unknown) =>
@@ -337,31 +343,135 @@ const sampleIndices = (hf: Hf) => {
 };
 
 export interface FrameCapture {
-  /** frames が流すフレームの数。 */
+  /** frames が流すフレームの数（全フレームを撮ったときと同じ）。 */
   readonly count: number;
-  /** 先頭から順に撮るフレーム。流し終えると samples が埋まる。 */
+  /** 先頭から順に撮り、static 区間のフレームには代表の画像を流すフレーム。流し終えると samples と holdMismatches が埋まる。 */
   readonly frames: Stream.Stream<Uint8Array, ChromeUnavailable>;
-  /** 決定論の検証用に控えた、segment の終わる直前のフレーム（番号 → PNG）。 */
+  /** 流し終えたあとに、最初と最後のフレームが一致しなかった hold の start（撮った順）。 */
+  readonly holdMismatches: readonly number[];
+  /** 決定論の検証用に控えた、segment の終わる直前のフレーム（番号 → PNG。static 区間の中は代表の PNG）。 */
   readonly samples: ReadonlyMap<number, Uint8Array>;
 }
 
-/** 全フレームを、時刻 i / fps で順に撮る。 */
-export const captureAllFrames = ({ hf, page }: OpenedComposition): FrameCapture => {
-  const wanted = new Set(sampleIndices(hf));
-  const samples = new Map<number, Uint8Array>();
+// ---- static 区間（static: true の segment と hold）のフレームの範囲 ----
+
+interface StaticInterval {
+  readonly first: number;
+  readonly isHold: boolean;
+  readonly last: number;
+  readonly start: number;
+}
+
+interface FrameRange {
+  readonly first: number;
+  readonly last: number;
+}
+
+// 区間 [start, end) に時刻が入るフレームの範囲（frameCount / lastFrameIndex と同じ規則）。
+const frameRange = (span: Span, fps: number, count: number): FrameRange => ({
+  first: Math.max(0, Math.ceil(span.start * fps - epsilon)),
+  last: Math.min(count - 1, Math.ceil((span.start + span.duration) * fps - epsilon) - 1),
+});
+
+// hold の検証は 1/1024 秒の格子で行うので、元の値では終わりが segment の終わりをわずかに越えうる。
+// 次の segment のフレームを代表の絵で置き換えないよう、hold を収める segment の範囲で切る。
+const holdInterval = (hold: Span, hf: Hf, count: number): StaticInterval => {
+  const own = frameRange(hold, hf.fps, count);
+  const grid = gridSpan(hold);
+  const container = hf.segments.find((segment) => {
+    const bounds = gridSpan(segment);
+    return grid.start >= bounds.start && grid.end <= bounds.end;
+  });
+  const bound = container === undefined ? own : frameRange(container, hf.fps, count);
+  return {
+    first: Math.max(own.first, bound.first),
+    isHold: true,
+    last: Math.min(own.last, bound.last),
+    start: hold.start,
+  };
+};
+
+const staticIntervals = (hf: Hf): readonly StaticInterval[] => {
   const count = frameCount(hf.duration, hf.fps);
-  const frames = Stream.range(0, count - 1).pipe(
-    Stream.mapEffect((index) =>
-      captureAt(page, frameTime(index, hf.fps)).pipe(
-        Effect.tap((png) =>
-          Effect.sync(() => {
-            if (wanted.has(index)) samples.set(index, png);
-          }),
-        ),
-      ),
-    ),
+  const segments = hf.segments
+    .filter((segment) => segment.static)
+    .map((segment) => ({
+      ...frameRange(segment, hf.fps, count),
+      isHold: false,
+      start: segment.start,
+    }));
+  const holds = (hf.holds ?? []).map((hold) => holdInterval(hold, hf, count));
+  const sorted = [...segments, ...holds].toSorted((left, right) => left.first - right.first);
+  return sorted
+    .map((interval, index) => ({
+      ...interval,
+      // 格子の丸めで隣り合う区間が同じフレームを含みうる。フレームは次の区間のものにする。
+      last: Math.min(interval.last, (sorted[index + 1]?.first ?? Number.POSITIVE_INFINITY) - 1),
+    }))
+    .filter((interval) => interval.first <= interval.last);
+};
+
+const integers = (from: number, until: number) =>
+  Array.from({ length: Math.max(0, until - from) }, (_, offset) => from + offset);
+
+// 撮らないフレーム: 区間の代表の次から。hold は最後のフレームを撮る（両端の比較のため）。
+const skippedFrames = (interval: StaticInterval) =>
+  integers(interval.first + 1, interval.isHold ? interval.last : interval.last + 1);
+
+/** 撮るフレームの番号の列（昇順・重複なし）: static 区間の外のフレーム、各 static 区間の最初のフレーム、各 hold の最後のフレーム。 */
+export const captureIndices = (hf: Hf): readonly number[] => {
+  const skipped = new Set(staticIntervals(hf).flatMap(skippedFrames));
+  return integers(0, frameCount(hf.duration, hf.fps)).filter((index) => !skipped.has(index));
+};
+
+/** 撮った番号ごとに、流す画像（0 枚以上）のストリームを決める。代表と控えの状態を持つので、1 回の撮影ごとに作る。 */
+const frameRouter = (hf: Hf) => {
+  const intervals = staticIntervals(hf);
+  const wanted = sampleIndices(hf);
+  const runs = new Map(intervals.map((interval) => [interval.first, interval]));
+  const holdEnds = new Map(
+    intervals
+      .filter((interval) => interval.isHold && interval.last > interval.first)
+      .map((interval) => [interval.last, interval]),
   );
-  return { count, frames, samples };
+  const samples = new Map<number, Uint8Array>();
+  const holdMismatches: number[] = [];
+  let representative: Uint8Array = new Uint8Array();
+
+  const startRun = (run: StaticInterval, png: Uint8Array) => {
+    representative = png;
+    for (const index of wanted) {
+      if (index >= run.first && index <= run.last) samples.set(index, png);
+    }
+    // 区間のフレーム数だけ代表を流す。区間長の配列は作らない。
+    return Stream.range(1, run.last - run.first + 1).pipe(Stream.map(() => png));
+  };
+
+  const route = (index: number, png: Uint8Array): Stream.Stream<Uint8Array> => {
+    const run = runs.get(index);
+    if (run !== undefined) return startRun(run, png);
+    const hold = holdEnds.get(index);
+    if (hold !== undefined) {
+      if (!sameBytes(representative, png)) holdMismatches.push(hold.start);
+      return Stream.empty;
+    }
+    if (wanted.includes(index)) samples.set(index, png);
+    return Stream.succeed(png);
+  };
+
+  return { holdMismatches, route, samples };
+};
+
+/** 撮るフレームの列（captureIndices）を時刻 i / fps で順に撮り、全フレーム分の画像を番号順に流す。 */
+export const captureFrames = ({ hf, page }: OpenedComposition): FrameCapture => {
+  const { holdMismatches, route, samples } = frameRouter(hf);
+  const frames = Stream.fromIterable(captureIndices(hf)).pipe(
+    Stream.mapEffect((index) =>
+      captureAt(page, frameTime(index, hf.fps)).pipe(Effect.map((png) => route(index, png))),
+    ),
+    Stream.flatMap((pngs) => pngs),
+  );
+  return { count: frameCount(hf.duration, hf.fps), frames, holdMismatches, samples };
 };
 
 const sameBytes = (left: Uint8Array, right: Uint8Array) =>

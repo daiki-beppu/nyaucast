@@ -2,12 +2,14 @@ import { assert, describe, it } from "@effect/vitest";
 import { Effect, Stream } from "effect";
 
 import {
-  captureAllFrames,
+  captureFrames,
+  captureIndices,
   capturePreviewFrames,
   frameCount,
   frameTime,
   reseekMismatches,
   segmentLastFrameTime,
+  type Hf,
   type OpenedComposition,
 } from "./capture.ts";
 
@@ -78,6 +80,82 @@ describe("segmentLastFrameTime", () => {
   });
 });
 
+// 撮るフレームの番号の列（Chrome なし）。static 区間（static: true の segment と hold）は代表の最初のフレーム、hold はさらに最後のフレームだけを撮る。
+describe("captureIndices", () => {
+  const upTo = (from: number, to: number) =>
+    Array.from({ length: to - from + 1 }, (_, offset) => from + offset);
+
+  const hfOf = (
+    segments: Hf["segments"],
+    holds?: readonly { readonly duration: number; readonly start: number }[],
+  ): Hf => ({
+    duration: 1,
+    fps,
+    height: 4,
+    segments,
+    width: 4,
+    ...(holds === undefined ? {} : { holds }),
+  });
+
+  const halves = (firstIsStatic: boolean): Hf["segments"] => [
+    { duration: 0.5, start: 0, static: firstIsStatic },
+    { duration: 0.5, start: 0.5, static: false },
+  ];
+
+  it("captures every frame when nothing is static", () => {
+    assert.deepStrictEqual([...captureIndices(hfOf(halves(false)))], upTo(0, 29));
+  });
+
+  it("captures only the first frame of a static segment and never its last frame", () => {
+    assert.deepStrictEqual([...captureIndices(hfOf(halves(true)))], [0, ...upTo(15, 29)]);
+  });
+
+  it("captures the first and last frame of a hold", () => {
+    assert.deepStrictEqual(
+      [...captureIndices(hfOf(halves(false), [{ duration: 0.2, start: 0.1 }]))],
+      [0, 1, 2, 3, 8, ...upTo(9, 29)],
+    );
+  });
+
+  it("combines a static segment and a hold", () => {
+    assert.deepStrictEqual(
+      [...captureIndices(hfOf(halves(true), [{ duration: 0.2, start: 0.6 }]))],
+      [0, 15, 16, 17, 18, 23, ...upTo(24, 29)],
+    );
+  });
+
+  it("covers only the frames whose time falls in a hold written on the 1/1024 s grid", () => {
+    assert.deepStrictEqual(
+      [...captureIndices(hfOf(halves(false), [{ duration: 205 / 1024, start: 102 / 1024 }]))],
+      [0, 1, 2, 3, 8, ...upTo(9, 29)],
+    );
+  });
+
+  it("gives a frame that two adjacent holds both reach to the later hold", () => {
+    const segment = [{ duration: 1, start: 0, static: false }];
+    const holds = [
+      { duration: 0.2001, start: 0.1 },
+      { duration: 0.2, start: 0.3 },
+    ];
+    // フレーム 9（t=0.3）は後の hold の最初。前の hold は 3〜8 で、最後の 8 を撮る。
+    assert.deepStrictEqual(
+      [...captureIndices(hfOf(segment, holds))],
+      [0, 1, 2, 3, 8, 9, 14, ...upTo(15, 29)],
+    );
+  });
+
+  it("does not take the next segment's first frame into a hold that ends at a boundary through floating-point noise", () => {
+    const segments = [
+      { duration: 0.3, start: 0, static: false },
+      { duration: 0.7, start: 0.3, static: false },
+    ];
+    assert.deepStrictEqual(
+      [...captureIndices(hfOf(segments, [{ duration: 0.2, start: 0.1 }]))],
+      [0, 1, 2, 3, 8, ...upTo(9, 29)],
+    );
+  });
+});
+
 // 撮影の CDP 呼び出し: 速いエンコード（optimizeForSpeed）で PNG を撮る。render・preview・再 seek がすべて同じ撮影を通る。
 describe("screenshot parameters", () => {
   const sessionId = "session-1";
@@ -134,10 +212,85 @@ describe("screenshot parameters", () => {
   it.effect("every render frame is captured as PNG with optimizeForSpeed", () =>
     Effect.gen(function* () {
       const { opened, screenshotParams } = fakeOpened();
-      const capture = captureAllFrames(opened);
+      const capture = captureFrames(opened);
       yield* Stream.runDrain(capture.frames);
       expectFastPng(screenshotParams, capture.count);
     }),
+  );
+
+  it.effect("a static segment's re-seek sample is compared with the representative picture", () =>
+    Effect.gen(function* () {
+      let shots = 0;
+      const base = fakeOpened().opened;
+      const opened: OpenedComposition = {
+        hf: {
+          ...base.hf,
+          duration: 1,
+          fps: 4,
+          segments: [{ duration: 1, start: 0, static: true }],
+        },
+        page: {
+          ...base.page,
+          connection: {
+            ...base.page.connection,
+            send: (method, params) => {
+              if (method !== "Page.captureScreenshot")
+                return base.page.connection.send(method, params);
+              shots += 1;
+              return Effect.succeed({ data: Buffer.from([shots]).toString("base64") });
+            },
+          },
+        },
+      };
+      const capture = captureFrames(opened);
+      const flowed = yield* Stream.runCollect(capture.frames);
+      assert.lengthOf(flowed, 4);
+      assert.strictEqual(shots, 1);
+      assert.deepStrictEqual([...(capture.samples.get(3) ?? [])], [1]);
+      // 再 seek の撮り直し（2 枚目の撮影）は代表と違う絵なので、末尾の時刻 0.75 が不一致になる
+      assert.deepStrictEqual(yield* reseekMismatches(opened, capture.samples), [0.75]);
+    }),
+  );
+
+  it.effect(
+    "a hold flows its representative picture for every frame and its last frame is only compared",
+    () =>
+      Effect.gen(function* () {
+        let shots = 0;
+        const base = fakeOpened().opened;
+        const hf: Hf = {
+          ...base.hf,
+          duration: 1,
+          fps: 10,
+          holds: [{ duration: 0.3, start: 0.1 }],
+        };
+        const opened: OpenedComposition = {
+          hf,
+          page: {
+            ...base.page,
+            connection: {
+              ...base.page.connection,
+              send: (method, params) => {
+                if (method !== "Page.captureScreenshot")
+                  return base.page.connection.send(method, params);
+                shots += 1;
+                return Effect.succeed({ data: Buffer.from([shots]).toString("base64") });
+              },
+            },
+          },
+        };
+        const capture = captureFrames(opened);
+        const flowed = yield* Stream.runCollect(capture.frames);
+        // 流れる枚数は全フレーム分、撮影は撮るフレームの列の長さだけ
+        assert.lengthOf(flowed, capture.count);
+        assert.strictEqual(shots, captureIndices(hf).length);
+        // hold（フレーム 1〜3）に流れた画像はすべて代表（2 枚目の撮影）で、最後の撮影（3 枚目）は流れない
+        assert.deepStrictEqual(
+          flowed.slice(1, 4).map((png) => [...png]),
+          [[2], [2], [2]],
+        );
+        assert.deepStrictEqual(capture.holdMismatches, [0.1]);
+      }),
   );
 
   it.effect("re-seek verification frames are captured as PNG with optimizeForSpeed", () =>
