@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { NodeServices } from "@effect/platform-node";
 import { assert, describe, it, vi } from "@effect/vitest";
-import { Deferred, Effect, Exit, Fiber, Layer } from "effect";
+import { Cause, Deferred, Effect, Exit, Fiber, Layer } from "effect";
 import { HttpClientError, HttpClientRequest } from "effect/http";
 import { TestClock } from "effect/testing";
 
@@ -120,9 +120,20 @@ const provideAuth = (options: {
 // テストの時計（TestClock）は止まっているが、別の fiber が動き出すまでの実時間は進む。
 const realDelay = (milliseconds: number) =>
   Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
-const waitUntil = (condition: () => boolean) =>
+// 条件が成り立つまで実時間で待つ。締め切り（既定 3 秒。テストの既定タイムアウト 5 秒より短い）を過ぎたら、
+// 条件の名前を載せた defect で止める。TestClock の下では Effect.timeout / Effect.sleep が働かないので、
+// 締め切りは Date.now() で測る。
+const waitUntil = (conditionName: string, condition: () => boolean, deadlineMilliseconds = 3_000) =>
   Effect.gen(function* () {
-    for (let attempt = 0; attempt < 200 && !condition(); attempt += 1) yield* realDelay(10);
+    const deadline = Date.now() + deadlineMilliseconds;
+    while (!condition()) {
+      if (Date.now() >= deadline) {
+        return yield* Effect.die(
+          new Error(`${deadlineMilliseconds}ms 待っても条件が成り立たなかった: ${conditionName}`),
+        );
+      }
+      yield* realDelay(10);
+    }
   });
 
 const refreshedTokenFile = {
@@ -132,6 +143,24 @@ const refreshedTokenFile = {
   scope: x.scope,
   token_type: "bearer",
 };
+
+describe("waitUntil", () => {
+  it.effect("stops with a defect naming the condition once the real-time deadline passes", () =>
+    Effect.gen(function* () {
+      const started = Date.now();
+      const exit = yield* Effect.exit(waitUntil("決して成り立たない条件", () => false));
+      const elapsed = Date.now() - started;
+
+      assert.isTrue(Exit.isFailure(exit));
+      if (Exit.isFailure(exit)) {
+        assert.isTrue(Cause.hasDies(exit.cause));
+        assert.include(Cause.pretty(exit.cause), "決して成り立たない条件");
+      }
+      assert.isAtLeast(elapsed, 2_900);
+      assert.isBelow(elapsed, 4_500);
+    }),
+  );
+});
 
 describe("X authentication", () => {
   describe("authorize", () => {
@@ -499,7 +528,7 @@ describe("X authentication", () => {
               }),
             );
             // 1 本目の refresh が応答待ちの間に、2 本目が自分の refresh を送れる時間を与えてから応答する。
-            yield* waitUntil(() => http.requests.length >= 1);
+            yield* waitUntil("1 本目の refresh が送られる", () => http.requests.length >= 1);
             yield* realDelay(100);
             yield* Deferred.succeed(release, undefined);
             return yield* Fiber.join(callers);
@@ -578,7 +607,7 @@ describe("X authentication", () => {
               concurrency: "unbounded",
             }),
           );
-          yield* waitUntil(() => http.requests.length >= 2);
+          yield* waitUntil("2 本の refresh が送られる", () => http.requests.length >= 2);
           const reached = http.requests.length;
           yield* Deferred.succeed(release, undefined);
           yield* Fiber.join(callers);

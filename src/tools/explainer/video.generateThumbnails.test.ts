@@ -1,5 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
-import { Deferred, Effect, Fiber } from "effect";
+import { Cause, Deferred, Effect, Exit, Fiber } from "effect";
 
 import { type CodexCall, type FakeCodex, fakeCodex } from "../../../test/codex-helpers.ts";
 import { planInput } from "../../../test/explainer-helpers.ts";
@@ -30,9 +30,20 @@ import {
 // テストの時計（TestClock）は止まっているが、別の fiber が動き出すまでの実時間は進む。
 const realDelay = (milliseconds: number) =>
   Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
-const waitUntil = (condition: () => boolean) =>
+// 条件が成り立つまで実時間で待つ。締め切り（既定 3 秒。テストの既定タイムアウト 5 秒より短い）を過ぎたら、
+// 条件の名前を載せた defect で止める。TestClock の下では Effect.timeout / Effect.sleep が働かないので、
+// 締め切りは Date.now() で測る。
+const waitUntil = (conditionName: string, condition: () => boolean, deadlineMilliseconds = 3_000) =>
   Effect.gen(function* () {
-    for (let attempt = 0; attempt < 200 && !condition(); attempt += 1) yield* realDelay(10);
+    const deadline = Date.now() + deadlineMilliseconds;
+    while (!condition()) {
+      if (Date.now() >= deadline) {
+        return yield* Effect.die(
+          new Error(`${deadlineMilliseconds}ms 待っても条件が成り立たなかった: ${conditionName}`),
+        );
+      }
+      yield* realDelay(10);
+    }
   });
 
 const noon = "2026-10-03T12:00:00.000Z";
@@ -84,6 +95,24 @@ const rejectionRows = selectAll("explainer_thumbnail_rejections").pipe(
 
 const recordPlan = (overrides: Record<string, unknown> = {}) =>
   setClock(noon).pipe(Effect.andThen(callTool("video_write_plan", planInput(overrides))));
+
+describe("waitUntil", () => {
+  it.effect("stops with a defect naming the condition once the real-time deadline passes", () =>
+    Effect.gen(function* () {
+      const started = Date.now();
+      const exit = yield* Effect.exit(waitUntil("決して成り立たない条件", () => false));
+      const elapsed = Date.now() - started;
+
+      assert.isTrue(Exit.isFailure(exit));
+      if (Exit.isFailure(exit)) {
+        assert.isTrue(Cause.hasDies(exit.cause));
+        assert.include(Cause.pretty(exit.cause), "決して成り立たない条件");
+      }
+      assert.isAtLeast(elapsed, 2_900);
+      assert.isBelow(elapsed, 4_500);
+    }),
+  );
+});
 
 describe("video.generateThumbnails: parameters", () => {
   it("is named with its wire name", () => {
@@ -946,7 +975,7 @@ describe("video.generateThumbnails: the codex provider", () => {
         yield* recordPlan();
 
         const running = yield* Effect.forkChild(callTool("video_generate_thumbnails", input()));
-        yield* waitUntil(() => codex.execCalls.length >= 1);
+        yield* waitUntil("codex exec が 1 回呼ばれる", () => codex.execCalls.length >= 1);
         // 並行なら 2 本目が起動できる時間を与えてから確かめる。逐次なら 1 本目の終了まで起動しない。
         yield* realDelay(100);
         assert.strictEqual(codex.execCalls.length, 1);
