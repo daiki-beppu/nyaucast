@@ -12,6 +12,7 @@ import type { BgmPool } from "./channel/bgm-pool.ts";
 import type { ChannelSettings } from "./channel/channel-settings.ts";
 import type { CollectionIds } from "./collections/collection-ids.ts";
 import type { CollectionDirectories } from "./collections/directories.ts";
+import type { CaptureParallelism } from "./compositions/capture.ts";
 import type { Chrome } from "./lib/chrome.ts";
 import type { ThumbnailFiles } from "./thumbnails/thumbnail-files.ts";
 import {
@@ -139,6 +140,7 @@ export const CollectionToolkit = Toolkit.make(
 // service の Layer は組み立てず、必要な service を要求するだけにする（合成は entry point）。
 type ToolServices =
   | BgmPool
+  | CaptureParallelism
   | ChannelSettings
   | Chrome
   | ChildProcessSpawner.ChildProcessSpawner

@@ -103,13 +103,20 @@ export const inVideo = <A, E, R>(
   prefix: string,
   use: (channelRoot: string) => Effect.Effect<A, E, R>,
   videoFiles?: ToolChannelOptions["videoFiles"],
+  captureOptions: Pick<
+    ToolChannelOptions,
+    "captureParallelism" | "chrome" | "videoEncoderAcceleration"
+  > = {},
 ) =>
-  withToolChannel(prefix, { config: explainerConfig, videoFiles }, (channelRoot) =>
-    Effect.gen(function* () {
-      yield* recordPlan();
-      yield* approveProduce();
-      return yield* use(channelRoot);
-    }),
+  withToolChannel(
+    prefix,
+    { config: explainerConfig, videoFiles, ...captureOptions },
+    (channelRoot) =>
+      Effect.gen(function* () {
+        yield* recordPlan();
+        yield* approveProduce();
+        return yield* use(channelRoot);
+      }),
   );
 
 interface ExportRow {

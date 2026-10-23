@@ -1,4 +1,4 @@
-import { homedir } from "node:os";
+import { availableParallelism, homedir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -20,6 +20,7 @@ import { CollectionIds } from "./collections/collection-ids.ts";
 import { CollectionDirectories } from "./collections/directories.ts";
 import { LocalStore } from "./db/local-store.ts";
 import { cliTeardown, nyaucastCli, version } from "./cli.ts";
+import { CaptureParallelism } from "./compositions/capture.ts";
 import { Chrome, chromeCacheDirectory } from "./lib/chrome.ts";
 import { InstagramAuth } from "./instagram/auth.ts";
 import {
@@ -73,6 +74,8 @@ const withMcpServices = <A, E, R>(handlers: Layer.Layer<A, E, R>) =>
     Layer.provide(VideoIds.layer),
     Layer.provide(thumbnailFiles),
     Layer.provide(Chrome.layer({ cacheDirectory: chromeCacheDirectory(homedir()) })),
+    // render の並列度は、コア数をここで 1 回だけ解決して式（下限 2・上限 8）に渡す。
+    Layer.provide(CaptureParallelism.layerFromCores(availableParallelism())),
     Layer.provide(VideoFiles.layer(channelRoot)),
     Layer.provide(StaticSecrets.layer({ configRoot })),
     Layer.provide(NodeHttpClient.layerUndici),

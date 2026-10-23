@@ -1,23 +1,30 @@
 import { homedir } from "node:os";
 
 import { NodeServices } from "@effect/platform-node";
-import { Effect, type FileSystem, Layer, type Path, Semaphore, Stream } from "effect";
+import { Effect, type FileSystem, Layer, type Path, type Scope, Semaphore, Stream } from "effect";
 import type { Toolkit } from "effect/ai";
 import { AiError, Tool } from "effect/ai";
 
 import { CredentialStore } from "../src/auth/credential-store.ts";
 import { DeclaredAccounts } from "../src/auth/declared-accounts.ts";
 import { BgmPool } from "../src/channel/bgm-pool.ts";
+import { CaptureParallelism } from "../src/compositions/capture.ts";
 import { CollectionIds } from "../src/collections/collection-ids.ts";
 import { CloudflareEnvironment } from "../src/cloudflare/environment.ts";
 import { CollectionDirectories } from "../src/collections/directories.ts";
-import { Chrome, chromeCacheDirectory } from "../src/lib/chrome.ts";
+import {
+  Chrome,
+  chromeCacheDirectory,
+  type ChromePage,
+  type ChromeUnavailable,
+} from "../src/lib/chrome.ts";
 import {
   CollectionToolHandlers,
   CollectionToolkit,
   ExplainerToolHandlers,
   ExplainerToolkit,
 } from "../src/mcp.ts";
+import { VideoEncoderAcceleration } from "../src/tools/explainer/video.renderCut.ts";
 import { ThumbnailFiles } from "../src/thumbnails/thumbnail-files.ts";
 import { VideoFiles } from "../src/videos/video-files.ts";
 import { RenderLock } from "../src/videos/render-lock.ts";
@@ -88,7 +95,21 @@ export const rejectionReason = explainerCaller.rejection;
 export const callCollectionTool = collectionCaller.call;
 export const collectionRejectionReason = collectionCaller.rejection;
 
+/** Chrome の service の形（`openPage` だけ）。 */
+export interface ChromeService {
+  readonly openPage: Effect.Effect<ChromePage, ChromeUnavailable, Scope.Scope>;
+}
+
+/** 描画するテストが並走するので、本番の式（最大 8）ではなく 2 を既定にして Chrome の起動を抑える。 */
+const defaultCaptureParallelism = 2;
+
 export interface ToolChannelOptions {
+  /** render の並列度（撮影ワーカー = Chrome の本数）。省略は 2。 */
+  readonly captureParallelism?: number;
+  /** 映像エンコーダーの選択。省略は本番と同じ（エンコーダーの既定）。バイト単位の一致を確かめるテストだけが "prefer-software" を与える。 */
+  readonly videoEncoderAcceleration?: "prefer-software" | undefined;
+  /** 本物の Chrome を包んで振る舞いを変える（途中で落とすなど）。省略は本物のまま。 */
+  readonly chrome?: ((real: ChromeService) => ChromeService) | undefined;
   /** チャンネルの設定ファイル（config/channel/video.json）の内容。省略は書かない。 */
   readonly config?: string;
   /** 新しい collection の ID。省略は本物の ID 生成。 */
@@ -104,6 +125,32 @@ export interface ToolChannelOptions {
     | ((channelRoot: string) => Layer.Layer<VideoFiles, never, FileSystem.FileSystem | Path.Path>)
     | undefined;
 }
+
+const realChrome = Chrome.layer({ cacheDirectory: chromeCacheDirectory(homedir()) }).pipe(
+  Layer.provide(NodeServices.layer),
+);
+
+const wrappedChrome = (wrap: ToolChannelOptions["chrome"]) =>
+  wrap === undefined
+    ? realChrome
+    : Layer.effect(
+        Chrome,
+        Effect.gen(function* () {
+          return Chrome.of(wrap(yield* Chrome));
+        }),
+      ).pipe(Layer.provide(realChrome));
+
+// render が使う Chrome と並列度。
+const captureServices = (
+  options: Pick<ToolChannelOptions, "captureParallelism" | "chrome" | "videoEncoderAcceleration">,
+) =>
+  Layer.mergeAll(
+    Layer.succeed(VideoEncoderAcceleration, options.videoEncoderAcceleration),
+    wrappedChrome(options.chrome),
+    Layer.succeed(CaptureParallelism, {
+      workers: options.captureParallelism ?? defaultCaptureParallelism,
+    }),
+  );
 
 /**
  * `ExplainerToolHandlers` と `CollectionToolHandlers` が要求する service をすべてテスト用に揃えて use を動かす。
@@ -144,9 +191,7 @@ export const withToolChannel = <A, E, R>(
               gemini.secrets,
               codex.layer,
               // 本物の Chrome。偽の子プロセス（codex）とは別の spawner で動く。
-              Chrome.layer({ cacheDirectory: chromeCacheDirectory(homedir()) }).pipe(
-                Layer.provide(NodeServices.layer),
-              ),
+              captureServices(options),
             ),
           ),
         );
