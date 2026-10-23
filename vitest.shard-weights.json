@@ -68,7 +68,6 @@
   "test/auth-cli.test.ts": 0.3,
   "test/chrome-dependencies.test.ts": 0,
   "test/codec.test.ts": 0,
-  "test/effect-migration.test.ts": 0.2,
   "test/mcp-cli.test.ts": 13.2,
   "test/package-smoke.test.ts": 4.9,
   "test/platform-contracts.test.ts": 0.7,
