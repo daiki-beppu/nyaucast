@@ -67,7 +67,7 @@ const hashMetaPattern = /<meta name="nyaucast-composition-hash" content="([0-9a-
 
 export const ExplainerVideoAssembleCompositionTool = Tool.make("video_assemble_composition", {
   description:
-    "Assemble the composition of a cut of an explainer video (the long cut by default): one self-contained HTML file that implements window.__hf (width, height, fps, duration, seek and segments; see docs/reference/composition-contract.md). " +
+    "Assemble the composition of a cut of an explainer video (the long cut by default): one self-contained HTML file that implements window.__hf (width, height, fps, duration, seek, segments and holds, the spans of two frames or more inside a scene where nothing moves, changes the subtitle or crosses a scene boundary; see docs/reference/composition-contract.md). " +
     "The positions of the diagrams (docs/reference/diagram-contract.md) are turned into seconds with the timing table written by video_synthesize_narration, " +
     "the subtitles (one per phrase, in the notation, at the bottom), the theme of the channel (colors, sizes and font files, embedded as base64) and the frame are added by the tool, and the scenes are the segments. " +
     "Every diagram is checked again, across scenes, and every violation is listed at once; nothing is written when there is one. " +
@@ -269,7 +269,8 @@ const runtimeSource = `(function () {
     fps: data.fps,
     duration: data.duration,
     seek: seek,
-    segments: data.segments
+    segments: data.segments,
+    holds: data.holds
   };
 })();`;
 
@@ -541,6 +542,88 @@ interface CompositionParts {
   readonly theme: Theme;
 }
 
+// ---- holds: seek の runtime が読む data（motions・captions・scenes）から導く、変わらない区間 ----
+
+interface Change {
+  readonly from: number;
+  readonly to: number;
+}
+
+interface Timeline {
+  readonly captions: readonly { readonly end: number; readonly start: number }[];
+  readonly motions: readonly Motion[];
+  readonly scenes: readonly { readonly end: number; readonly start: number }[];
+}
+
+const point = (at: number): Change => ({ from: at, to: at });
+
+/** 絵が変わる時刻と区間。動きは区間全体、字幕の切り替わりとシーンの境目は点。 */
+const changesOf = ({ captions, motions, scenes }: Timeline): Change[] => [
+  ...motions
+    .flatMap((motion) => [motion.beat, motion.dim])
+    .filter((timed): timed is Timed => timed !== null)
+    .map((timed) => ({ from: timed.start, to: timed.start + timed.length })),
+  ...captions.flatMap((caption) => [point(caption.start), point(caption.end)]),
+  ...scenes.flatMap((scene) => [point(scene.start), point(scene.end)]),
+];
+
+/** 変わる時刻と区間を除いた、[0, duration] の残りの区間。 */
+const quietSpansOf = (changes: readonly Change[], duration: number): Change[] => {
+  const sorted = [...changes.toSorted((left, right) => left.from - right.from), point(duration)];
+  const spans: Change[] = [];
+  let reach = 0;
+  for (const change of sorted) {
+    if (change.from > reach) spans.push({ from: reach, to: Math.min(change.from, duration) });
+    reach = Math.max(reach, change.to);
+  }
+  return spans;
+};
+
+// 始まりは、変わる区間の終わりより厳密に後の格子点（clamp した後の絵）。終わりは、次に変わる時刻以下の格子点。
+const holdOf = (span: Change) => {
+  const start = (Math.floor(span.from * grid) + 1) / grid;
+  const end = Math.floor(span.to * grid) / grid;
+  return { duration: end - start, start };
+};
+
+const holdsOf = (timeline: Timeline, duration: number) =>
+  quietSpansOf(changesOf(timeline), duration)
+    .map(holdOf)
+    .filter((hold) => hold.duration * fps >= 2);
+
+const runtimeDataOf = (
+  plan: CutPlan,
+  motions: readonly Motion[],
+  segments: ReturnType<typeof segmentsOf>,
+  duration: number,
+) => {
+  const captions = plan.captions.flatMap((paragraph) =>
+    paragraph.phrases.map((phrase) => ({
+      end: phrase.endSeconds,
+      start: phrase.startSeconds,
+      text: phrase.text,
+    })),
+  );
+  const scenes = segments.map((segment) => ({
+    end: segment.start + segment.duration,
+    start: segment.start,
+  }));
+  return {
+    captions,
+    dimmed: dimmedOpacity,
+    duration,
+    fps,
+    height: plan.layout.height,
+    holds: holdsOf({ captions, motions, scenes }, duration),
+    motions,
+    popScale,
+    scenes,
+    segments,
+    slide: slideDistance,
+    width: plan.layout.width,
+  };
+};
+
 const buildHtml = ({ fonts, hash, plan, reviewed, shortVersion, theme }: CompositionParts) => {
   const numbering: Numbering = { next: 0 };
   const specs: MotionSpec[][] = [];
@@ -555,28 +638,7 @@ const buildHtml = ({ fonts, hash, plan, reviewed, shortVersion, theme }: Composi
     scenes.map(({ input }) => input),
     duration,
   );
-  const data = {
-    captions: plan.captions.flatMap((paragraph) =>
-      paragraph.phrases.map((phrase) => ({
-        end: phrase.endSeconds,
-        start: phrase.startSeconds,
-        text: phrase.text,
-      })),
-    ),
-    dimmed: dimmedOpacity,
-    duration,
-    fps,
-    height: plan.layout.height,
-    motions: specs.flatMap(motionsOf),
-    popScale,
-    scenes: segments.map((segment) => ({
-      end: segment.start + segment.duration,
-      start: segment.start,
-    })),
-    segments,
-    slide: slideDistance,
-    width: plan.layout.width,
-  };
+  const data = runtimeDataOf(plan, specs.flatMap(motionsOf), segments, duration);
   return [
     "<!doctype html>",
     '<html lang="ja">',

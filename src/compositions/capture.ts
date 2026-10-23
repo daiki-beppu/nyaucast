@@ -204,7 +204,7 @@ const holdViolations = (raw: RawHf) => {
 };
 
 /** 契約の違反を、安定した識別子ですべて挙げる。render は撮影のレートとエンコードのレートが一致することも求める。 */
-const reviewHf = (raw: RawHf | null, encodingFps: number | undefined) => {
+export const reviewHf = (raw: RawHf | null, encodingFps: number | undefined) => {
   if (raw === null) return ["hf-missing"];
   return [
     ...unless(positiveInteger(raw.width), "width"),
