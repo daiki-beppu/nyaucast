@@ -36,10 +36,16 @@ const Segment = Schema.Struct({
   static: Schema.Boolean,
 });
 
+const Hold = Schema.Struct({
+  duration: Schema.Finite,
+  start: Schema.Finite,
+});
+
 const Hf = Schema.Struct({
   duration: Schema.Finite,
   fps: Schema.Finite,
   height: Schema.Finite,
+  holds: Schema.optionalKey(Schema.Array(Hold)),
   segments: Schema.Array(Segment),
   width: Schema.Finite,
 });
@@ -52,6 +58,7 @@ const RawHf = Schema.NullOr(
     duration: Schema.optionalKey(Schema.Unknown),
     fps: Schema.optionalKey(Schema.Unknown),
     height: Schema.optionalKey(Schema.Unknown),
+    holds: Schema.optionalKey(Schema.Unknown),
     seekType: Schema.String,
     segments: Schema.optionalKey(Schema.Unknown),
     width: Schema.optionalKey(Schema.Unknown),
@@ -102,6 +109,94 @@ const segmentViolations = (raw: RawHf) => {
   ];
 };
 
+// ---- holds の規則（docs/reference/composition-contract.md の「holds の規則」） ----
+
+const isHolds = Schema.is(Schema.Array(Hold));
+
+// 境目の比較は 1/1024 秒の格子に揃えた値で行う（浮動小数のずれで、端がちょうど境目の hold を違反にしない）。
+const onGrid = (seconds: number) => Math.round(seconds * 1024) / 1024;
+
+const gridSpan = (span: Span) => ({
+  end: onGrid(span.start + span.duration),
+  start: onGrid(span.start),
+});
+
+const holdsOverlap = (spans: readonly { end: number; start: number }[]) => {
+  const sorted = spans.toSorted((left, right) => left.start - right.start);
+  let reach = Number.NEGATIVE_INFINITY;
+  for (const span of sorted) {
+    if (span.start < reach) return true;
+    reach = Math.max(reach, span.end);
+  }
+  return false;
+};
+
+interface GridSpan {
+  readonly end: number;
+  readonly start: number;
+}
+interface GridSegment extends GridSpan {
+  readonly static: boolean;
+}
+
+const holdsWithinSegments = (holds: readonly GridSpan[], segments: readonly GridSegment[]) =>
+  holds.every((hold) =>
+    segments.some((segment) => hold.start >= segment.start && hold.end <= segment.end),
+  );
+
+const holdsOutsideStatic = (holds: readonly GridSpan[], segments: readonly GridSegment[]) =>
+  !holds.some((hold) =>
+    segments.some(
+      (segment) => segment.static && hold.start < segment.end && hold.end > segment.start,
+    ),
+  );
+
+const holdsWithinComposition = (holds: readonly GridSpan[], end: number) =>
+  holds.every((hold) => hold.start >= 0 && hold.end <= end);
+
+// 比べる基準（segments）の崩れは segments として別に報告されるので、ここでは評価しない。
+// segments が composition の範囲の外まで延びていても、hold の範囲は composition の範囲で別に判定する（崩れは segments-end として別に報告される）。
+// duration の崩れも duration として別に報告されるので、範囲の判定はしない。
+const holdSegmentViolations = (holds: readonly GridSpan[], raw: RawHf) => {
+  if (!isSegments(raw.segments)) return [];
+  const compositionEnd = positiveFinite(raw.duration)
+    ? onGrid(raw.duration as number)
+    : Number.POSITIVE_INFINITY;
+  const segments = raw.segments.map((segment) => ({
+    ...gridSpan(segment),
+    static: segment.static,
+  }));
+  return [
+    ...unless(
+      holdsWithinSegments(holds, segments) && holdsWithinComposition(holds, compositionEnd),
+      "holds-segment",
+    ),
+    ...unless(holdsOutsideStatic(holds, segments), "holds-static"),
+  ];
+};
+
+// 2 フレームの境は格子の上にないので、格子化しない値で比べる。fps の崩れは fps として別に報告される。
+const holdDurationViolations = (holds: readonly Span[], raw: RawHf) => {
+  const fps = raw.fps;
+  if (!positiveFinite(fps)) return [];
+  return unless(
+    holds.every((hold) => hold.duration * (fps as number) >= 2 - epsilon),
+    "holds-duration",
+  );
+};
+
+// holds が書かれていないときは何も申告していないので、規則を評価しない。
+const holdViolations = (raw: RawHf) => {
+  if (raw.holds === undefined) return [];
+  if (!isHolds(raw.holds)) return ["holds"];
+  const grid = raw.holds.map(gridSpan);
+  return [
+    ...holdSegmentViolations(grid, raw),
+    ...unless(!holdsOverlap(grid), "holds-overlap"),
+    ...holdDurationViolations(raw.holds, raw),
+  ];
+};
+
 /** 契約の違反を、安定した識別子ですべて挙げる。render は撮影のレートとエンコードのレートが一致することも求める。 */
 const reviewHf = (raw: RawHf | null, encodingFps: number | undefined) => {
   if (raw === null) return ["hf-missing"];
@@ -112,6 +207,7 @@ const reviewHf = (raw: RawHf | null, encodingFps: number | undefined) => {
     ...unless(positiveFinite(raw.duration), "duration"),
     ...unless(raw.seekType === "function", "seek"),
     ...segmentViolations(raw),
+    ...holdViolations(raw),
     ...unless(encodingFps === undefined || raw.fps === encodingFps, "fps-encoding"),
   ];
 };
@@ -143,7 +239,7 @@ const evaluate = (page: ChromePage, expression: string, awaitPromise: boolean) =
 const readHfExpression = `(() => {
   const hf = window.__hf;
   if (!hf) return null;
-  return { duration: hf.duration, fps: hf.fps, height: hf.height, seekType: typeof hf.seek, segments: hf.segments, width: hf.width };
+  return { duration: hf.duration, fps: hf.fps, height: hf.height, holds: hf.holds, seekType: typeof hf.seek, segments: hf.segments, width: hf.width };
 })()`;
 
 // seek → settle（double rAF と 50ms の race）。settle を省くと、前の seek の絵を撮ってしまう。

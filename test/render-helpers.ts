@@ -31,8 +31,10 @@ interface CompositionOptions {
   readonly duration?: number;
   readonly fps?: number;
   readonly height?: number;
+  /** segment の中の変わらない区間の自己申告（契約違反の形も渡せるよう unknown）。書かなければ申告しない。 */
+  readonly holds?: unknown;
   /** 申告から取り除く項目（契約違反の composition を作る）。 */
-  readonly omit?: readonly ("duration" | "fps" | "height" | "segments" | "width")[];
+  readonly omit?: readonly ("duration" | "fps" | "height" | "holds" | "segments" | "width")[];
   /** seek(t) の本体。`t` と、seek が呼ばれた回数 `calls`（1 始まり）が見える。document.body.style.background を設定する。 */
   readonly seekBody?: string;
   readonly segments?: readonly TestSegment[];

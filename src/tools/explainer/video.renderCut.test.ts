@@ -431,6 +431,60 @@ describe.concurrent("video.renderCut: idempotence and force", () => {
   );
 });
 
+const holdViolationCases = [
+  ["holds", { holds: "none" }],
+  ["holds", { holds: [{ duration: 0.2, start: "0.1" }] }],
+  ["holds-segment", { holds: [{ duration: 0.2, start: 0.4 }] }],
+  ["holds-segment", { holds: [{ duration: 0.2, start: 0.9 }] }],
+  [
+    "holds-overlap",
+    {
+      holds: [
+        { duration: 0.2, start: 0.1 },
+        { duration: 0.2, start: 0.2 },
+      ],
+    },
+  ],
+  [
+    "holds-static",
+    {
+      holds: [{ duration: 0.2, start: 0.1 }],
+      segments: [
+        { duration: 0.5, start: 0, static: true },
+        { duration: 0.5, start: 0.5 },
+      ],
+    },
+  ],
+  ["holds-duration", { holds: [{ duration: 0.05, start: 0.1 }] }],
+  // segment が composition の終わりを越えて延びていても、終わりを越える hold は違反
+  [
+    "holds-segment",
+    { holds: [{ duration: 0.25, start: 1.25 }], segments: [{ duration: 2, start: 0 }] },
+  ],
+  // segment が 0 より前から始まっていても、0 より前に始まる hold は違反
+  [
+    "holds-segment",
+    { holds: [{ duration: 0.5, start: -0.25 }], segments: [{ duration: 1.5, start: -0.5 }] },
+  ],
+] as const;
+
+// 格子に揃えて初めて境目に届く hold: 0.1 + 0.2 は浮動小数で 0.30000000000000004 になり、素の比較では segment の境目 0.3 を越える。
+const gridBoundaryComposition = {
+  duration: 0.3 + 0.7,
+  holds: [{ duration: 0.2, start: 0.1 }],
+  segments: [
+    { duration: 0.3, start: 0 },
+    { duration: 0.7, start: 0.3 },
+  ],
+} as const;
+
+// 規則を満たす holds: 各 segment の中、重ならない、2 フレーム（2/30 秒）以上。
+const validHolds = [
+  { duration: 0.2, start: 0.1 },
+  { duration: 0.2, start: 0.1 + 0.2 },
+  { duration: 0.5, start: 0.5 },
+];
+
 describe.concurrent("video.renderCut: composition contract checks", () => {
   const failsWith = (html: string, tag: string) =>
     withInputs(
@@ -462,6 +516,53 @@ describe.concurrent("video.renderCut: composition contract checks", () => {
         Effect.map((failure) => {
           assert.include(failureFacts(failure)["violations"], "segments-gap");
         }),
+      ),
+    slow,
+  );
+
+  for (const [name, options] of holdViolationCases) {
+    it.effect(
+      `fails with InvalidComposition listing ${name} for ${JSON.stringify(options.holds)}, and writes nothing`,
+      () =>
+        failsWith(compositionHtml(options), "InvalidComposition").pipe(
+          Effect.map((failure) => {
+            assert.include(failureFacts(failure)["violations"], name);
+          }),
+        ),
+      slow,
+    );
+  }
+
+  it.effect(
+    "renders a composition whose holds follow the rules, including holds that end exactly on a segment boundary",
+    () =>
+      withInputs(
+        "nyaucast-render-holds-",
+        (channelRoot) =>
+          Effect.gen(function* () {
+            const result = yield* render();
+
+            assert.strictEqual(result.rendered, true);
+            assert.isTrue(channelFileExists(channelRoot, cutExportKey));
+          }),
+        compositionHtml({ holds: validHolds }),
+      ),
+    slow,
+  );
+
+  it.effect(
+    "renders a composition whose hold ends on a segment boundary only after rounding to the 1/1024 s grid",
+    () =>
+      withInputs(
+        "nyaucast-render-holds-grid-",
+        (channelRoot) =>
+          Effect.gen(function* () {
+            const result = yield* render();
+
+            assert.strictEqual(result.rendered, true);
+            assert.isTrue(channelFileExists(channelRoot, cutExportKey));
+          }),
+        compositionHtml(gridBoundaryComposition),
       ),
     slow,
   );
