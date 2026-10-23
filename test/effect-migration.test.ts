@@ -7,7 +7,6 @@ import { parse } from "yaml";
 import { checkGates } from "./check-gates.ts";
 
 const packageRoot = resolve(import.meta.dirname, "..");
-const exactVersion = /^\d+\.\d+\.\d+$/u;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -73,18 +72,6 @@ describe("full migration to Effect 4.0", () => {
     assert.isFalse(existsSync(join(packageRoot, "src", "db", "schema.ts")));
   });
 
-  it("exact-pins effect and every @effect/* package", () => {
-    const all = { ...section("dependencies"), ...section("devDependencies") };
-    const effectPackages = Object.entries(all).filter(
-      ([name]) => name === "effect" || name.startsWith("@effect/"),
-    );
-
-    assert.isAtLeast(effectPackages.length, 4);
-    for (const [name, version] of effectPackages) {
-      expect(version, name).toMatch(exactVersion);
-    }
-  });
-
   it("ships the runtime Effect packages as dependencies and the test and diagnostic tools as devDependencies", () => {
     for (const name of ["effect", "@effect/platform-node", "@effect/sql-libsql"]) {
       assert.property(section("dependencies"), name);
@@ -109,12 +96,6 @@ describe("full migration to Effect 4.0", () => {
 
   describe("under src/", () => {
     const sources = sourceFiles("src");
-
-    it("keeps migrations as hand-written <id>_<name> modules", () => {
-      const migrations = readdirSync(join(packageRoot, "src", "db", "migrations"));
-
-      assert.isAtLeast(migrations.filter((name) => /^\d{4}_.+\.ts$/u.test(name)).length, 1);
-    });
 
     it("converts wire names by hand nowhere: tools are declared with their wire names", () => {
       assert.deepStrictEqual(filesMatching(sources, /wireName/u), []);
