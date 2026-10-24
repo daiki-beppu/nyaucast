@@ -35,6 +35,10 @@ const latestMigrationId = Math.max(
 
 const isFileUrl = (url: string) => url.startsWith("file:");
 
+// SQLite の既定の busy timeout は 0 で、CLI と MCP サーバーが同時に書くと後の側が即 SQLITE_BUSY になる（#787）。
+// 書き込みは短いトランザクションなので 5 秒で競合を吸収できる。libsql は同期 API で待ち、その間プロセス全体が止まるので、これより長くしない。
+const busyTimeoutMs = 5000;
+
 const hasPendingMigrations = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const tables =
@@ -65,7 +69,10 @@ export const LocalStore = {
   layer: (url: string) =>
     Layer.unwrap(
       Effect.gen(function* () {
-        const client = LibsqlClient.layer({ url });
+        // @libsql/client は timeout を busy timeout として、transaction() の後に開き直す接続にも掛ける。
+        // LibsqlClientConfig の型には無いが、設定はそのまま createClient へ渡る。
+        const config = { url, timeout: busyTimeoutMs };
+        const client = LibsqlClient.layer(config);
         if (!isFileUrl(url)) {
           return migrate.pipe(Layer.provideMerge(client));
         }
