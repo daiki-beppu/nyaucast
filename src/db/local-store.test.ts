@@ -52,8 +52,6 @@ function backupNames(channelRoot: string): string[] {
 const migrationRows = (databasePath: string) =>
   query(databasePath, "SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id");
 
-// 別プロセスの接続で local.db の書き込みロックを取って "locked" を出力し、
-// 親が goPath を作る（書き込みを始める合図）のを見てから holdMs 待って commit する。
 // 同じプロセスの中だと、libsql と node:sqlite は別々の SQLite なので POSIX ロックが衝突せず、競合を再現できない。
 const lockHolderSource = `
 const { existsSync } = require("node:fs");
@@ -74,15 +72,25 @@ database.exec("COMMIT");
 database.close();
 `;
 
-const lockDeadlineMs = 5000;
+const lockDeadlineMs = 10_000;
+const lockHoldMs = 1000;
 
-// 別プロセスがロックを取るまで待つ。実時間で lockDeadlineMs を過ぎたら失敗する。
+const stopChild = (child: ChildProcess) =>
+  Effect.callback<void>((resume) => {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      resume(Effect.void);
+      return;
+    }
+    child.once("exit", () => resume(Effect.void));
+    child.kill();
+  });
+
 const holdWriteLock = (databasePath: string, goPath: string) =>
   Effect.acquireRelease(
     Effect.callback<ChildProcess>((resume) => {
       const child = spawn(
         process.execPath,
-        ["-e", lockHolderSource, databasePath, goPath, String(lockDeadlineMs), "300"],
+        ["-e", lockHolderSource, databasePath, goPath, String(lockDeadlineMs), String(lockHoldMs)],
         { stdio: ["ignore", "pipe", "inherit"] },
       );
       const timer = setTimeout(() => {
@@ -90,24 +98,25 @@ const holdWriteLock = (databasePath: string, goPath: string) =>
           Effect.die(new Error("別プロセスが local.db の書き込みロックを取るのを待ちきれなかった")),
         );
       }, lockDeadlineMs);
-      child.stdout.once("data", () => {
+      const settle = (effect: Effect.Effect<ChildProcess>) => {
         clearTimeout(timer);
-        resume(Effect.succeed(child));
-      });
-      child.once("error", (error) => {
-        clearTimeout(timer);
-        resume(Effect.die(error));
-      });
+        child.removeAllListeners("exit");
+        resume(effect);
+      };
+      child.stdout.once("data", () => settle(Effect.succeed(child)));
+      child.once("error", (error) => settle(Effect.die(error)));
+      child.once("exit", (code, signal) =>
+        settle(
+          Effect.die(
+            new Error(
+              `別プロセスが local.db の書き込みロックを取る前に終了した（code=${code}, signal=${signal}）`,
+            ),
+          ),
+        ),
+      );
+      return Effect.sync(() => clearTimeout(timer)).pipe(Effect.andThen(stopChild(child)));
     }),
-    (child) =>
-      Effect.callback<void>((resume) => {
-        if (child.exitCode !== null || child.signalCode !== null) {
-          resume(Effect.void);
-          return;
-        }
-        child.once("exit", () => resume(Effect.void));
-        child.kill();
-      }),
+    stopChild,
   );
 
 describe("local store", () => {

@@ -35,9 +35,8 @@ const latestMigrationId = Math.max(
 
 const isFileUrl = (url: string) => url.startsWith("file:");
 
-// CLI と MCP サーバーのように別プロセスが同時に書くと、後の側は SQLITE_BUSY ですぐ失敗する（#787）。
-// 書き込みは短いトランザクションなので 5 秒あれば競合は吸収でき、それでも取れないロックは
-// 異常として SqlError の defect のまま表に出す。
+// SQLite の既定の busy timeout は 0 で、CLI と MCP サーバーが同時に書くと後の側が即 SQLITE_BUSY になる（#787）。
+// 書き込みは短いトランザクションなので 5 秒で競合を吸収できる。libsql は同期 API で待ち、その間プロセス全体が止まるので、これより長くしない。
 const busyTimeoutMs = 5000;
 
 const hasPendingMigrations = Effect.gen(function* () {
