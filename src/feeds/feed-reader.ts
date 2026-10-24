@@ -1,4 +1,4 @@
-import { Effect, Option, Result, Schema } from "effect";
+import { Effect, Option, Schema } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { XMLParser, XMLValidator } from "fast-xml-parser";
 
@@ -35,10 +35,17 @@ type FeedReading =
   | { readonly candidates: readonly TopicCandidate[] }
   | { readonly failed: FailedFeed };
 
-interface Failure {
-  readonly reason: FailureReason;
-  readonly status?: number;
-}
+class FeedHttpStatus extends Schema.TaggedError<FeedHttpStatus>()("FeedHttpStatus", {
+  status: Schema.Finite,
+}) {}
+
+class FeedUnreachable extends Schema.TaggedError<FeedUnreachable>()("FeedUnreachable", {}) {}
+
+class FeedInvalid extends Schema.TaggedError<FeedInvalid>()("FeedInvalid", {}) {}
+
+class FeedTimeout extends Schema.TaggedError<FeedTimeout>()("FeedTimeout", {}) {}
+
+type FeedFailure = FeedHttpStatus | FeedUnreachable | FeedInvalid | FeedTimeout;
 
 const feedTimeout = "30 seconds";
 const itemTags = new Set(["entry", "item", "link"]);
@@ -165,23 +172,20 @@ const candidatesOf = (
     ];
   });
 
-const parseFeed = (
+const parseFeed = Effect.fn("feeds.parseFeed")(function* (
   feed: Feed,
   { baseUrl, text }: FetchedFeed,
-): Result.Result<readonly TopicCandidate[], Failure> => {
-  if (XMLValidator.validate(text) !== true) return Result.fail({ reason: "InvalidFeed" });
+) {
+  if (XMLValidator.validate(text) !== true) return yield* new FeedInvalid();
   // validate は DOCTYPE の中身を検査しない。外部実体の宣言などは parse が例外で拒否するので、ここで分類する。
-  const document = Result.try({
-    catch: (): Failure => ({ reason: "InvalidFeed" }),
+  const parsed = yield* Effect.try({
+    catch: () => new FeedInvalid(),
     try: (): unknown => parser.parse(text),
   });
-  return Result.flatMap(document, (parsed) => {
-    const items = isNode(parsed) ? rawItems(parsed) : undefined;
-    return items === undefined
-      ? Result.fail<Failure>({ reason: "InvalidFeed" })
-      : Result.succeed(candidatesOf(feed, baseUrl, items));
-  });
-};
+  const items = isNode(parsed) ? rawItems(parsed) : undefined;
+  if (items === undefined) return yield* new FeedInvalid();
+  return candidatesOf(feed, baseUrl, items);
+});
 
 // フィードの URL は http から https への転送や移転で 3xx を返すことが多いので、転送に従う。上限を超えたら最後の 3xx が残る。
 const maxRedirects = 5;
@@ -195,43 +199,45 @@ const fetchText = (http: HttpClient.HttpClient, feed: Feed) =>
   Effect.gen(function* () {
     const response = yield* HttpClient.followRedirects(http, maxRedirects)
       .execute(HttpClientRequest.get(feed.url))
-      .pipe(Effect.mapError((): Failure => ({ reason: "Unreachable" })));
+      .pipe(Effect.mapError(() => new FeedUnreachable()));
     if (response.status < 200 || response.status >= 300) {
-      return yield* Effect.fail<Failure>({ reason: "HttpStatus", status: response.status });
+      return yield* new FeedHttpStatus({ status: response.status });
     }
-    const text = yield* response.text.pipe(
-      Effect.mapError((): Failure => ({ reason: "Unreachable" })),
-    );
+    const text = yield* response.text.pipe(Effect.mapError(() => new FeedUnreachable()));
     return { baseUrl: response.request.url, text } satisfies FetchedFeed;
   });
 
-const failedFeed = (feed: Feed, failure: Failure): FailedFeed => ({
+const reasonOf = {
+  FeedHttpStatus: "HttpStatus",
+  FeedInvalid: "InvalidFeed",
+  FeedTimeout: "Timeout",
+  FeedUnreachable: "Unreachable",
+} as const satisfies Record<FeedFailure["_tag"], FailureReason>;
+
+// 失敗を FailedFeed に変えるのはここだけ。status を持つのは HTTP の状態の失敗だけ。
+const failedFeed = (feed: Feed, failure: FeedFailure): FailedFeed => ({
   name: feed.name,
-  reason: failure.reason,
-  ...(failure.status === undefined ? {} : { status: failure.status }),
+  reason: reasonOf[failure._tag],
+  ...(failure._tag === "FeedHttpStatus" ? { status: failure.status } : {}),
   url: feed.url,
 });
 
 /**
- * フィード 1 本を取って候補にする。失敗はこの関数の中で 1 回だけ分類して値として返し、呼び出し元を失敗させない。
+ * フィード 1 本を取って候補にする。失敗はこの関数の出口で 1 回だけ値に変えて返し、呼び出し元を失敗させない。
  * 取りにいくのはフィードの URL だけで、記事の URL へは行かない。
  */
 export const readFeed = Effect.fn("feeds.readFeed")(function* (feed: Feed) {
   const http = yield* HttpClient.HttpClient;
-  const fetched = yield* fetchText(http, feed).pipe(
+  const reading = yield* fetchText(http, feed).pipe(
     Effect.timeoutOption(feedTimeout),
-    Effect.result,
-  );
-  const parsed = Result.flatMap(
-    Result.flatMap(fetched, (timed) =>
-      Option.isSome(timed)
-        ? Result.succeed(timed.value)
-        : Result.fail<Failure>({ reason: "Timeout" }),
+    Effect.flatMap((timed) =>
+      Option.isSome(timed) ? Effect.succeed(timed.value) : Effect.fail(new FeedTimeout()),
     ),
-    (fetchedFeed) => parseFeed(feed, fetchedFeed),
+    Effect.flatMap((fetched) => parseFeed(feed, fetched)),
+    Effect.map((candidates): FeedReading => ({ candidates })),
+    Effect.catch((failure: FeedFailure) =>
+      Effect.succeed<FeedReading>({ failed: failedFeed(feed, failure) }),
+    ),
   );
-  return Result.match(parsed, {
-    onFailure: (failure): FeedReading => ({ failed: failedFeed(feed, failure) }),
-    onSuccess: (candidates): FeedReading => ({ candidates }),
-  });
+  return reading;
 });
