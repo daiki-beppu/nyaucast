@@ -128,7 +128,6 @@ const selectAccount = Effect.fnUntraced(function* <E, R>(
   if (savedAccountId !== undefined) {
     return yield* requireAccount(accounts, savedAccountId);
   }
-  if (accounts.length === 1 && selection.accountId === undefined) return accounts[0]!;
   return yield* chooseNewAccount(accounts, selection);
 });
 
@@ -139,6 +138,7 @@ const chooseNewAccount = Effect.fnUntraced(function* <E, R>(
   if (selection.accountId !== undefined) {
     return yield* requireAccount(accounts, selection.accountId);
   }
+  if (accounts.length === 1) return accounts[0]!;
   if (selection.chooseAccount === undefined) {
     return yield* new CloudflareAccountSelectionRequired({ accounts });
   }
