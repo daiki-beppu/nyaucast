@@ -12,6 +12,11 @@ export class InvalidChannelConfig extends Schema.TaggedError<InvalidChannelConfi
   { issue: Schema.String, path: Schema.String },
 ) {}
 
+export class ChannelConfigUnreadable extends Schema.TaggedError<ChannelConfigUnreadable>()(
+  "ChannelConfigUnreadable",
+  { path: Schema.String, reason: Schema.String },
+) {}
+
 class NotExplainerChannel extends Schema.TaggedError<NotExplainerChannel>()("NotExplainerChannel", {
   kind: Schema.String,
 }) {}
@@ -118,17 +123,17 @@ export class ChannelSettings extends Context.Service<
   {
     readonly kind: Effect.Effect<
       "explainer" | "collection",
-      ChannelConfigNotFound | InvalidChannelConfig
+      ChannelConfigNotFound | ChannelConfigUnreadable | InvalidChannelConfig
     >;
     /** 解説動画の tool が読む。種類が解説動画でなければ InvalidChannelConfig（tool は種類を見分けない）。 */
     readonly explainer: Effect.Effect<
       ExplainerSettings,
-      ChannelConfigNotFound | InvalidChannelConfig
+      ChannelConfigNotFound | ChannelConfigUnreadable | InvalidChannelConfig
     >;
     /** CLI が読む。種類が解説動画でなければ NotExplainerChannel。 */
     readonly requireExplainer: Effect.Effect<
       ExplainerSettings,
-      ChannelConfigNotFound | InvalidChannelConfig | NotExplainerChannel
+      ChannelConfigNotFound | ChannelConfigUnreadable | InvalidChannelConfig | NotExplainerChannel
     >;
   }
 >()("nyaucast/ChannelSettings") {
@@ -141,12 +146,15 @@ export class ChannelSettings extends Context.Service<
         const configPath = path.join(channelRoot, "config", "channel", "video.json");
         const relativePath = "config/channel/video.json";
 
-        const readText = Effect.gen(function* () {
-          if (!(yield* fileSystem.exists(configPath).pipe(Effect.orDie))) {
-            return yield* new ChannelConfigNotFound({ path: relativePath });
-          }
-          return yield* fileSystem.readFileString(configPath).pipe(Effect.orDie);
-        });
+        const readText = fileSystem.readFileString(configPath).pipe(
+          Effect.catchReason(
+            "PlatformError",
+            "NotFound",
+            () => Effect.fail(new ChannelConfigNotFound({ path: relativePath })),
+            (reason) =>
+              Effect.fail(new ChannelConfigUnreadable({ path: relativePath, reason: reason._tag })),
+          ),
+        );
 
         const read = <A>(
           decode: (text: string) => Effect.Effect<A, { readonly message: string }>,

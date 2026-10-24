@@ -1,3 +1,4 @@
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 import { NodeServices } from "@effect/platform-node";
@@ -850,6 +851,35 @@ describe("nyaucast video produce <id> on a collection channel", () => {
         assert.deepStrictEqual(yield* collectionGateRows("rejections"), []);
       }),
     ),
+  );
+
+  it.effect(
+    "fails with a one-line ChannelConfigUnreadable when the config path is a directory",
+    () =>
+      withVideoChannel("nyaucast-video-cli-unreadable-config-", undefined, (channelRoot) =>
+        Effect.gen(function* () {
+          mkdirSync(join(channelRoot, "config", "channel", "video.json"), { recursive: true });
+          yield* seedCollection;
+
+          const { errors, outcome } = yield* runCli(["video", "produce", collectionId]);
+
+          assert.strictEqual(failureOf(outcome)._tag, "ChannelConfigUnreadable");
+          assert.deepStrictEqual(errors, [
+            'ChannelConfigUnreadable {"path":"config/channel/video.json","reason":"BadResource"}',
+          ]);
+          assert.deepStrictEqual(yield* collectionGateRows("approvals"), []);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              ThumbnailFiles.layer(channelRoot).pipe(Layer.provide(NodeServices.layer)),
+              DeclaredAccounts.layer(channelRoot).pipe(Layer.provide(NodeServices.layer)),
+              VideoFiles.layer(channelRoot).pipe(Layer.provide(NodeServices.layer)),
+              credentialStoreLayer(join(channelRoot, "credentials")),
+              stdinTerminal(false),
+            ),
+          ),
+        ),
+      ),
   );
 
   it.effect("fails with ChannelConfigNotFound when the channel has no config", () =>

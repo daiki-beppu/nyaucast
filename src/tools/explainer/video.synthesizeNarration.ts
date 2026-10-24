@@ -4,6 +4,7 @@ import { Tool } from "effect/ai";
 import { SecretNotConfigured, SecretResolutionFailed } from "../../auth/secrets.ts";
 import {
   ChannelConfigNotFound,
+  ChannelConfigUnreadable,
   ChannelSettings,
   InvalidChannelConfig,
 } from "../../channel/channel-settings.ts";
@@ -47,6 +48,7 @@ export const ExplainerVideoSynthesizeNarrationTool = Tool.make("video_synthesize
     "Returns the keys of the track and the timing table, and how many paragraphs were synthesized and reused.",
   failure: Schema.Union([
     ChannelConfigNotFound,
+    ChannelConfigUnreadable,
     InvalidChannelConfig,
     VideoNotFound,
     ProduceGateNotApproved,

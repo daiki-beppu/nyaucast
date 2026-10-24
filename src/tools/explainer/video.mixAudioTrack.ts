@@ -15,6 +15,7 @@ import {
 } from "../../channel/bgm-pool.ts";
 import {
   ChannelConfigNotFound,
+  ChannelConfigUnreadable,
   ChannelSettings,
   InvalidChannelConfig,
   type Bgm,
@@ -87,6 +88,7 @@ export const ExplainerVideoMixAudioTrackTool = Tool.make("video_mix_audio_track"
   ].join(""),
   failure: Schema.Union([
     ChannelConfigNotFound,
+    ChannelConfigUnreadable,
     InvalidChannelConfig,
     BgmNotDeclared,
     BgmNotEnabled,

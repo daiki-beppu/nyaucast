@@ -6,6 +6,7 @@ import { AccountsDeclarationInvalid } from "../../auth/accounts.ts";
 import { CredentialSaveFailed, CredentialUnreadable } from "../../auth/credential-store.ts";
 import {
   ChannelConfigNotFound,
+  ChannelConfigUnreadable,
   ChannelSettings,
   InvalidChannelConfig,
 } from "../../channel/channel-settings.ts";
@@ -34,6 +35,7 @@ export const ExplainerVideoStatusTool = Tool.make("video_status", {
   failure: Schema.Union([
     AccountsDeclarationInvalid,
     ChannelConfigNotFound,
+    ChannelConfigUnreadable,
     CredentialSaveFailed,
     CredentialUnreadable,
     InvalidChannel,

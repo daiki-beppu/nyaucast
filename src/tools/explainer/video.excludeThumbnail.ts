@@ -4,6 +4,7 @@ import { SqlClient } from "effect/sql";
 
 import {
   ChannelConfigNotFound,
+  ChannelConfigUnreadable,
   ChannelSettings,
   InvalidChannelConfig,
 } from "../../channel/channel-settings.ts";
@@ -27,6 +28,7 @@ export const ExplainerVideoExcludeThumbnailTool = Tool.make("video_exclude_thumb
     "Returns whether the exclusion was recorded, with the exclusion's round, number, reason and time.",
   failure: Schema.Union([
     ChannelConfigNotFound,
+    ChannelConfigUnreadable,
     InvalidChannelConfig,
     VideoNotFound,
     ThumbnailCandidateNotFound,

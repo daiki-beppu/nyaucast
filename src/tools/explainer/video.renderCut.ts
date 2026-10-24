@@ -2,7 +2,11 @@ import { Context, Effect, Option, Schema } from "effect";
 import { Tool } from "effect/ai";
 
 import { encodeMp4 } from "../../audio/media.ts";
-import { ChannelConfigNotFound, InvalidChannelConfig } from "../../channel/channel-settings.ts";
+import {
+  ChannelConfigNotFound,
+  ChannelConfigUnreadable,
+  InvalidChannelConfig,
+} from "../../channel/channel-settings.ts";
 import {
   CompositionNotFound,
   CompositionStale,
@@ -66,6 +70,7 @@ export const ExplainerVideoRenderCutTool = Tool.make("video_render_cut", {
   ].join(""),
   failure: Schema.Union([
     ChannelConfigNotFound,
+    ChannelConfigUnreadable,
     InvalidChannelConfig,
     VideoNotFound,
     ProduceGateNotApproved,
