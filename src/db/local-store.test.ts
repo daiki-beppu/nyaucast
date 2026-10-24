@@ -1,3 +1,4 @@
+import { type ChildProcess, spawn } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -50,6 +51,64 @@ function backupNames(channelRoot: string): string[] {
 
 const migrationRows = (databasePath: string) =>
   query(databasePath, "SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id");
+
+// 別プロセスの接続で local.db の書き込みロックを取って "locked" を出力し、
+// 親が goPath を作る（書き込みを始める合図）のを見てから holdMs 待って commit する。
+// 同じプロセスの中だと、libsql と node:sqlite は別々の SQLite なので POSIX ロックが衝突せず、競合を再現できない。
+const lockHolderSource = `
+const { existsSync } = require("node:fs");
+const { DatabaseSync } = require("node:sqlite");
+const [databasePath, goPath, deadlineMs, holdMs] = process.argv.slice(1);
+const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+const database = new DatabaseSync(databasePath);
+database.exec("BEGIN IMMEDIATE");
+database.exec("INSERT INTO busy_probe (writer) VALUES ('holder')");
+process.stdout.write("locked\\n");
+const deadline = Date.now() + Number(deadlineMs);
+while (!existsSync(goPath)) {
+  if (Date.now() > deadline) throw new Error("親の書き込み開始の合図を待ちきれなかった");
+  sleep(10);
+}
+sleep(Number(holdMs));
+database.exec("COMMIT");
+database.close();
+`;
+
+const lockDeadlineMs = 5000;
+
+// 別プロセスがロックを取るまで待つ。実時間で lockDeadlineMs を過ぎたら失敗する。
+const holdWriteLock = (databasePath: string, goPath: string) =>
+  Effect.acquireRelease(
+    Effect.callback<ChildProcess>((resume) => {
+      const child = spawn(
+        process.execPath,
+        ["-e", lockHolderSource, databasePath, goPath, String(lockDeadlineMs), "300"],
+        { stdio: ["ignore", "pipe", "inherit"] },
+      );
+      const timer = setTimeout(() => {
+        resume(
+          Effect.die(new Error("別プロセスが local.db の書き込みロックを取るのを待ちきれなかった")),
+        );
+      }, lockDeadlineMs);
+      child.stdout.once("data", () => {
+        clearTimeout(timer);
+        resume(Effect.succeed(child));
+      });
+      child.once("error", (error) => {
+        clearTimeout(timer);
+        resume(Effect.die(error));
+      });
+    }),
+    (child) =>
+      Effect.callback<void>((resume) => {
+        if (child.exitCode !== null || child.signalCode !== null) {
+          resume(Effect.void);
+          return;
+        }
+        child.once("exit", () => resume(Effect.void));
+        child.kill();
+      }),
+  );
 
 describe("local store", () => {
   it.effect("creates and migrates data/local.db when it is first opened", () =>
@@ -895,6 +954,30 @@ describe("local store", () => {
       }).pipe(Effect.provide(channelLayer(channelRoot)));
 
       assert.isTrue(Exit.isFailure(exit));
+    }),
+  );
+
+  it.effect("waits for another connection's write lock instead of failing with SQLITE_BUSY", () =>
+    Effect.gen(function* () {
+      const channelRoot = yield* temporaryDirectory("nyaucast-local-store-busy-");
+      const databasePath = localDatabasePath(channelRoot);
+
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`CREATE TABLE busy_probe (writer TEXT NOT NULL)`;
+        const goPath = join(channelRoot, "go");
+        yield* holdWriteLock(databasePath, goPath);
+
+        writeFileSync(goPath, "");
+        yield* sql`INSERT INTO busy_probe (writer) VALUES ('waiter')`;
+      }).pipe(Effect.scoped, Effect.provide(channelLayer(channelRoot)));
+
+      assert.deepStrictEqual(
+        query(databasePath, "SELECT writer FROM busy_probe ORDER BY rowid").map(
+          (row) => row["writer"],
+        ),
+        ["holder", "waiter"],
+      );
     }),
   );
 });
