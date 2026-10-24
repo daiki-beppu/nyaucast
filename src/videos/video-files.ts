@@ -7,6 +7,10 @@ import { atomicWriter } from "../files/atomic-write.ts";
 
 const hashChunkBytes = 1_048_576;
 
+/** node の `open` が「ファイルが無い」で reject したか（`PlatformError` の `NotFound` の元になるエラー）。 */
+const isNoEntry = (error: unknown) =>
+  typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+
 /** 開いたファイルの 1 つのハンドル。開いたあとにキーが rename で別の内容へ置き換わっても、このハンドルは開いた時点の内容を読み続ける。 */
 export interface FileReader {
   readonly size: number;
@@ -73,24 +77,29 @@ export class VideoFiles extends Context.Service<
         const exists = (key: string) => fileSystem.exists(pathOf(key)).pipe(Effect.orDie);
 
         const read = (key: string) =>
-          Effect.gen(function* () {
-            const file = pathOf(key);
-            if (!(yield* fileSystem.exists(file))) {
-              return Option.none<Uint8Array>();
-            }
-            return Option.some(yield* fileSystem.readFile(file));
-          }).pipe(Effect.orDie);
+          fileSystem.readFile(pathOf(key)).pipe(
+            Effect.map(Option.some),
+            Effect.catchReason("PlatformError", "NotFound", () => Effect.succeedNone),
+            Effect.orDie,
+          );
 
         const openReader = (key: string) =>
           Effect.gen(function* () {
             const file = pathOf(key);
-            if (!(yield* fileSystem.exists(file))) {
+            const opened = yield* Effect.acquireRelease(
+              Effect.tryPromise({ catch: (error) => error, try: () => open(file, "r") }).pipe(
+                Effect.map(Option.some),
+                Effect.catchIf(isNoEntry, () => Effect.succeedNone),
+              ),
+              (acquired) =>
+                Option.isSome(acquired)
+                  ? Effect.promise(() => acquired.value.close())
+                  : Effect.void,
+            );
+            if (Option.isNone(opened)) {
               return Option.none<FileReader>();
             }
-            const handle = yield* Effect.acquireRelease(
-              Effect.promise(() => open(file, "r")),
-              (opened) => Effect.promise(() => opened.close()),
-            );
+            const handle = opened.value;
             const { size } = yield* Effect.promise(() => handle.stat());
             const read = async (start: number, end: number) => {
               const length = Math.max(0, Math.min(end, size) - start);

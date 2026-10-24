@@ -42,21 +42,18 @@ const makeCloudflareEnvironment = (configRoot: string) =>
     const path = yield* Path.Path;
     const environmentPath = environmentFilePath(path, configRoot);
 
-    // 不在 → Option.none（未作成は成功で終える）、存在 → デコード、失敗は事実（パスのみ）だけの失敗に置換する。
-    const readEnvironmentFile = fileSystem.readFileString(environmentPath).pipe(
-      Effect.flatMap(decodeEnvironmentFile),
+    // 不在（NotFound）→ Option.none（未作成は成功で終える）、存在 → デコード、それ以外の失敗は事実（パスのみ）だけの失敗に置換する。
+    // environment.json / secrets.json は呼び出しのたびに読む（Layer 構築時に固定しない）。
+    const read = fileSystem.readFileString(environmentPath).pipe(
+      Effect.map(Option.some),
+      Effect.catchReason("PlatformError", "NotFound", () => Effect.succeedNone),
+      Effect.flatMap((contents) =>
+        Option.isNone(contents)
+          ? Effect.succeedNone
+          : decodeEnvironmentFile(contents.value).pipe(Effect.map(Option.some)),
+      ),
       Effect.mapError(() => new CloudflareEnvironmentInvalid({ path: environmentPath })),
     );
-
-    // environment.json / secrets.json は呼び出しのたびに読む（Layer 構築時に固定しない）。
-    const read = Effect.gen(function* () {
-      const exists = yield* fileSystem
-        .exists(environmentPath)
-        .pipe(Effect.mapError(() => new CloudflareEnvironmentInvalid({ path: environmentPath })));
-      return exists
-        ? Option.some(yield* readEnvironmentFile)
-        : Option.none<CloudflareEnvironmentFile>();
-    });
 
     // 共有リーダーの秘密解決契約は保ち、表示用の制約だけをここで適用する。平文の値が参照の欄に書かれていても表示しない（issue #692 決定 4 行目）。
     const accessKeyReference = readSecretReference(
