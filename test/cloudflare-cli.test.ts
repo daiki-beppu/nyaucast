@@ -3130,6 +3130,52 @@ describe("nyaucast cloudflare account selection", () => {
     },
   );
 
+  describe("with a single account and no saved environment", () => {
+    const singleScript = { ...script, accountsList: accountsListResponse([accounts[1]!]) };
+
+    it.effect("rejects a different --account with the candidate before side effects", () => {
+      const adapter = adapterForSelection();
+      return withCreateFlow(
+        "nyaucast-single-account-mismatch-",
+        singleScript,
+        adapter,
+        ({ cfCalls, configRoot }) =>
+          Effect.gen(function* () {
+            const { errors, logs, outcome } = yield* runCloudflare([
+              "--account",
+              accounts[0]!.id,
+              "--yes",
+            ]);
+            assert.deepStrictEqual(failureFacts(failureOf(outcome)), {
+              _tag: "CloudflareAccountNotFound",
+              accountId: accounts[0]!.id,
+              accounts: [accounts[1]!],
+            });
+            assert.deepStrictEqual(errors, [
+              `CloudflareAccountNotFound ${JSON.stringify({ accountId: accounts[0]!.id, accounts: [accounts[1]!] })}`,
+            ]);
+            assert.deepStrictEqual(logs, []);
+            assertStopped(cfCalls, adapter, configRoot);
+          }),
+      );
+    });
+
+    it.effect("uses a matching --account and saves it after apply", () => {
+      const adapter = adapterForSelection();
+      return withCreateFlow(
+        "nyaucast-single-account-match-",
+        singleScript,
+        adapter,
+        ({ cfCalls, configRoot }) =>
+          Effect.gen(function* () {
+            const { logs, outcome } = yield* runCloudflare(["--account", accounts[1]!.id, "--yes"]);
+            assert.strictEqual(outcome._tag, "Success");
+            assertSelected(cfCalls, adapter, logs, configRoot);
+          }),
+      );
+    });
+  });
+
   it.effect(
     "requires account selection on non-TTY stdin even with --yes and lists candidates",
     () => {
