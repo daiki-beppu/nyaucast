@@ -53,12 +53,13 @@ const migrationRows = (databasePath: string) =>
   query(databasePath, "SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id");
 
 // 同じプロセスの中だと、libsql と node:sqlite は別々の SQLite なので POSIX ロックが衝突せず、競合を再現できない。
+// 待つ側はロックを取り直すたびに一瞬 SHARED を持つので、持ち主も busy timeout が無いと COMMIT で SQLITE_BUSY になる。
 const lockHolderSource = `
 const { existsSync } = require("node:fs");
 const { DatabaseSync } = require("node:sqlite");
 const [databasePath, goPath, deadlineMs, holdMs] = process.argv.slice(1);
 const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-const database = new DatabaseSync(databasePath);
+const database = new DatabaseSync(databasePath, { timeout: 5000 });
 database.exec("BEGIN IMMEDIATE");
 database.exec("INSERT INTO busy_probe (writer) VALUES ('holder')");
 process.stdout.write("locked\\n");
