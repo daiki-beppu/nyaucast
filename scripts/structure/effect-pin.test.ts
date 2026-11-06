@@ -85,6 +85,25 @@ describe("effect-pin check", () => {
     );
   });
 
+  test("reports @effect/* whose version differs from effect with ADR-0001, except @effect/tsgo", () => {
+    withRoot(
+      pkg({
+        dependencies: {
+          "@effect/platform-node": "4.0.7",
+          "@effect/platform-node-shared": "4.0.5",
+          effect: "4.0.7",
+        },
+        devDependencies: { "@effect/tsgo": "0.47.2", "@effect/vitest": "4.0.7" },
+      }),
+      (root) => {
+        const violations = check(root);
+        expect(violations).toHaveLength(1);
+        expect(violations[0]).toContain("@effect/platform-node-shared");
+        expect(violations[0]).toContain("ADR-0001");
+      },
+    );
+  });
+
   test("handles a package.json without dependencies or devDependencies", () => {
     withRoot(pkg({ name: "x" }), (root) => {
       expect(check(root)).toEqual([]);

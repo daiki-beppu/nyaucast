@@ -4,10 +4,16 @@ import { join, resolve } from "node:path";
 
 import { explainerConfig } from "./explainer-helpers.ts";
 import { withTemporaryDirectoryAsync, writeVideoConfig } from "./helpers";
-import { createJsonRpcClient, requireRecord, stopChildProcess } from "./mcp-stdio-helpers";
+import {
+  createJsonRpcClient,
+  mcpTestTimeout,
+  requireRecord,
+  stopChildProcess,
+} from "./mcp-stdio-helpers";
 
 const packageRoot = resolve(import.meta.dirname, "..");
 const subprocessTimeout = 120_000;
+export const packageSmokeTimeout = 2 * subprocessTimeout + mcpTestTimeout;
 const codecName = "explainer-lifecycle";
 
 interface PackedFile {

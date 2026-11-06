@@ -8,7 +8,12 @@ import { describe, expect, test } from "@effect/vitest";
 import { skillsRootOfPackage } from "./codec-support.ts";
 import { collectionConfig, explainerConfig } from "./explainer-helpers.ts";
 import { withTemporaryDirectoryAsync, writeVideoConfig } from "./helpers";
-import { createJsonRpcClient, requireRecord, stopChildProcess } from "./mcp-stdio-helpers";
+import {
+  createJsonRpcClient,
+  mcpTestTimeout,
+  requireRecord,
+  stopChildProcess,
+} from "./mcp-stdio-helpers";
 
 const packageRoot = resolve(import.meta.dirname, "..");
 
@@ -94,7 +99,7 @@ const listToolNames = async (client: ReturnType<typeof createJsonRpcClient>) => 
   });
 };
 
-describe("nyaucast mcp", () => {
+describe("nyaucast mcp", { timeout: mcpTestTimeout }, () => {
   test("lists exactly the explainer tools for an explainer channel", async () => {
     await withMcpServer(
       "nyaucast-mcp-list-explainer-",
