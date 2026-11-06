@@ -4,7 +4,7 @@
 
 ## Status
 
-accepted (2026-07-08) / 改訂 2026-08-27（#387。tracer 実装でディレクトリ・local store・channel registry schema の規約を確定）/ 改訂 2026-10-01（#463。決定 8 に解説動画のゲート事実の表を追加）/ 改訂 2026-10-02（#475。コードを全面 Effect 4.0 で書く — 決定 1・3・5 を改訂し、決定 9 を追加。2026-08-23 の「schema は zod を続ける」決定を覆す）/ 改訂 2026-10-14（#816。決定 3 に defect と型付きの失敗の分け方（ADR-0013）、決定 9 に構造の検査の置き場所（ADR-0014）への参照を追加）
+accepted (2026-07-08) / 改訂 2026-08-27（#387。tracer 実装でディレクトリ・local store・channel registry schema の規約を確定）/ 改訂 2026-10-01（#463。決定 8 に解説動画のゲート事実の表を追加）/ 改訂 2026-10-02（#475。コードを全面 Effect 4.0 で書く — 決定 1・3・5 を改訂し、決定 9 を追加。2026-08-23 の「schema は zod を続ける」決定を覆す）/ 改訂 2026-10-14（#816。決定 3 に defect と型付きの失敗の分け方（ADR-0013）、決定 9 に構造の検査の置き場所（ADR-0014）への参照を追加）/ 改訂 2026-11-06（#894。決定 9 の exact pin に、推移的な `@effect/platform-node-shared` を直接の依存に置くことを追加）
 
 ## Context
 
@@ -28,7 +28,7 @@ accepted (2026-07-08) / 改訂 2026-08-27（#387。tracer 実装でディレク�
    - service は `Context.Service` で定義し、static な `layer` で提供する。Layer を組むのは entry point の 1 か所だけで、`NodeRuntime.runMain` を呼ぶのもそこだけにする。tool と core は `run*` を呼ばない
    - MCP tool は `effect/ai` の `Tool.make` で定義し、`Toolkit.make` に並べた引数を tool 一覧とする（決定 2 の registry を置かない形は、これで保つ）。MCP の stdio サーバーは `effect/ai` の `McpServer`、CLI は `effect/cli`、外部への HTTP は `effect/http` の `HttpClient` で書く。公式 MCP SDK、自前の引数解析、素の `fetch` は使わない。例外として、YouTube の OAuth（認可コードの交換とトークンの更新）は公式の `google-auth-library` の `OAuth2Client` に任せ、その通信は `HttpClient` を通らない（改訂 2026-10-04。実装に合わせて明文化）
    - tool 名は MCP に出る名前で書く（`plan_init` の形。Claude API の tool 名はドットを許さない）。入力は strict にして、未知のキーを拒否する
-   - `effect` と `@effect/*` は exact pin にする。unstable と表示されたモジュール（ai / cli / http / sql）の破壊的変更は、pin を上げる差分の中で受け止める
+   - `effect` と `@effect/*` は exact pin にする。unstable と表示されたモジュール（ai / cli / http / sql）の破壊的変更は、pin を上げる差分の中で受け止める。`@effect/platform-node` が範囲で要求する `@effect/platform-node-shared` も、import しないが `dependencies` に同じ版で直接置く。exact pin は直接の依存にしか効かず、範囲のままだと利用者の install が新しい版を `effect` の固定版と組み合わせて起動に失敗するためである。pnpm 12 は、直接置いた版で推移的な要求もまとめる（`test/package-smoke.test.ts` が tarball を入れて確かめる）。`@effect/*` は `effect` と同じ版にそろえ、`scripts/structure/effect-pin.ts` が検査する。上流が `@effect/platform-node-shared` を exact で要求する 4.1 系へ上げるときは、直接の依存と fallow の除外を外す（改訂 2026-11-06 / #894）
    - テストは `@effect/vitest` で書く（vite-plus 1.0 が同梱する vitest 5 で動く）。現在時刻は `Clock` から取り、テストでは `TestClock` で進める
    - Effect の診断（`@effect/tsgo`。v3 の API を見つける `outdatedApi` を含む）を検査ゲートに入れる。unstable API を使ったことへの警告は対象外とする。構造の検査の置き場所は ADR-0014（改訂 2026-10-14 / #816）
 
