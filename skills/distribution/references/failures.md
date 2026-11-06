@@ -41,20 +41,22 @@ tool と CLI は、確認待ちの理由と失敗を安定した識別子（型�
 | `AdoptedCutHasNoDraft`                           | 採用したカット（長尺、または選んだショートの切り抜き・専用）に投稿案が無い。[drafts.md](drafts.md) で書く                                                                                                                                                                                                          |
 | `InvalidPostText`                                | 投稿文が検査に落ちた（`field`・`rule`）。[drafts.md](drafts.md) の上限・禁止を直して書き直す                                                                                                                                                                                                                       |
 | `ChannelConfigNotFound` / `InvalidChannelConfig` | チャンネルの設定が無い、または形が不正。人間に直してもらう                                                                                                                                                                                                                                                         |
+| `ChannelConfigUnreadable`                        | チャンネルの設定ファイルを読めない（権限が無い、ディレクトリになっているなど。`path` と `reason` が事実）。人間に直してもらう                                                                                                                                                                                      |
 | `VideoNotFound`                                  | 動画の ID が違う。ID を確かめて呼び直す                                                                                                                                                                                                                                                                            |
 | `ProduceGateNotApproved`                         | 企画ゲートが承認されていない。`explainer-lifecycle` codec の企画ゲートの手順に従う                                                                                                                                                                                                                                 |
 
 ## 投稿案を書く tool の失敗のタグ
 
-| タグ                                             | 意味と手順                                                                                            |
-| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
-| `InvalidPostText`                                | 投稿文が検査に落ちた。上限・空・X の URL を直して `video_write_post_draft` を書き直す                 |
-| `AccountNotDeclared`                             | 対象の SNS にアカウントの宣言が無い。人間に `config/channel/accounts.json` を直してもらう             |
-| `AccountsDeclarationInvalid`                     | アカウントの宣言ファイルが壊れている。人間に直してもらう                                              |
-| `ShortCandidateNotFound`                         | 指定したショートの候補が無い、または取り下げられている。`video_status` の `shorts` を確かめて呼び直す |
-| `ProduceGateNotApproved`                         | 企画ゲートが承認されていない。`explainer-lifecycle` codec の企画ゲートの手順に従う                    |
-| `VideoNotFound`                                  | 動画の ID が違う。ID を確かめて呼び直す                                                               |
-| `ChannelConfigNotFound` / `InvalidChannelConfig` | チャンネルの設定が無い、または形が不正。人間に直してもらう                                            |
+| タグ                                             | 意味と手順                                                                                                                    |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| `InvalidPostText`                                | 投稿文が検査に落ちた。上限・空・X の URL を直して `video_write_post_draft` を書き直す                                         |
+| `AccountNotDeclared`                             | 対象の SNS にアカウントの宣言が無い。人間に `config/channel/accounts.json` を直してもらう                                     |
+| `AccountsDeclarationInvalid`                     | アカウントの宣言ファイルが壊れている。人間に直してもらう                                                                      |
+| `ShortCandidateNotFound`                         | 指定したショートの候補が無い、または取り下げられている。`video_status` の `shorts` を確かめて呼び直す                         |
+| `ProduceGateNotApproved`                         | 企画ゲートが承認されていない。`explainer-lifecycle` codec の企画ゲートの手順に従う                                            |
+| `VideoNotFound`                                  | 動画の ID が違う。ID を確かめて呼び直す                                                                                       |
+| `ChannelConfigNotFound` / `InvalidChannelConfig` | チャンネルの設定が無い、または形が不正。人間に直してもらう                                                                    |
+| `ChannelConfigUnreadable`                        | チャンネルの設定ファイルを読めない（権限が無い、ディレクトリになっているなど。`path` と `reason` が事実）。人間に直してもらう |
 
 ## 投稿の実行で出る失敗のタグ（一時的・恒久的）
 
