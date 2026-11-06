@@ -1,8 +1,8 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { once } from "node:events";
 
-// 子プロセスの起動が負荷で遅れても誤って落ちないよう、contract の testTimeout（30 秒）の内側で待つ（#644）。
-const responseTimeout = 25_000;
+// 高負荷では起動だけで 25 秒を超える（#891）。これを使うテストの上限（120 秒以上）の内側で切り、待った応答を名指しして失敗する。
+const responseTimeout = 110_000;
 const terminationGracePeriod = 1_000;
 
 interface JsonRpcResponse {

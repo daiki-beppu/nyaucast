@@ -94,7 +94,7 @@ const listToolNames = async (client: ReturnType<typeof createJsonRpcClient>) => 
   });
 };
 
-describe("nyaucast mcp", () => {
+describe("nyaucast mcp", { timeout: 120_000 }, () => {
   test("lists exactly the explainer tools for an explainer channel", async () => {
     await withMcpServer(
       "nyaucast-mcp-list-explainer-",
