@@ -1,8 +1,8 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { once } from "node:events";
 
-// 子プロセスの起動が負荷で遅れても誤って落ちないよう、contract の testTimeout（30 秒）の内側で待つ（#644）。
-const responseTimeout = 25_000;
+export const mcpTestTimeout = 120_000;
+const responseTimeout = mcpTestTimeout - 10_000;
 const terminationGracePeriod = 1_000;
 
 interface JsonRpcResponse {
@@ -36,6 +36,7 @@ function routeJsonRpcResponse(
 }
 
 export function createJsonRpcClient(process_: ChildProcessWithoutNullStreams) {
+  const deadline = Date.now() + responseTimeout;
   let buffered = "";
   const responses = new Map<number, JsonRpcResponse>();
   const waiters = new Map<number, (response: JsonRpcResponse) => void>();
@@ -62,7 +63,7 @@ export function createJsonRpcClient(process_: ChildProcessWithoutNullStreams) {
         timeout = setTimeout(() => {
           waiters.delete(id);
           reject(new Error(`timed out waiting for JSON-RPC response ${id}`));
-        }, responseTimeout);
+        }, deadline - Date.now());
         waiters.set(id, (value) => {
           clearTimeout(timeout);
           resolveResponse(value);

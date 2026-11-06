@@ -18,7 +18,7 @@
     "prototype/**",
     "scripts/**"
   ],
-  "ignoreDependencies": ["yaml"],
+  "ignoreDependencies": ["yaml", "@effect/platform-node-shared"],
   "rules": {
     "unused-dependencies": "error",
     "unused-dev-dependencies": "error",

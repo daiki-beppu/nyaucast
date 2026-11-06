@@ -31,7 +31,7 @@ describe("prepareProvisioning account selection", () => {
     {
       name: "automatically uses the only account before creation",
       saved: false,
-      explicit: "other",
+      explicit: undefined,
       succeeds: true,
     },
     {

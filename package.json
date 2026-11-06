@@ -43,6 +43,7 @@
   "dependencies": {
     "@audio/loudness-lufs": "1.2.0",
     "@effect/platform-node": "4.0.5",
+    "@effect/platform-node-shared": "4.0.5",
     "@effect/sql-libsql": "4.0.5",
     "@mediabunny/server": "1.61.0",
     "@puppeteer/browsers": "3.2.3",
