@@ -6,6 +6,7 @@ import { SqlClient } from "effect/sql";
 
 import {
   ChannelConfigNotFound,
+  ChannelConfigUnreadable,
   ChannelSettings,
   InvalidChannelConfig,
 } from "../../channel/channel-settings.ts";
@@ -52,6 +53,7 @@ export const ExplainerVideoWritePlanTool = Tool.make("video_write_plan", {
     "Returns the video ID, whether a video was created, and the latest plan with updatedAt.",
   failure: Schema.Union([
     ChannelConfigNotFound,
+    ChannelConfigUnreadable,
     InvalidChannelConfig,
     UndeclaredHitPattern,
     VideoNotFound,

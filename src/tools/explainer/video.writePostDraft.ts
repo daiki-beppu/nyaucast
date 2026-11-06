@@ -5,6 +5,7 @@ import { AccountNotDeclared, AccountsDeclarationInvalid } from "../../auth/accou
 import { DeclaredAccounts } from "../../auth/declared-accounts.ts";
 import {
   ChannelConfigNotFound,
+  ChannelConfigUnreadable,
   ChannelSettings,
   InvalidChannelConfig,
 } from "../../channel/channel-settings.ts";
@@ -57,6 +58,7 @@ export const ExplainerVideoWritePostDraftTool = Tool.make("video_write_post_draf
     VideoNotFound,
     InvalidChannelConfig,
     ChannelConfigNotFound,
+    ChannelConfigUnreadable,
   ]),
   parameters: Schema.Struct({
     post: PostText.annotate({ description: "The post text, by platform." }),

@@ -1,7 +1,11 @@
 import { Effect, Option, Schema, Semaphore } from "effect";
 import { Tool } from "effect/ai";
 
-import { ChannelConfigNotFound, InvalidChannelConfig } from "../../channel/channel-settings.ts";
+import {
+  ChannelConfigNotFound,
+  ChannelConfigUnreadable,
+  InvalidChannelConfig,
+} from "../../channel/channel-settings.ts";
 import {
   InvalidComposition,
   capturePreviewFrames,
@@ -46,6 +50,7 @@ export const ExplainerVideoPreviewCutTool = Tool.make("video_preview_cut", {
   ].join(""),
   failure: Schema.Union([
     ChannelConfigNotFound,
+    ChannelConfigUnreadable,
     InvalidChannelConfig,
     VideoNotFound,
     ProduceGateNotApproved,
