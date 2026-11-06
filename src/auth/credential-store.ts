@@ -65,13 +65,21 @@ export class CredentialStore extends Context.Service<
             }),
           );
 
-        // 読み、権限を 0600 に直し、schema で検証する。失敗の詳細（fs のエラー）は捨て、事実だけの失敗に置き換える。
+        // 無ければ none。あれば権限を 0600 に直し、schema で検証する。無い以外の失敗の詳細（fs のエラー）は捨て、事実だけの失敗に置き換える。
         const readFile = (file: string, channel: string, platform: Platform) =>
           Effect.gen(function* () {
-            const contents = yield* fileSystem.readFileString(file);
+            const contents = yield* fileSystem.readFileString(file).pipe(
+              Effect.map(Option.some),
+              Effect.catchReason("PlatformError", "NotFound", () => Effect.succeedNone),
+            );
+            if (Option.isNone(contents)) {
+              return Option.none<StoredCredential>();
+            }
             yield* fileSystem.chmod(file, 0o600);
-            return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(StoredCredentialSchema))(
-              contents,
+            return Option.some(
+              yield* Schema.decodeUnknownEffect(Schema.fromJsonString(StoredCredentialSchema))(
+                contents.value,
+              ),
             );
           }).pipe(Effect.mapError(() => new CredentialUnreadable({ channel, platform })));
 
@@ -80,10 +88,7 @@ export class CredentialStore extends Context.Service<
           platform: Platform,
         ) {
           const { file } = yield* locate(channel, platform);
-          const exists = yield* fileSystem
-            .exists(file)
-            .pipe(Effect.mapError(() => new CredentialUnreadable({ channel, platform })));
-          return exists ? Option.some(yield* readFile(file, channel, platform)) : Option.none();
+          return yield* readFile(file, channel, platform);
         });
 
         // 一時ファイルへ 0600 で書いてから rename で置き換える。失敗したら一時ファイルを消し、元の失敗を返す。
