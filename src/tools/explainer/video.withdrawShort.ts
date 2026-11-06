@@ -3,6 +3,7 @@ import { Tool } from "effect/ai";
 
 import {
   ChannelConfigNotFound,
+  ChannelConfigUnreadable,
   ChannelSettings,
   InvalidChannelConfig,
 } from "../../channel/channel-settings.ts";
@@ -28,6 +29,7 @@ export const ExplainerVideoWithdrawShortTool = Tool.make("video_withdraw_short",
     "Returns the number and whether a withdrawal was recorded now.",
   failure: Schema.Union([
     ChannelConfigNotFound,
+    ChannelConfigUnreadable,
     InvalidChannelConfig,
     VideoNotFound,
     ProduceGateNotApproved,

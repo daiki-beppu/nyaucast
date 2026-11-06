@@ -3,6 +3,7 @@ import { Tool } from "effect/ai";
 
 import {
   ChannelConfigNotFound,
+  ChannelConfigUnreadable,
   ChannelSettings,
   InvalidChannelConfig,
 } from "../../channel/channel-settings.ts";
@@ -30,6 +31,7 @@ export const ExplainerVideoWriteScriptTool = Tool.make("video_write_script", {
     "Returns the key of the written file and the number of scenes and paragraphs.",
   failure: Schema.Union([
     ChannelConfigNotFound,
+    ChannelConfigUnreadable,
     InvalidChannelConfig,
     VideoNotFound,
     ProduceGateNotApproved,

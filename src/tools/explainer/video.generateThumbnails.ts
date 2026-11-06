@@ -4,6 +4,7 @@ import { Tool } from "effect/ai";
 import { SecretNotConfigured, SecretResolutionFailed } from "../../auth/secrets.ts";
 import {
   ChannelConfigNotFound,
+  ChannelConfigUnreadable,
   ChannelSettings,
   InvalidChannelConfig,
   type ThumbnailType,
@@ -72,6 +73,7 @@ export const ExplainerVideoGenerateThumbnailsTool = Tool.make("video_generate_th
     "Returns the round, how many candidates this call made, and every candidate of the round.",
   failure: Schema.Union([
     ChannelConfigNotFound,
+    ChannelConfigUnreadable,
     InvalidChannelConfig,
     VideoNotFound,
     ThumbnailTypeNotDeclared,

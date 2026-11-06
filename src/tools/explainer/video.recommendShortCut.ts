@@ -3,6 +3,7 @@ import { Tool } from "effect/ai";
 
 import {
   ChannelConfigNotFound,
+  ChannelConfigUnreadable,
   ChannelSettings,
   InvalidChannelConfig,
 } from "../../channel/channel-settings.ts";
@@ -30,6 +31,7 @@ export const ExplainerVideoRecommendShortCutTool = Tool.make("video_recommend_sh
     "Returns the candidate number, the recommended cut and whether a recommendation was recorded now.",
   failure: Schema.Union([
     ChannelConfigNotFound,
+    ChannelConfigUnreadable,
     InvalidChannelConfig,
     VideoNotFound,
     ProduceGateNotApproved,

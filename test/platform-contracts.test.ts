@@ -275,9 +275,10 @@ describe("K1 three identical check surfaces", () => {
     ).not.toHaveLength(0);
   });
 
-  // runtime 依存を fallow で黙らせる例外は 1 件も無い。#694 が先に dependencies へ入れた alchemy も、
-  // 呼ぶ側（src/cloudflare/alchemy.ts）が入った #695 で ignoreDependencies から外した。
-  const fallowSilencedRuntimeDependencies: ReadonlyArray<string> = [];
+  // #694 が先に dependencies へ入れた alchemy は、呼ぶ側（src/cloudflare/alchemy.ts）が入った #695 で
+  // ignoreDependencies から外した。@effect/platform-node-shared は import せず、利用者の install で
+  // 推移的な版を effect の固定版にまとめるためだけに置く（ADR-0001 決定 9、#894）。
+  const fallowSilencedRuntimeDependencies: ReadonlyArray<string> = ["@effect/platform-node-shared"];
 
   test("runtime dependencies cannot be silenced through fallow", () => {
     const manifest = readJson(join(packageRoot, "package.json"));

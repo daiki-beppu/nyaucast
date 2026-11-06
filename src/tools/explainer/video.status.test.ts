@@ -1,3 +1,6 @@
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
+
 import { assert, describe, it } from "@effect/vitest";
 import { Effect } from "effect";
 import { SqlClient } from "effect/sql";
@@ -11,6 +14,7 @@ import {
 import { scriptScenes } from "../../../test/composition-helpers.ts";
 import {
   accepts,
+  failureFacts,
   publishedAdditionalProperties,
   setClock,
   writeVideoConfig,
@@ -492,6 +496,22 @@ describe("video.status: channel kind", () => {
         const failure = yield* Effect.flip(callTool("video_status", { videoId: "V1" }));
 
         assert.strictEqual(failure._tag, "ChannelConfigNotFound");
+      }),
+    ),
+  );
+
+  it.effect("fails with ChannelConfigUnreadable when the video config path is a directory", () =>
+    withToolChannel("nyaucast-video-status-unreadable-", {}, (channelRoot) =>
+      Effect.gen(function* () {
+        mkdirSync(join(channelRoot, "config", "channel", "video.json"), { recursive: true });
+
+        const failure = yield* Effect.flip(callTool("video_status", { videoId: "V1" }));
+
+        assert.deepStrictEqual(failureFacts(failure), {
+          _tag: "ChannelConfigUnreadable",
+          path: "config/channel/video.json",
+          reason: "BadResource",
+        });
       }),
     ),
   );

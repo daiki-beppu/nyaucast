@@ -5,6 +5,7 @@ import { Tool } from "effect/ai";
 
 import {
   ChannelConfigNotFound,
+  ChannelConfigUnreadable,
   ChannelSettings,
   InvalidChannelConfig,
   type Theme,
@@ -83,6 +84,7 @@ export const ExplainerVideoAssembleCompositionTool = Tool.make("video_assemble_c
     "Returns whether the composition was assembled now, its hash and its key.",
   failure: Schema.Union([
     ChannelConfigNotFound,
+    ChannelConfigUnreadable,
     InvalidChannelConfig,
     VideoNotFound,
     ProduceGateNotApproved,

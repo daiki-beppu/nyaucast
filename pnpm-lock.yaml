@@ -14,6 +14,9 @@ importers:
       '@effect/platform-node':
         specifier: 4.0.5
         version: 4.0.5(effect@4.0.5)(redis@6.3.0)
+      '@effect/platform-node-shared':
+        specifier: 4.0.5
+        version: 4.0.5(effect@4.0.5)
       '@effect/sql-libsql':
         specifier: 4.0.5
         version: 4.0.5(effect@4.0.5)
